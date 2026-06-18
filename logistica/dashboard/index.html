@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logística — Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+
+  /* Header */
+  .header { background: #1a1d27; border-bottom: 1px solid #2d3148; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+  .header h1 { font-size: 18px; font-weight: 700; color: #fff; }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  #reloj { font-size: 14px; color: #94a3b8; font-variant-numeric: tabular-nums; }
+  .btn { padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: all .15s; }
+  .btn-primary { background: #4f6ef7; color: #fff; }
+  .btn-primary:hover { background: #3d5ae0; }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+  .btn-outline { background: transparent; border: 1px solid #3d4266; color: #94a3b8; }
+  .btn-outline:hover { border-color: #4f6ef7; color: #4f6ef7; }
+
+  /* Contadores por correo */
+  .correos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding: 20px 24px 0; }
+  .correo-card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 12px; padding: 14px 16px; }
+  .correo-card.alerta { border-color: #ef4444; }
+  .correo-card.aviso  { border-color: #f59e0b; }
+  .correo-nombre { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #64748b; margin-bottom: 8px; }
+  .correo-stats { display: flex; flex-direction: column; gap: 4px; }
+  .correo-stat { display: flex; justify-content: space-between; font-size: 13px; }
+  .correo-stat span:first-child { color: #94a3b8; }
+  .correo-stat span:last-child  { font-weight: 600; color: #e2e8f0; }
+  .correo-retiro { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2d3148; font-size: 12px; color: #64748b; display: flex; justify-content: space-between; align-items: center; }
+  .correo-retiro strong { color: #94a3b8; }
+  .btn-edit-hora { background: none; border: none; cursor: pointer; font-size: 14px; opacity: .6; }
+  .btn-edit-hora:hover { opacity: 1; }
+  .countdown { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+  .countdown.ok     { background: #134e2a; color: #4ade80; }
+  .countdown.aviso  { background: #422006; color: #fb923c; }
+  .countdown.alerta { background: #450a0a; color: #f87171; }
+
+  /* Horarios modal */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #1a1d27; border: 1px solid #2d3148; border-radius: 16px; padding: 24px; width: 340px; }
+  .modal h2 { font-size: 16px; margin-bottom: 16px; }
+  .modal label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 4px; margin-top: 12px; }
+  .modal input, .modal select { width: 100%; padding: 8px 12px; background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; color: #e2e8f0; font-size: 14px; }
+  .modal-footer { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
+
+  /* Asignar modal */
+  .asignar-modal { width: 680px; max-height: 80vh; overflow-y: auto; }
+  .asignar-selects { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .seleccion-info { font-size: 13px; color: #64748b; margin-bottom: 8px; }
+  .seleccion-info strong { color: #4f6ef7; }
+
+  /* Tabla de pedidos */
+  .cola-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px 12px; }
+  .cola-header h2 { font-size: 15px; font-weight: 600; }
+  .cola-header-right { display: flex; gap: 8px; align-items: center; }
+  .filtros { display: flex; gap: 8px; }
+  .filtro-btn { padding: 5px 12px; border-radius: 6px; border: 1px solid #2d3148; background: transparent; color: #94a3b8; font-size: 12px; cursor: pointer; transition: all .15s; }
+  .filtro-btn.active { background: #4f6ef7; border-color: #4f6ef7; color: #fff; }
+
+  .tabla-wrap { padding: 0 24px 24px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { text-align: left; padding: 10px 12px; color: #64748b; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid #2d3148; position: sticky; top: 57px; background: #0f1117; z-index: 10; }
+  tbody tr { border-bottom: 1px solid #1e2235; transition: background .1s; cursor: pointer; }
+  tbody tr:hover { background: #1a1d27; }
+  tbody tr.seleccionado { background: #1e2a4a; }
+  tbody td { padding: 10px 12px; vertical-align: middle; }
+  .cb { width: 16px; height: 16px; cursor: pointer; accent-color: #4f6ef7; }
+
+  /* Badges */
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+  .badge-flex        { background: #1e3a5f; color: #60a5fa; }
+  .badge-colecta     { background: #1e3a5f; color: #93c5fd; }
+  .badge-cabify      { background: #2d1b4e; color: #c084fc; }
+  .badge-correo_arg  { background: #1a2e1a; color: #86efac; }
+  .badge-andreani    { background: #2a1a1a; color: #fca5a5; }
+  .badge-mauro       { background: #1a2a2a; color: #67e8f9; }
+  .badge-retira_local{ background: #2a2a1a; color: #fde68a; }
+  .badge-ml_pret     { background: #1e3a5f; color: #60a5fa; }
+  .badge-ml_lavan    { background: #1e3a5f; color: #93c5fd; }
+  .badge-tn_pret     { background: #1a2e1a; color: #86efac; }
+  .badge-tn_lavan    { background: #1a2e1a; color: #4ade80; }
+
+  /* Estado */
+  .estado-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .estado-pendiente      .estado-dot { background: #64748b; }
+  .estado-en_picking     .estado-dot { background: #f59e0b; }
+  .estado-en_espera      .estado-dot { background: #ef4444; }
+  .estado-listo_empaquetar .estado-dot { background: #818cf8; }
+  .estado-listo_despacho .estado-dot { background: #4ade80; }
+
+  /* Tiempo esperando */
+  .tiempo { font-variant-numeric: tabular-nums; }
+  .tiempo.ok     { color: #64748b; }
+  .tiempo.aviso  { color: #f59e0b; }
+  .tiempo.alerta { color: #ef4444; font-weight: 700; }
+
+  /* Progress picking */
+  .progress-bar { height: 4px; background: #2d3148; border-radius: 2px; overflow: hidden; min-width: 60px; }
+  .progress-fill { height: 100%; background: #4f6ef7; border-radius: 2px; transition: width .3s; }
+  .progress-fill.completo { background: #4ade80; }
+
+  /* Loader */
+  .loader { text-align: center; padding: 60px; color: #64748b; }
+
+  /* Separador de estado */
+  tr.grupo-header td { background: #131620; color: #4f6ef7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; padding: 6px 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📦 Logística</h1>
+  <div class="header-right">
+    <span id="reloj"></span>
+    <button class="btn btn-outline btn-sm" onclick="abrirModalHorarios()">⏰ Horarios de hoy</button>
+    <button class="btn btn-outline btn-sm" onclick="syncPedidos()">🔄 Sync</button>
+    <button class="btn btn-primary btn-sm" id="btn-asignar" onclick="abrirModalAsignar()" disabled>
+      Asignar dupla (<span id="count-sel">0</span>)
+    </button>
+  </div>
+</div>
+
+<!-- Contadores por correo -->
+<div class="correos-grid" id="correos-grid">
+  <!-- Se llena dinámicamente -->
+</div>
+
+<!-- Cola de pedidos -->
+<div class="cola-header">
+  <h2>Cola de pedidos</h2>
+  <div class="cola-header-right">
+    <div class="filtros" id="filtros">
+      <button class="filtro-btn active" onclick="setFiltro('todos', this)">Todos</button>
+      <button class="filtro-btn" onclick="setFiltro('pendiente', this)">Pendientes</button>
+      <button class="filtro-btn" onclick="setFiltro('en_picking', this)">En picking</button>
+      <button class="filtro-btn" onclick="setFiltro('en_espera', this)">⚠️ En espera</button>
+      <button class="filtro-btn" onclick="setFiltro('listo_empaquetar', this)">Listos empaquetar</button>
+      <button class="filtro-btn" onclick="setFiltro('listo_despacho', this)">Listos despacho</button>
+    </div>
+  </div>
+</div>
+
+<div class="tabla-wrap">
+  <div class="loader" id="loader">Cargando pedidos...</div>
+  <table id="tabla" style="display:none">
+    <thead>
+      <tr>
+        <th><input type="checkbox" class="cb" id="cb-all" onchange="toggleTodos(this)"></th>
+        <th>Pedido</th>
+        <th>Canal</th>
+        <th>Correo</th>
+        <th>Compra</th>
+        <th>Esperando</th>
+        <th>Items</th>
+        <th>Estado</th>
+        <th>Dupla</th>
+        <th>Picking</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<!-- Modal horarios -->
+<div class="modal-overlay" id="modal-horarios">
+  <div class="modal">
+    <h2>⏰ Horarios de retiro hoy</h2>
+    <div id="horarios-form"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-horarios')">Cerrar</button>
+      <button class="btn btn-primary" onclick="guardarHorarios()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal asignar -->
+<div class="modal-overlay" id="modal-asignar">
+  <div class="modal asignar-modal">
+    <h2>Asignar dupla</h2>
+    <div class="asignar-selects">
+      <div>
+        <label>Recolector</label>
+        <select id="sel-picker"></select>
+      </div>
+      <div>
+        <label>Empaquetador</label>
+        <select id="sel-packer"></select>
+      </div>
+    </div>
+    <div class="seleccion-info" id="asignar-info"></div>
+    <div id="asignar-lista" style="max-height:300px;overflow-y:auto;"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-asignar')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarAsignacion()">✓ Asignar e imprimir etiquetas</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const CORREOS_CONFIG = {
+  flex:         { nombre: 'Flex',          emoji: '⚡' },
+  colecta:      { nombre: 'Colecta',       emoji: '📬' },
+  cabify:       { nombre: 'Cabify',        emoji: '🚗' },
+  correo_arg:   { nombre: 'Correo Arg.',   emoji: '📮' },
+  andreani:     { nombre: 'Andreani',      emoji: '📦' },
+  mauro:        { nombre: 'Mauro',         emoji: '🛵' },
+  retira_local: { nombre: 'Retira Local',  emoji: '🏪' },
+};
+
+let pedidos = [];
+let horarios = {};
+let usuarios = [];
+let filtroActual = 'todos';
+let seleccionados = new Set();
+
+// ── Reloj ─────────────────────────────────────────────────────────
+function actualizarReloj() {
+  const ahora = new Date();
+  document.getElementById('reloj').textContent =
+    ahora.toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long'}) +
+    ' — ' + ahora.toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+setInterval(actualizarReloj, 1000);
+actualizarReloj();
+
+// ── Helpers ───────────────────────────────────────────────────────
+function tiempoDesde(isoDate) {
+  if (!isoDate) return '';
+  const mins = Math.floor((Date.now() - new Date(isoDate)) / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `${h}h ${m}m`;
+}
+
+function claseEsperando(mins, correoId) {
+  const limites = { flex: 45, colecta: 90, cabify: 120, correo_arg: 240, andreani: 240, mauro: 240, retira_local: 300 };
+  const limite = limites[correoId] || 180;
+  if (mins > limite) return 'alerta';
+  if (mins > limite * 0.6) return 'aviso';
+  return 'ok';
+}
+
+function minutosHastaRetiro(correoId) {
+  const h = horarios[correoId];
+  if (!h) return null;
+  const [hh, mm] = h.split(':').map(Number);
+  const ahora = new Date();
+  const retiro = new Date();
+  retiro.setHours(hh, mm, 0, 0);
+  return Math.floor((retiro - ahora) / 60000);
+}
+
+function badgeCorreo(id) {
+  const cfg = CORREOS_CONFIG[id] || { nombre: id, emoji: '📦' };
+  return `<span class="badge badge-${id}">${cfg.emoji} ${cfg.nombre}</span>`;
+}
+
+function badgeCanal(id) {
+  const nombres = { ml_pret:'ML Pret', ml_lavan:'ML Lavan', tn_pret:'TN Pret', tn_lavan:'TN Lavan' };
+  return `<span class="badge badge-${id}">${nombres[id] || id}</span>`;
+}
+
+// ── Carga de datos ────────────────────────────────────────────────
+async function cargarTodo() {
+  const [p, h, u] = await Promise.all([
+    fetch('/api/cola').then(r => r.json()),
+    fetch('/api/horarios').then(r => r.json()),
+    fetch('/api/usuarios').then(r => r.json()),
+  ]);
+  pedidos = p;
+  horarios = {};
+  h.forEach(x => horarios[x.correo_id] = x.hora_retiro);
+  usuarios = u;
+
+  renderCorreos();
+  renderTabla();
+  actualizarSeleccion();
+}
+
+async function syncPedidos() {
+  const btn = document.querySelector('.btn-outline[onclick="syncPedidos()"]');
+  btn.textContent = '🔄 Sincronizando...';
+  btn.disabled = true;
+  try {
+    await fetch('/api/sync', { method: 'POST' });
+  } catch(e) {}
+  await cargarTodo();
+  btn.textContent = '🔄 Sync';
+  btn.disabled = false;
+}
+
+// ── Render contadores correos ─────────────────────────────────────
+function renderCorreos() {
+  const resumen = {};
+  pedidos.forEach(p => {
+    const id = p.correo_id || 'sin_correo';
+    if (!resumen[id]) resumen[id] = { pendiente: 0, en_picking: 0, listo_empaquetar: 0, listo_despacho: 0, en_espera: 0 };
+    resumen[id][p.estado] = (resumen[id][p.estado] || 0) + 1;
+  });
+
+  const grid = document.getElementById('correos-grid');
+  grid.innerHTML = Object.keys(CORREOS_CONFIG).map(id => {
+    const cfg = CORREOS_CONFIG[id];
+    const s = resumen[id] || {};
+    const total = Object.values(s).reduce((a,b) => a+b, 0);
+    if (total === 0) return '';
+
+    const mins = minutosHastaRetiro(id);
+    let countdownHtml = '';
+    let cardClass = '';
+    if (mins !== null) {
+      const cls = mins < 30 ? 'alerta' : mins < 90 ? 'aviso' : 'ok';
+      countdownHtml = `<span class="countdown ${cls}">${mins < 0 ? '¡PASÓ!' : mins + 'm'}</span>`;
+      if (cls === 'alerta') cardClass = 'alerta';
+      else if (cls === 'aviso') cardClass = 'aviso';
+    }
+
+    return `
+      <div class="correo-card ${cardClass}">
+        <div class="correo-nombre">${cfg.emoji} ${cfg.nombre}</div>
+        <div class="correo-stats">
+          ${s.pendiente      ? `<div class="correo-stat"><span>Pendientes</span><span>${s.pendiente}</span></div>` : ''}
+          ${s.en_picking     ? `<div class="correo-stat"><span>En picking</span><span>${s.en_picking}</span></div>` : ''}
+          ${s.en_espera      ? `<div class="correo-stat"><span>⚠️ En espera</span><span>${s.en_espera}</span></div>` : ''}
+          ${s.listo_empaquetar ? `<div class="correo-stat"><span>Para empaquetar</span><span>${s.listo_empaquetar}</span></div>` : ''}
+          ${s.listo_despacho ? `<div class="correo-stat"><span>Para despacho</span><span>${s.listo_despacho}</span></div>` : ''}
+        </div>
+        <div class="correo-retiro">
+          <strong>${horarios[id] ? '🕐 ' + horarios[id] : 'Sin horario'}</strong>
+          ${countdownHtml}
+          <button class="btn-edit-hora" onclick="editarHorario('${id}')">✏️</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── Render tabla ──────────────────────────────────────────────────
+function renderTabla() {
+  const filtrados = filtroActual === 'todos' ? pedidos : pedidos.filter(p => p.estado === filtroActual);
+  const tbody = document.getElementById('tbody');
+  const loader = document.getElementById('loader');
+  const tabla = document.getElementById('tabla');
+
+  if (filtrados.length === 0) {
+    loader.textContent = 'No hay pedidos en esta categoría.';
+    loader.style.display = 'block';
+    tabla.style.display = 'none';
+    return;
+  }
+  loader.style.display = 'none';
+  tabla.style.display = 'table';
+
+  const grupos = ['en_espera', 'pendiente', 'en_picking', 'listo_empaquetar', 'listo_despacho'];
+  const labels = { en_espera:'⚠️ En espera', pendiente:'Pendientes', en_picking:'En picking', listo_empaquetar:'Listos para empaquetar', listo_despacho:'Listos para despacho' };
+
+  let html = '';
+  grupos.forEach(grupo => {
+    const grupo_pedidos = filtrados.filter(p => p.estado === grupo);
+    if (!grupo_pedidos.length) return;
+    if (filtroActual === 'todos') {
+      html += `<tr class="grupo-header"><td colspan="10">${labels[grupo]} (${grupo_pedidos.length})</td></tr>`;
+    }
+    grupo_pedidos.forEach(p => {
+      const mins = Math.floor(p.minutos_esperando || 0);
+      const claseT = claseEsperando(mins, p.correo_id);
+      const sel = seleccionados.has(p.id) ? 'seleccionado' : '';
+      const puedeSeleccionar = p.estado === 'pendiente';
+      const pct = p.total_items > 0 ? Math.round((p.items_recolectados / p.total_items) * 100) : 0;
+      const dupla = p.picker_nombre ? `${p.picker_nombre} / ${p.packer_nombre || '?'}` : '—';
+
+      html += `
+        <tr class="${sel}" onclick="${puedeSeleccionar ? `toggleSelect(${p.id})` : `verItems(${p.id})`}">
+          <td><input type="checkbox" class="cb" ${puedeSeleccionar?'':'disabled'} ${sel?'checked':''} onchange="toggleSelect(${p.id})" onclick="event.stopPropagation()"></td>
+          <td><strong>#${p.numero_pedido}</strong></td>
+          <td>${badgeCanal(p.canal_id)}</td>
+          <td>${badgeCorreo(p.correo_id)}</td>
+          <td class="tiempo">${new Date(p.fecha_compra).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td>
+          <td class="tiempo ${claseT}">${tiempoDesde(p.fecha_compra)}</td>
+          <td>${p.total_items} SKU · ${p.total_unidades} und</td>
+          <td>
+            <span class="estado-${p.estado}">
+              <span class="estado-dot"></span>${p.estado.replace(/_/g,' ')}
+              ${p.items_faltantes > 0 ? `<span style="color:#ef4444;font-size:11px"> (${p.items_faltantes} faltante${p.items_faltantes>1?'s':''})</span>` : ''}
+            </span>
+          </td>
+          <td>${dupla}</td>
+          <td>
+            ${p.estado === 'en_picking' ? `
+              <div class="progress-bar">
+                <div class="progress-fill ${pct===100?'completo':''}" style="width:${pct}%"></div>
+              </div>
+            ` : ''}
+          </td>
+        </tr>
+      `;
+    });
+  });
+
+  tbody.innerHTML = html;
+}
+
+// ── Selección ─────────────────────────────────────────────────────
+function toggleSelect(id) {
+  const p = pedidos.find(x => x.id === id);
+  if (!p || p.estado !== 'pendiente') return;
+  if (seleccionados.has(id)) seleccionados.delete(id);
+  else seleccionados.add(id);
+  actualizarSeleccion();
+  renderTabla();
+}
+
+function toggleTodos(cb) {
+  const pendientes = pedidos.filter(p => p.estado === 'pendiente');
+  if (cb.checked) pendientes.forEach(p => seleccionados.add(p.id));
+  else seleccionados.clear();
+  actualizarSeleccion();
+  renderTabla();
+}
+
+function actualizarSeleccion() {
+  const n = seleccionados.size;
+  document.getElementById('count-sel').textContent = n;
+  document.getElementById('btn-asignar').disabled = n === 0;
+}
+
+function setFiltro(f, btn) {
+  filtroActual = f;
+  document.querySelectorAll('.filtro-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTabla();
+}
+
+// ── Modal horarios ────────────────────────────────────────────────
+function abrirModalHorarios() {
+  const form = document.getElementById('horarios-form');
+  const correos = ['flex','colecta','cabify','correo_arg','andreani','mauro'];
+  form.innerHTML = correos.map(id => `
+    <label>${CORREOS_CONFIG[id].emoji} ${CORREOS_CONFIG[id].nombre}</label>
+    <input type="time" id="h-${id}" value="${horarios[id] || ''}">
+  `).join('');
+  document.getElementById('modal-horarios').classList.add('open');
+}
+
+async function guardarHorarios() {
+  const correos = ['flex','colecta','cabify','correo_arg','andreani','mauro'];
+  for (const id of correos) {
+    const val = document.getElementById('h-' + id).value;
+    if (val) {
+      await fetch('/api/horarios', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ correo_id: id, hora_retiro: val, notas: null })
+      });
+      horarios[id] = val;
+    }
+  }
+  cerrarModal('modal-horarios');
+  renderCorreos();
+}
+
+function editarHorario(correoId) {
+  abrirModalHorarios();
+  setTimeout(() => document.getElementById('h-' + correoId)?.focus(), 100);
+}
+
+// ── Modal asignar ─────────────────────────────────────────────────
+function abrirModalAsignar() {
+  // Todos los operarios pueden ser recolector o empaquetador
+  const operarios = usuarios.filter(u => u.rol === 'operario');
+  const optsP = operarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
+  const optsK = operarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
+  document.getElementById('sel-picker').innerHTML = `<option value="">— elegir picker —</option>${optsP}`;
+  document.getElementById('sel-packer').innerHTML = `<option value="">— elegir packer —</option>${optsK}`;
+
+  const sels = pedidos.filter(p => seleccionados.has(p.id));
+  document.getElementById('asignar-info').innerHTML =
+    `<strong>${sels.length} pedidos seleccionados</strong>`;
+
+  const lista = document.getElementById('asignar-lista');
+  lista.innerHTML = sels.map(p => `
+    <div style="padding:8px 0;border-bottom:1px solid #2d3148;font-size:13px;display:flex;gap:12px;align-items:center">
+      ${badgeCorreo(p.correo_id)}
+      <span>#${p.numero_pedido}</span>
+      ${badgeCanal(p.canal_id)}
+      <span style="color:#64748b">${p.total_unidades} und</span>
+    </div>
+  `).join('');
+
+  document.getElementById('modal-asignar').classList.add('open');
+}
+
+async function confirmarAsignacion() {
+  const picker_id = document.getElementById('sel-picker').value;
+  const packer_id = document.getElementById('sel-packer').value;
+  if (!picker_id || !packer_id) { alert('Elegí picker y packer'); return; }
+
+  const res = await fetch('/api/asignar', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ pedido_ids: [...seleccionados], picker_id: parseInt(picker_id), packer_id: parseInt(packer_id) })
+  });
+  const data = await res.json();
+
+  cerrarModal('modal-asignar');
+  seleccionados.clear();
+  await cargarTodo();
+  alert(`✅ ${data.asignados} pedidos asignados.\n\nAbrí el listado de etiquetas para imprimir.`);
+}
+
+function verItems(pedidoId) {
+  // TODO: modal con items del pedido
+}
+
+function cerrarModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+cargarTodo();
+setInterval(cargarTodo, 30000); // refresca cada 30 segundos
+</script>
+</body>
+</html>

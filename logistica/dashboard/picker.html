@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Picker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; overflow: hidden; }
+
+  /* Login */
+  .login-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; gap: 16px; }
+  .login-screen h1 { font-size: 24px; margin-bottom: 8px; }
+  .login-screen p { color: #64748b; font-size: 14px; margin-bottom: 16px; }
+  .user-list { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 320px; }
+  .user-btn { padding: 16px; background: #1a1d27; border: 1px solid #2d3148; border-radius: 12px; color: #e2e8f0; font-size: 16px; font-weight: 600; cursor: pointer; text-align: left; transition: all .15s; }
+  .user-btn:hover { border-color: #4f6ef7; background: #1e2235; }
+
+  /* Header */
+  .header { background: #1a1d27; border-bottom: 1px solid #2d3148; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: #4f6ef7; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
+  .header h2 { font-size: 15px; font-weight: 600; }
+  .header-sub { font-size: 12px; color: #64748b; }
+  .progreso { font-size: 13px; color: #4f6ef7; font-weight: 700; }
+
+  /* Empty state */
+  .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 16px; color: #64748b; text-align: center; padding: 24px; }
+  .empty-icon { font-size: 48px; }
+
+  /* Stack de cartas */
+  .stack { position: relative; width: 100%; height: calc(100vh - 60px); display: flex; align-items: center; justify-content: center; padding: 16px; }
+
+  /* Carta */
+  .carta { position: absolute; width: calc(100% - 32px); max-width: 420px; background: #1a1d27; border: 1px solid #2d3148; border-radius: 20px; padding: 20px; user-select: none; touch-action: pan-y; transition: box-shadow .2s; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+  .carta.dragging { transition: none; }
+  .carta-bg { position: absolute; width: calc(100% - 32px); max-width: 420px; background: #131620; border: 1px solid #1e2235; border-radius: 20px; height: 120px; top: 50%; transform: translateY(-46%) scale(.95); z-index: -1; }
+
+  /* Overlay de feedback */
+  .overlay-si  { position: absolute; top: 20px; left: 20px; background: #14532d; color: #4ade80; border: 2px solid #4ade80; border-radius: 8px; padding: 4px 12px; font-size: 18px; font-weight: 900; transform: rotate(-12deg); opacity: 0; transition: opacity .1s; pointer-events: none; }
+  .overlay-no  { position: absolute; top: 20px; right: 20px; background: #450a0a; color: #f87171; border: 2px solid #f87171; border-radius: 8px; padding: 4px 12px; font-size: 18px; font-weight: 900; transform: rotate(12deg); opacity: 0; transition: opacity .1s; pointer-events: none; }
+
+  /* Contenido carta */
+  .carta-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .carta-numero { font-size: 18px; font-weight: 800; }
+  .carta-canal { font-size: 11px; padding: 3px 8px; border-radius: 5px; font-weight: 700; }
+  .canal-ml_pret, .canal-ml_lavan { background: #1e3a5f; color: #60a5fa; }
+  .canal-tn_pret, .canal-tn_lavan { background: #1a2e1a; color: #86efac; }
+  .correo-badge { font-size: 11px; padding: 3px 8px; border-radius: 5px; background: #2d3148; color: #94a3b8; }
+
+  /* Items */
+  .items-lista { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+  .item-row { background: #131620; border-radius: 10px; padding: 12px; }
+  .item-top { display: flex; align-items: center; gap: 10px; }
+  .item-check { width: 24px; height: 24px; border-radius: 6px; border: 2px solid #3d4266; background: transparent; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all .15s; }
+  .item-check.checked { background: #4f6ef7; border-color: #4f6ef7; }
+  .item-check.checked::after { content: '✓'; color: white; font-size: 14px; font-weight: 700; }
+  .item-info { flex: 1; }
+  .item-nombre { font-size: 14px; font-weight: 600; line-height: 1.3; }
+  .item-sku { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .item-qty { font-size: 20px; font-weight: 800; color: #4f6ef7; flex-shrink: 0; }
+
+  /* Hint de extras */
+  .item-hint { margin-top: 8px; padding: 8px 10px; background: #1a2535; border-radius: 8px; border-left: 3px solid #f59e0b; }
+  .item-hint-msg { font-size: 12px; color: #fbbf24; margin-bottom: 6px; }
+  .item-hint-input { display: flex; align-items: center; gap: 8px; }
+  .item-hint-input label { font-size: 12px; color: #94a3b8; }
+  .qty-input { width: 60px; padding: 4px 8px; background: #0f1117; border: 1px solid #3d4266; border-radius: 6px; color: #e2e8f0; font-size: 14px; font-weight: 600; text-align: center; }
+  .item-staged { margin-top: 8px; padding: 6px 10px; background: #132013; border-radius: 8px; border-left: 3px solid #4ade80; font-size: 12px; color: #4ade80; }
+
+  /* Botones */
+  .acciones { display: flex; gap: 12px; }
+  .btn-espera { flex: 1; padding: 14px; border-radius: 12px; border: 2px solid #ef4444; background: transparent; color: #ef4444; font-size: 15px; font-weight: 700; cursor: pointer; transition: all .15s; }
+  .btn-espera:hover { background: #450a0a; }
+  .btn-listo { flex: 2; padding: 14px; border-radius: 12px; border: none; background: #4f6ef7; color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; transition: all .15s; }
+  .btn-listo:hover { background: #3d5ae0; }
+  .btn-listo:disabled { background: #2d3148; color: #64748b; cursor: not-allowed; }
+
+  /* Barra de progreso */
+  .progress-bar { height: 3px; background: #2d3148; position: fixed; top: 0; left: 0; right: 0; z-index: 200; }
+  .progress-fill { height: 100%; background: #4f6ef7; transition: width .3s; }
+
+  /* Modal problema */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.8); z-index: 300; align-items: flex-end; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #1a1d27; border-top: 1px solid #2d3148; border-radius: 20px 20px 0 0; padding: 24px; width: 100%; max-width: 480px; }
+  .modal h3 { font-size: 16px; margin-bottom: 16px; }
+  .problema-opts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .problema-opt { padding: 14px; background: #131620; border: 1px solid #2d3148; border-radius: 10px; cursor: pointer; font-size: 14px; transition: all .15s; }
+  .problema-opt:hover { border-color: #ef4444; color: #ef4444; }
+  .btn-cancelar { width: 100%; padding: 14px; background: transparent; border: 1px solid #2d3148; border-radius: 12px; color: #94a3b8; font-size: 15px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+
+<!-- Login -->
+<div id="login-screen" class="login-screen">
+  <div class="empty-icon">📦</div>
+  <h1>Hola, ¿quién sos?</h1>
+  <p>Seleccioná tu nombre para ver tus pedidos a recolectar</p>
+  <div class="user-list" id="user-list"></div>
+</div>
+
+<!-- App principal -->
+<div id="app" style="display:none">
+  <div class="header">
+    <div class="header-left">
+      <div class="avatar" id="avatar">?</div>
+      <div>
+        <div class="header h2" id="picker-nombre"></div>
+        <div class="header-sub">Recolector</div>
+      </div>
+    </div>
+    <div class="progreso" id="progreso-texto"></div>
+  </div>
+
+  <div class="stack" id="stack">
+    <div class="empty" id="empty-state" style="display:none">
+      <div class="empty-icon">🎉</div>
+      <h2>¡Todo listo!</h2>
+      <p>Completaste todos tus pedidos asignados.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Modal problema -->
+<div class="modal-overlay" id="modal-problema">
+  <div class="modal">
+    <h3>¿Qué pasó con este pedido?</h3>
+    <div class="problema-opts">
+      <div class="problema-opt" onclick="marcarProblema('producto_no_encontrado')">🔍 No encuentro un producto</div>
+      <div class="problema-opt" onclick="marcarProblema('stock_insuficiente')">📉 No hay suficiente stock</div>
+      <div class="problema-opt" onclick="marcarProblema('producto_danado')">⚠️ Producto dañado</div>
+      <div class="problema-opt" onclick="marcarProblema('otro')">💬 Otro problema</div>
+    </div>
+    <button class="btn-cancelar" onclick="cerrarModalProblema()">Cancelar</button>
+  </div>
+</div>
+
+<script>
+let usuario = null;
+let ordenes = [];
+let indexActual = 0;
+let stagedHoy = {};  // sku → qty_disponible
+let cartaEl = null;
+let startX = 0, startY = 0, currentX = 0;
+let dragging = false;
+
+// ── Login ─────────────────────────────────────────────────────
+async function cargarUsuarios() {
+  const res = await fetch('/api/usuarios');
+  const users = await res.json();
+  const pickers = users.filter(u => u.rol === 'operario');
+  const list = document.getElementById('user-list');
+  list.innerHTML = pickers.map(u => `
+    <button class="user-btn" onclick="seleccionarUsuario(${u.id}, '${u.nombre}')">
+      ${u.nombre}
+    </button>
+  `).join('');
+}
+
+async function seleccionarUsuario(id, nombre) {
+  usuario = { id, nombre };
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('picker-nombre').textContent = nombre;
+  document.getElementById('avatar').textContent = nombre[0].toUpperCase();
+  await cargarOrdenes();
+}
+
+// ── Cargar órdenes ────────────────────────────────────────────
+async function cargarOrdenes() {
+  const [ordenesRes, stagedRes] = await Promise.all([
+    fetch(`/api/picker-ordenes?picker_id=${usuario.id}`),
+    fetch('/api/sku-staged'),
+  ]);
+  ordenes = await ordenesRes.json();
+  const staged = await stagedRes.json();
+  stagedHoy = {};
+  staged.forEach(s => { stagedHoy[s.sku] = s.qty_disponible; });
+
+  indexActual = 0;
+  renderStack();
+}
+
+// ── Render ────────────────────────────────────────────────────
+function renderStack() {
+  const stack = document.getElementById('stack');
+  const empty = document.getElementById('empty-state');
+  const restantes = ordenes.filter(o => o.estado === 'en_picking');
+
+  // Progreso
+  const total = ordenes.length;
+  const completas = ordenes.filter(o => o.estado !== 'en_picking').length;
+  document.getElementById('progreso-texto').textContent = `${completas}/${total}`;
+  document.getElementById('progress-fill').style.width = total > 0 ? `${(completas/total)*100}%` : '0%';
+
+  // Limpiar cartas anteriores
+  stack.querySelectorAll('.carta, .carta-bg').forEach(el => el.remove());
+
+  if (restantes.length === 0) {
+    empty.style.display = 'flex';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Carta de fondo (siguiente)
+  if (restantes.length > 1) {
+    const bg = document.createElement('div');
+    bg.className = 'carta-bg';
+    stack.appendChild(bg);
+  }
+
+  // Carta principal
+  const orden = restantes[0];
+  cartaEl = crearCarta(orden);
+  stack.appendChild(cartaEl);
+  agregarSwipe(cartaEl, orden);
+}
+
+function crearCarta(orden) {
+  const div = document.createElement('div');
+  div.className = 'carta';
+
+  const correoLabel = { flex:'⚡ Flex', colecta:'📬 Colecta', cabify:'🚗 Cabify', correo_arg:'📮 Correo', andreani:'📦 Andreani', mauro:'🛵 Mauro', retira_local:'🏪 Retira local' };
+  const todosChecked = () => div.querySelectorAll('.item-check:not(.checked)').length === 0;
+
+  const itemsHtml = orden.items.map(item => {
+    const staged = stagedHoy[item.sku];
+    const hint = item.qty_pendiente_hoy > 0 && staged === undefined;
+    const yaStaged = staged !== undefined && staged > 0;
+
+    return `
+      <div class="item-row" id="item-${item.id}">
+        <div class="item-top">
+          <div class="item-check" id="check-${item.id}" onclick="toggleCheck('${item.id}', '${item.sku}', this, ${div.id || 0})"></div>
+          <div class="item-info">
+            <div class="item-nombre">${item.nombre_producto}</div>
+            <div class="item-sku">SKU: ${item.sku || '—'}</div>
+          </div>
+          <div class="item-qty">x${item.cantidad}</div>
+        </div>
+        ${hint ? `
+          <div class="item-hint">
+            <div class="item-hint-msg">💡 Hoy se necesitan <strong>${item.qty_pendiente_hoy}</strong> unidades más de este producto en otras órdenes. ¿Cuántas traés de más?</div>
+            <div class="item-hint-input">
+              <label>Extras:</label>
+              <input type="number" class="qty-input" id="extra-${item.sku}" value="${item.qty_pendiente_hoy}" min="0" max="${item.qty_pendiente_hoy}">
+            </div>
+          </div>
+        ` : ''}
+        ${yaStaged ? `
+          <div class="item-staged">✅ Ya hay ${staged} unidades de este producto cerca del packing</div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  div.innerHTML = `
+    <div class="overlay-si" id="overlay-si">LISTO ✓</div>
+    <div class="overlay-no" id="overlay-no">ESPERA</div>
+    <div class="carta-header">
+      <div class="carta-numero">Orden #${orden.numero_pedido}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        <span class="carta-canal canal-${orden.canal_id}">${orden.canal_nombre}</span>
+        <span class="correo-badge">${correoLabel[orden.correo_id] || orden.correo_id}</span>
+      </div>
+    </div>
+    <div class="items-lista">${itemsHtml}</div>
+    <div class="acciones">
+      <button class="btn-espera" onclick="abrirModalProblema()">← Espera</button>
+      <button class="btn-listo" id="btn-listo" onclick="marcarListo(${orden.id})" disabled>Ya está todo ✓</button>
+    </div>
+  `;
+
+  // Habilitar botón listo cuando todos están checkeados
+  div.addEventListener('click', () => {
+    setTimeout(() => {
+      document.getElementById('btn-listo').disabled = !todosChecked();
+    }, 50);
+  });
+
+  return div;
+}
+
+function toggleCheck(itemId, sku, el, pedidoId) {
+  el.classList.toggle('checked');
+}
+
+// ── Swipe ─────────────────────────────────────────────────────
+function agregarSwipe(el, orden) {
+  const onStart = (x, y) => { startX = x; startY = y; currentX = 0; dragging = true; el.classList.add('dragging'); };
+  const onMove  = (x) => {
+    if (!dragging) return;
+    currentX = x - startX;
+    el.style.transform = `translateX(${currentX}px) rotate(${currentX * 0.04}deg)`;
+    const pct = Math.min(Math.abs(currentX) / 100, 1);
+    if (currentX > 0) {
+      document.getElementById('overlay-si').style.opacity = pct;
+      document.getElementById('overlay-no').style.opacity = 0;
+    } else {
+      document.getElementById('overlay-no').style.opacity = pct;
+      document.getElementById('overlay-si').style.opacity = 0;
+    }
+  };
+  const onEnd = () => {
+    if (!dragging) return;
+    dragging = false;
+    el.classList.remove('dragging');
+    if (currentX > 100) {
+      // Solo si btn-listo está habilitado
+      if (!document.getElementById('btn-listo').disabled) {
+        animarSalida(el, 'derecha', () => marcarListo(orden.id));
+      } else {
+        el.style.transform = '';
+        document.getElementById('overlay-si').style.opacity = 0;
+      }
+    } else if (currentX < -100) {
+      animarSalida(el, 'izquierda', () => abrirModalProblema());
+    } else {
+      el.style.transform = '';
+      document.getElementById('overlay-si').style.opacity = 0;
+      document.getElementById('overlay-no').style.opacity = 0;
+    }
+  };
+
+  // Touch
+  el.addEventListener('touchstart', e => onStart(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
+  el.addEventListener('touchmove',  e => onMove(e.touches[0].clientX), { passive: true });
+  el.addEventListener('touchend',   onEnd);
+
+  // Mouse (para desktop/testing)
+  el.addEventListener('mousedown', e => { onStart(e.clientX, e.clientY); });
+  window.addEventListener('mousemove', e => { if (dragging) onMove(e.clientX); });
+  window.addEventListener('mouseup', onEnd);
+}
+
+function animarSalida(el, dir, cb) {
+  el.style.transition = 'transform .3s ease';
+  el.style.transform = `translateX(${dir === 'derecha' ? 600 : -600}px) rotate(${dir === 'derecha' ? 20 : -20}deg)`;
+  setTimeout(cb, 300);
+}
+
+// ── Acciones ──────────────────────────────────────────────────
+async function marcarListo(pedidoId) {
+  // Guardar extras staged
+  const orden = ordenes.find(o => o.id === pedidoId);
+  for (const item of orden.items) {
+    const inputEl = document.getElementById('extra-' + item.sku);
+    if (inputEl) {
+      const extras = parseInt(inputEl.value) || 0;
+      if (extras > 0) {
+        await fetch('/api/sku-staged', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ sku: item.sku, nombre: item.nombre_producto, qty: extras, picker_id: usuario.id })
+        });
+        stagedHoy[item.sku] = extras;
+      }
+    }
+  }
+
+  await fetch('/api/picker-listo', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ pedido_id: pedidoId, picker_id: usuario.id })
+  });
+
+  // Actualizar local
+  const o = ordenes.find(x => x.id === pedidoId);
+  if (o) o.estado = 'listo_empaquetar';
+  renderStack();
+}
+
+let pedidoProblemaId = null;
+function abrirModalProblema() {
+  const restantes = ordenes.filter(o => o.estado === 'en_picking');
+  if (restantes.length > 0) pedidoProblemaId = restantes[0].id;
+  document.getElementById('modal-problema').classList.add('open');
+}
+
+async function marcarProblema(tipo) {
+  await fetch('/api/picker-problema', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ pedido_id: pedidoProblemaId, tipo, picker_id: usuario.id })
+  });
+  const o = ordenes.find(x => x.id === pedidoProblemaId);
+  if (o) o.estado = 'en_espera';
+  cerrarModalProblema();
+  renderStack();
+}
+
+function cerrarModalProblema() {
+  document.getElementById('modal-problema').classList.remove('open');
+}
+
+// ── Init ──────────────────────────────────────────────────────
+cargarUsuarios();
+</script>
+</body>
+</html>
