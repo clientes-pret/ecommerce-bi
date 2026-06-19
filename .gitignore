@@ -1,0 +1,13 @@
+config.json
+credentials.json
+token.json
+client_secret_*.json
+*.plist
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.xlsx
+*.csv
+logs/
+data/
