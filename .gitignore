@@ -11,3 +11,5 @@ __pycache__/
 *.csv
 logs/
 data/
+*.log
+.claude/
