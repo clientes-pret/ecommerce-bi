@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reposición — Armar pedido</title>
+<title>Reposición — Carrito</title>
 <style>
   :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#e8eaed; --muted:#8b93a1; --accent:#4f8cff; }
   * { box-sizing: border-box; }
@@ -15,11 +15,12 @@
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
-  input[type=number] { width: 70px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
-  input[type=checkbox] { transform: scale(1.1); }
+  input[type=number] { width: 80px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
   .hint { color: var(--muted); font-size: 11px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-right: 8px; }
   button.secondary { background: #0f1115; border: 1px solid var(--border); color: var(--text); }
+  button.link { background: transparent; color: var(--muted); padding: 2px 6px; font-size: 12px; margin: 0; }
+  button.link:hover { color: #e57373; }
   button:disabled { opacity: 0.5; cursor: default; }
   .grupo-acciones { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
   .ok-msg { color: #6fcf97; font-size: 13px; }
@@ -28,9 +29,10 @@
 </head>
 <body>
 <main>
-  <h1>🧾 Armar pedido de reposición</h1>
+  <h1>🛒 Carrito de reposición</h1>
   <div id="vacio" style="display:none">
-    No hay productos seleccionados. Volvé al <a href="index.html" style="color:var(--accent)">tablero</a> y elegí SKUs con el checkbox.
+    El carrito está vacío. Volvé al <a href="index.html" style="color:var(--accent)">tablero</a>, elegí un SKU,
+    decidí cantidad para depósito/Full y agregalo al carrito.
   </div>
   <div id="grupos"></div>
 </main>
@@ -41,33 +43,29 @@
 <script>
 renderNav("pedido");
 
-const items = JSON.parse(localStorage.getItem("repo_pedido_borrador") || "[]");
+const DESTINO_LABEL = { deposito: "Depósito", full_pret: "Full Pret a Home", full_lavan: "Full Casa Lavan" };
 
-function agruparPorProveedor(items) {
+function agruparPorProveedor(lineas) {
   const grupos = new Map();
-  for (const it of items) {
-    if (!grupos.has(it.proveedor)) grupos.set(it.proveedor, []);
-    grupos.get(it.proveedor).push(it);
+  for (const l of lineas) {
+    if (!grupos.has(l.proveedor)) grupos.set(l.proveedor, []);
+    grupos.get(l.proveedor).push(l);
   }
   return grupos;
 }
 
 function lineasDelGrupo(grupoEl) {
-  // Recorre cada fila de producto del grupo y arma las líneas habilitadas (depósito/full_pret/full_lavan)
   const lineas = [];
   grupoEl.querySelectorAll("tbody tr[data-sku]").forEach((tr) => {
-    const sku = tr.dataset.sku;
-    const nombre = tr.dataset.nombre;
-    for (const destino of ["deposito", "full_pret", "full_lavan"]) {
-      const chk = tr.querySelector(`input.chk-destino[data-destino="${destino}"]`);
-      const qty = tr.querySelector(`input.qty-destino[data-destino="${destino}"]`);
-      if (chk && chk.checked && Number(qty.value) > 0) {
-        lineas.push({
-          sku, nombre, destino,
-          cantidad_pedida: Number(qty.value),
-          cantidad_sugerida: Number(qty.dataset.sugerida || 0),
-        });
-      }
+    const qty = Number(tr.querySelector("input.qty-linea").value);
+    if (qty > 0) {
+      lineas.push({
+        sku: tr.dataset.sku,
+        nombre: tr.dataset.nombre,
+        destino: tr.dataset.destino,
+        cantidad_pedida: qty,
+        cantidad_sugerida: Number(tr.dataset.sugerida || 0),
+      });
     }
   });
   return lineas;
@@ -92,13 +90,12 @@ function generarPDF(proveedor, lineas) {
   doc.line(14, y, 196, y);
   y += 6;
 
-  const destinoLabel = { deposito: "Depósito", full_pret: "Full Pret", full_lavan: "Full Lavan" };
   doc.setFontSize(10);
   for (const l of lineas) {
     if (y > 280) { doc.addPage(); y = 20; }
     doc.text(String(l.sku), 14, y);
     doc.text(String(l.nombre || "").slice(0, 45), 50, y);
-    doc.text(destinoLabel[l.destino] || l.destino, 140, y);
+    doc.text(DESTINO_LABEL[l.destino] || l.destino, 140, y);
     doc.text(String(l.cantidad_pedida), 175, y);
     y += 7;
   }
@@ -106,7 +103,7 @@ function generarPDF(proveedor, lineas) {
   const totalUnidades = lineas.reduce((s, l) => s + l.cantidad_pedida, 0);
   y += 4;
   doc.setFontSize(11);
-  doc.text(`Total: ${lineas.length} SKUs, ${totalUnidades} unidades`, 14, y);
+  doc.text(`Total: ${lineas.length} líneas, ${totalUnidades} unidades`, 14, y);
 
   doc.save(`pedido_${proveedor.replace(/\s+/g, "_")}_${hoy.replace(/\//g, "-")}.pdf`);
 }
@@ -120,10 +117,15 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
       method: "POST",
       body: JSON.stringify({ proveedor, creado_por: getUser(), items: lineas }),
     });
+    // El pedido ya quedó registrado en el servidor — sacamos del carrito
+    // local las líneas de este proveedor que se acaban de confirmar.
+    const restantes = getCarrito().filter((l) => l.proveedor !== proveedor);
+    setCarrito(restantes);
     grupoEl.querySelector(".grupo-acciones").insertAdjacentHTML(
       "beforeend", `<span class="ok-msg">✓ Pedido #${res.pedido_id} guardado</span>`
     );
     btn.textContent = "Guardado";
+    grupoEl.querySelectorAll("input, button.link").forEach((el) => el.disabled = true);
   } catch (e) {
     btn.disabled = false;
     btn.textContent = "Confirmar pedido";
@@ -131,37 +133,30 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
   }
 }
 
-function renderGrupo(proveedor, productos) {
+function quitarLinea(sku, destino) {
+  quitarLineaCarrito(sku, destino);
+  render();
+}
+
+function renderGrupo(proveedor, lineas) {
   const el = document.createElement("div");
   el.className = "grupo";
-  const filas = productos.map((p) => `
-    <tr data-sku="${p.sku}" data-nombre="${(p.nombre || "").replace(/"/g, "&quot;")}">
-      <td>${p.sku}</td>
-      <td>${p.nombre || "—"}</td>
+  const filas = lineas.map((l) => `
+    <tr data-sku="${l.sku}" data-nombre="${(l.nombre || "").replace(/"/g, "&quot;")}" data-destino="${l.destino}" data-sugerida="${l.cantidad_sugerida || 0}">
+      <td>${l.sku}</td>
+      <td>${l.nombre || "—"}</td>
+      <td>${DESTINO_LABEL[l.destino] || l.destino}</td>
       <td>
-        <input type="checkbox" class="chk-destino" data-destino="deposito" ${p.a_reponer_deposito > 0 ? "checked" : ""}>
-        <input type="number" class="qty-destino" data-destino="deposito" data-sugerida="${p.a_reponer_deposito || 0}"
-               value="${p.a_reponer_deposito || 0}" min="0">
-        <div class="hint">stock hoy: ${p.stock_deposito_hoy}</div>
+        <input type="number" class="qty-linea" value="${l.cantidad}" min="0">
+        <div class="hint">stock al agregar: ${fmtNum(l.stock_hoy)}</div>
       </td>
-      <td>
-        <input type="checkbox" class="chk-destino" data-destino="full_pret" ${p.a_reponer_full_pret > 0 ? "checked" : ""}>
-        <input type="number" class="qty-destino" data-destino="full_pret" data-sugerida="${p.a_reponer_full_pret || 0}"
-               value="${p.a_reponer_full_pret || 0}" min="0">
-        <div class="hint">stock hoy: ${p.stock_full_pret_hoy}</div>
-      </td>
-      <td>
-        <input type="checkbox" class="chk-destino" data-destino="full_lavan" ${p.a_reponer_full_lavan > 0 ? "checked" : ""}>
-        <input type="number" class="qty-destino" data-destino="full_lavan" data-sugerida="${p.a_reponer_full_lavan || 0}"
-               value="${p.a_reponer_full_lavan || 0}" min="0">
-        <div class="hint">stock hoy: ${p.stock_full_lavan_hoy}</div>
-      </td>
+      <td><button class="link btn-quitar">✕ Quitar</button></td>
     </tr>`).join("");
 
   el.innerHTML = `
-    <h2>📦 ${proveedor} — ${productos.length} SKUs</h2>
+    <h2>📦 ${proveedor} — ${lineas.length} líneas</h2>
     <table>
-      <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th>Full Pret</th><th>Full Lavan</th></tr></thead>
+      <thead><tr><th>SKU</th><th>Producto</th><th>Destino</th><th>Cantidad</th><th></th></tr></thead>
       <tbody>${filas}</tbody>
     </table>
     <div class="grupo-acciones">
@@ -170,14 +165,20 @@ function renderGrupo(proveedor, productos) {
     </div>
   `;
 
+  el.querySelectorAll(".btn-quitar").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tr = btn.closest("tr");
+      quitarLinea(tr.dataset.sku, tr.dataset.destino);
+    });
+  });
   el.querySelector(".btn-pdf").addEventListener("click", () => {
     const lineas = lineasDelGrupo(el);
-    if (!lineas.length) return alert("No hay líneas habilitadas con cantidad > 0.");
+    if (!lineas.length) return alert("No hay líneas con cantidad > 0.");
     generarPDF(proveedor, lineas);
   });
   el.querySelector(".btn-confirmar").addEventListener("click", () => {
     const lineas = lineasDelGrupo(el);
-    if (!lineas.length) return alert("No hay líneas habilitadas con cantidad > 0.");
+    if (!lineas.length) return alert("No hay líneas con cantidad > 0.");
     confirmarPedido(proveedor, lineas, el);
   });
 
@@ -185,14 +186,17 @@ function renderGrupo(proveedor, productos) {
 }
 
 function render() {
-  if (!items.length) {
+  const carrito = getCarrito();
+  const cont = document.getElementById("grupos");
+  cont.innerHTML = "";
+  if (!carrito.length) {
     document.getElementById("vacio").style.display = "block";
     return;
   }
-  const grupos = agruparPorProveedor(items);
-  const cont = document.getElementById("grupos");
-  for (const [proveedor, productos] of grupos) {
-    cont.appendChild(renderGrupo(proveedor, productos));
+  document.getElementById("vacio").style.display = "none";
+  const grupos = agruparPorProveedor(carrito);
+  for (const [proveedor, lineas] of grupos) {
+    cont.appendChild(renderGrupo(proveedor, lineas));
   }
 }
 

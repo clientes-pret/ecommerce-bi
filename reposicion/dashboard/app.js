@@ -96,10 +96,10 @@ async function apiFetch(path, options = {}) {
 
 const NAV_LINKS = [
   { href: "index.html", label: "📦 Tablero", key: "tablero" },
-  { href: "pedido.html", label: "🧾 Armar pedido", key: "pedido" },
+  { href: "pedido.html", label: "🛒 Carrito", key: "pedido" },
   { href: "historial_pedidos.html", label: "📋 Pedidos", key: "pedidos" },
   { href: "historial_quiebres.html", label: "🕳️ Quiebres", key: "quiebres" },
-  { href: "full_metrics.html", label: "🚚 Full", key: "full" },
+  { href: "analisis_stock.html", label: "📊 Análisis de stock", key: "analisis" },
 ];
 
 function renderNav(activeKey) {
@@ -110,7 +110,8 @@ function renderNav(activeKey) {
   for (const link of NAV_LINKS) {
     const a = document.createElement("a");
     a.href = link.href;
-    a.textContent = link.label;
+    const carritoLen = link.key === "pedido" ? getCarrito().length : 0;
+    a.textContent = carritoLen ? `${link.label} (${carritoLen})` : link.label;
     const isActive = link.key === activeKey;
     a.style.cssText =
       "color:#e8eaed;text-decoration:none;font-size:13px;padding:6px 12px;border-radius:6px;" +
@@ -118,6 +119,43 @@ function renderNav(activeKey) {
     nav.appendChild(a);
   }
   document.body.insertBefore(nav, document.body.firstChild);
+}
+
+// ─── Carrito ────────────────────────────────────────────────────────────────
+// Reemplaza la selección ciega por checkbox: cada línea ya trae destino y
+// cantidad decididos en el tablero (ver reposicion/dashboard/index.html),
+// persiste en localStorage entre búsquedas/filtros/recargas.
+
+const CARRITO_KEY = "repo_carrito";
+
+function getCarrito() {
+  try {
+    return JSON.parse(localStorage.getItem(CARRITO_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function setCarrito(lineas) {
+  localStorage.setItem(CARRITO_KEY, JSON.stringify(lineas));
+}
+
+function addLineaCarrito(linea) {
+  const carrito = getCarrito();
+  const idx = carrito.findIndex((l) => l.sku === linea.sku && l.destino === linea.destino);
+  if (idx >= 0) carrito[idx] = linea; else carrito.push(linea);
+  setCarrito(carrito);
+  return carrito;
+}
+
+function quitarLineaCarrito(sku, destino) {
+  const carrito = getCarrito().filter((l) => !(l.sku === sku && l.destino === destino));
+  setCarrito(carrito);
+  return carrito;
+}
+
+function totalUnidadesCarrito() {
+  return getCarrito().reduce((s, l) => s + (l.cantidad || 0), 0);
 }
 
 function fmtNum(n) {

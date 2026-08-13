@@ -109,9 +109,11 @@ async function getProductos(url: URL) {
     const calc = calculos.get(p.sku as string) ?? {};
     const snap = snapshots.get(p.sku as string) ?? {};
     const proveedor = (p.proveedor_manual as string) || (p.proveedor_auto as string) || "Otros";
+    const categoria = (p.categoria_manual as string) || (p.categoria_auto as string) || "Bazar";
     return {
       ...p,
       proveedor,
+      categoria,
       ...calc,
       stock_deposito_hoy: snap.stock_deposito ?? null,
       stock_full_pret_hoy: snap.stock_full_pret ?? null,
@@ -176,6 +178,16 @@ async function postProveedor(sku: string, req: Request) {
   const { error } = await supabase
     .from("repo_productos")
     .update({ proveedor_manual: proveedor, updated_at: new Date().toISOString() })
+    .eq("sku", sku);
+  if (error) throw error;
+  return json({ ok: true });
+}
+
+async function postCategoria(sku: string, req: Request) {
+  const { categoria } = await req.json();
+  const { error } = await supabase
+    .from("repo_productos")
+    .update({ categoria_manual: categoria, updated_at: new Date().toISOString() })
     .eq("sku", sku);
   if (error) throw error;
   return json({ ok: true });
@@ -256,6 +268,9 @@ Deno.serve(async (req) => {
 
     if (req.method === "POST" && parts[0] === "productos" && parts[2] === "proveedor") {
       return await postProveedor(decodeURIComponent(parts[1]), req);
+    }
+    if (req.method === "POST" && parts[0] === "productos" && parts[2] === "categoria") {
+      return await postCategoria(decodeURIComponent(parts[1]), req);
     }
     if (req.method === "POST" && parts[0] === "productos" && parts[2] === "descontinuar") {
       return await postDescontinuar(decodeURIComponent(parts[1]), req);

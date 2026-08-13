@@ -11,17 +11,16 @@
     --ok: #1e7e34; --bajo: #b8860b; --critico: #b02a37; --nostock: #7a1f2b;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 70px; }
   h1 { font-size: 18px; margin: 0; }
-  select, input[type=text] { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  select, input[type=text], input[type=number] { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  input[type=number] { width: 70px; }
   input[type=text]#buscador { min-width: 220px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
   button.secondary { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+  button:disabled { opacity: 0.5; cursor: default; }
   label.chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .toppanel { padding: 16px 20px 0; }
-  .tabs { display: flex; gap: 4px; margin-top: 14px; border-bottom: 1px solid var(--border); }
-  .tab-btn { background: transparent; border: none; color: var(--muted); padding: 10px 16px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; border-radius: 0; }
-  .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
   .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 0; }
   .toolbar-right { display: flex; gap: 8px; align-items: center; margin-left: auto; }
   main { padding: 0 20px 20px; overflow-x: auto; }
@@ -38,20 +37,23 @@
   .flecha { display: inline-block; transition: transform 0.15s; color: var(--muted); }
   .flecha.abierta { transform: rotate(90deg); }
   .fila-detalle td { background: rgba(255,255,255,0.02); white-space: normal; padding: 14px 20px; }
-  .detalle-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 24px; max-width: 900px; }
+  .detalle-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 24px; max-width: 900px; margin-bottom: 16px; }
   .detalle-item .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
   .detalle-item .valor { font-size: 14px; margin-top: 2px; }
-  .detalle-acciones { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+  .destinos { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .destino-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-width: 220px; flex: 1; }
+  .destino-card h4 { margin: 0 0 8px; font-size: 13px; }
+  .destino-card .fila-mini { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .destino-card .agregar { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+  .detalle-acciones { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+  #carritoBar { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--border);
+    padding: 10px 20px; display: none; align-items: center; gap: 12px; z-index: 500; }
+  #carritoBar.visible { display: flex; }
 </style>
 </head>
 <body>
 <div class="toppanel">
   <h1>📦 Reposición — Tablero</h1>
-  <div class="tabs" id="tabs">
-    <button class="tab-btn" data-tab="deposito">Depósito General</button>
-    <button class="tab-btn" data-tab="full_pret">Full Pret a Home</button>
-    <button class="tab-btn" data-tab="full_lavan">Full Casa Lavan</button>
-  </div>
   <div class="toolbar">
     <input type="text" id="buscador" placeholder="Buscar por SKU o producto…">
     <select id="filtroVista">
@@ -65,7 +67,6 @@
     <div class="toolbar-right">
       <span id="contador" class="muted"></span>
       <button class="secondary" id="btnRefrescar">↻ Refrescar</button>
-      <button id="btnArmarPedido" disabled>🧾 Armar pedido (0)</button>
     </div>
   </div>
 </div>
@@ -74,35 +75,36 @@
   <table id="tabla" style="display:none">
     <thead>
       <tr>
-        <th><input type="checkbox" id="checkTodos"></th>
         <th></th>
         <th>SKU</th>
         <th>Producto</th>
         <th>Proveedor</th>
-        <th>Stock</th>
-        <th>Vendido 60d</th>
-        <th>Vel. diaria / sem.</th>
-        <th>Días quiebre</th>
-        <th>Alerta</th>
-        <th>A reponer</th>
+        <th>Stock Depósito</th>
+        <th>Stock Full PAH</th>
+        <th>Stock Full CL</th>
+        <th>Estado</th>
       </tr>
     </thead>
     <tbody id="filas"></tbody>
   </table>
 </main>
 
+<div id="carritoBar">
+  <span id="carritoTexto">🛒 0 líneas</span>
+  <button id="btnVerCarrito">Ver carrito</button>
+</div>
+
 <script src="config.js"></script>
 <script src="app.js"></script>
 <script>
 renderNav("tablero");
 
-// ─── Config por pestaña: cada destino (depósito / Full Pret / Full Lavan) es
-// un pool de stock independiente, con su propia velocidad/quiebre/alerta —
-// ver reposicion/core.py:full_metrics_marca. Acá solo mapeamos qué campo de
-// /productos corresponde a cada columna según la pestaña activa.
-const TABS = {
+// Config por destino — cada uno es un pool de stock independiente (ver
+// reposicion/core.py:full_metrics_marca), la velocidad de depósito es
+// general (stock compartido), la de cada Full es propia de su marca.
+const DESTINOS = {
   deposito: {
-    label: "Depósito General", destino: "deposito",
+    label: "Depósito", destino: "deposito",
     stock: (p) => p.stock_deposito_hoy ?? p.stock_deposito,
     velDiaria: "vel_diaria_deposito", velSemanal: "vel_semanal_deposito",
     vendido: "vendido_deposito", diasQuiebre: "dias_quiebre_deposito",
@@ -125,34 +127,7 @@ const TABS = {
 };
 
 let PRODUCTOS = [];
-let TAB_ACTUAL = "deposito";
-const SELECTED = new Set();
 const EXPANDIDAS = new Set();
-
-function actualizarToolbarSeleccion() {
-  const btn = document.getElementById("btnArmarPedido");
-  btn.textContent = `🧾 Armar pedido (${SELECTED.size})`;
-  btn.disabled = SELECTED.size === 0;
-}
-
-function armarPedidoConSeleccion() {
-  // Full Pret y Full Lavan son pools de stock separados en Mercado Libre
-  // (no se comparten entre marcas) — cada uno con su propia sugerencia de
-  // reposición, nunca una cifra combinada (ver reposicion/core.py:full_metrics_marca).
-  const items = PRODUCTOS.filter((p) => SELECTED.has(p.sku)).map((p) => ({
-    sku: p.sku,
-    nombre: p.nombre,
-    proveedor: p.proveedor,
-    a_reponer_deposito: p.a_reponer_deposito || 0,
-    a_reponer_full_pret: p.a_reponer_full_pret || 0,
-    a_reponer_full_lavan: p.a_reponer_full_lavan || 0,
-    stock_deposito_hoy: p.stock_deposito_hoy ?? p.stock_deposito ?? 0,
-    stock_full_pret_hoy: p.stock_full_pret_hoy ?? 0,
-    stock_full_lavan_hoy: p.stock_full_lavan_hoy ?? 0,
-  }));
-  localStorage.setItem("repo_pedido_borrador", JSON.stringify(items));
-  window.location.href = "pedido.html";
-}
 
 function alertaClass(alerta) {
   if (!alerta) return "";
@@ -163,17 +138,43 @@ function alertaClass(alerta) {
   return "background:#333";
 }
 
-function necesitaReposicion(p, tab) {
+function peorAlerta(p) {
+  // Para el badge compacto de la fila: el peor estado entre los 3 destinos
+  // (sin stock > crítico > bajo > ok > sin datos), solo entre destinos con
+  // alguna sugerencia de reposición real (a_reponer > 0) para no alarmar
+  // por Full Casa Lavan cuando esa marca directamente no usa Full.
+  const prioridad = (a) => {
+    if (!a) return -1;
+    if (a.includes("SIN STOCK")) return 4;
+    if (a.includes("CRÍTICO")) return 3;
+    if (a.includes("BAJO")) return 2;
+    if (a.includes("OK")) return 1;
+    return 0;
+  };
+  let mejor = null, mejorPrio = -1;
+  for (const key of Object.keys(DESTINOS)) {
+    const d = DESTINOS[key];
+    const alerta = p[d.alerta];
+    const prio = prioridad(alerta);
+    if (prio > mejorPrio) { mejorPrio = prio; mejor = alerta; }
+  }
+  return mejor;
+}
+
+function necesitaReposicionDestino(p, d) {
   // Mismo criterio que generar_reporte.py: quebrado con ventas históricas,
-  // o quiebre <=10 días con velocidad>0 (ver generar_reporte.py:1498-1500),
-  // aplicado al destino de la pestaña activa.
-  const stock = tab.stock(p);
-  const diasQuiebre = p[tab.diasQuiebre];
-  const velDiaria = p[tab.velDiaria] || 0;
-  const aReponer = p[tab.aReponer] || 0;
+  // o quiebre <=10 días con velocidad>0 (ver generar_reporte.py:1498-1500).
+  const stock = d.stock(p);
+  const diasQuiebre = p[d.diasQuiebre];
+  const velDiaria = p[d.velDiaria] || 0;
+  const aReponer = p[d.aReponer] || 0;
   const quebradoConVentas = stock === 0 && (aReponer || velDiaria > 0);
   const porQuebrar = diasQuiebre !== null && diasQuiebre !== undefined && diasQuiebre <= 10 && velDiaria > 0;
   return (quebradoConVentas || porQuebrar) && aReponer > 0;
+}
+
+function necesitaReposicion(p) {
+  return Object.values(DESTINOS).some((d) => necesitaReposicionDestino(p, d));
 }
 
 function renderProveedores() {
@@ -190,58 +191,110 @@ function renderProveedores() {
 }
 
 function filasVisibles() {
-  const tab = TABS[TAB_ACTUAL];
   const vista = document.getElementById("filtroVista").value;
   const proveedor = document.getElementById("filtroProveedor").value;
   const ocultarSolicitados = document.getElementById("ocultarSolicitados").checked;
   const busqueda = document.getElementById("buscador").value.trim().toLowerCase();
 
   let rows = PRODUCTOS;
-  if (vista === "necesita") rows = rows.filter((p) => necesitaReposicion(p, tab));
+  if (vista === "necesita") rows = rows.filter(necesitaReposicion);
   if (proveedor) rows = rows.filter((p) => p.proveedor === proveedor);
   if (ocultarSolicitados) {
-    rows = rows.filter((p) => !(p.destinos_ya_solicitados || []).includes(tab.destino));
+    rows = rows.filter((p) => (p.destinos_ya_solicitados || []).length === 0);
   }
   if (busqueda) {
     rows = rows.filter((p) =>
       p.sku.toLowerCase().includes(busqueda) || (p.nombre || "").toLowerCase().includes(busqueda)
     );
   }
-  return rows.sort((a, b) => (b[tab.aReponer] || 0) - (a[tab.aReponer] || 0));
+  return rows.sort((a, b) => {
+    const maxA = Math.max(a.a_reponer_deposito || 0, a.a_reponer_full_pret || 0, a.a_reponer_full_lavan || 0);
+    const maxB = Math.max(b.a_reponer_deposito || 0, b.a_reponer_full_pret || 0, b.a_reponer_full_lavan || 0);
+    return maxB - maxA;
+  });
+}
+
+function renderDestinoCard(p, key) {
+  const d = DESTINOS[key];
+  const yaSolicitado = (p.destinos_ya_solicitados || []).includes(d.destino);
+  const sugerido = p[d.aReponer] || 0;
+  const card = document.createElement("div");
+  card.className = "destino-card";
+  card.innerHTML = `
+    <h4>${d.label}</h4>
+    <div class="fila-mini"><span>Stock hoy</span><span>${fmtNum(d.stock(p))}</span></div>
+    <div class="fila-mini"><span>Vendido 60d</span><span>${fmtNum(p[d.vendido])}</span></div>
+    <div class="fila-mini"><span>Vel. diaria/sem.</span><span>${fmtNum(p[d.velDiaria])} / ${fmtNum(p[d.velSemanal])}</span></div>
+    <div class="fila-mini"><span>Días quiebre</span><span>${fmtNum(p[d.diasQuiebre])}</span></div>
+    <div class="fila-mini"><span>Fecha quiebre</span><span>${fmtDate(p[d.fechaQuiebre])}</span></div>
+    <div class="fila-mini"><span>Alerta</span><span><span class="badge" style="${alertaClass(p[d.alerta])}">${p[d.alerta] || "—"}</span></span></div>
+    ${yaSolicitado ? '<div class="fila-mini solicitado">✓ Ya solicitado en este destino</div>' : ""}
+    <div class="agregar">
+      <input type="number" min="0" value="${sugerido}" class="qty-input" data-destino="${d.destino}">
+      <button class="secondary btn-agregar" data-destino="${d.destino}">🛒 Agregar</button>
+    </div>
+  `;
+  card.querySelector(".btn-agregar").addEventListener("click", () => {
+    const qty = Number(card.querySelector(".qty-input").value);
+    if (!qty || qty <= 0) return;
+    addLineaCarrito({
+      sku: p.sku, nombre: p.nombre, proveedor: p.proveedor,
+      destino: d.destino, cantidad: qty, cantidad_sugerida: sugerido,
+      stock_hoy: d.stock(p) ?? 0,
+    });
+    actualizarBarraCarrito();
+    const btn = card.querySelector(".btn-agregar");
+    btn.textContent = "✓ Agregado";
+    setTimeout(() => { btn.textContent = "🛒 Agregar"; }, 1200);
+  });
+  return card;
 }
 
 function renderDetalle(p) {
   const canal = { "ML Pret": p.unid_ml_pret, "ML Lavan": p.unid_ml_lavan, "TN Pret": p.unid_tn_pret, "TN Lavan": p.unid_tn_lavan };
-  const yaSolicitado = (p.destinos_ya_solicitados || []).includes(TABS[TAB_ACTUAL].destino);
   const tr = document.createElement("tr");
   tr.className = "fila-detalle";
-  tr.innerHTML = `<td colspan="11">
-    <div class="detalle-grid">
-      <div class="detalle-item"><div class="label">Confianza métrica</div><div class="valor">${p.confianza || "—"}</div></div>
-      <div class="detalle-item"><div class="label">Fecha quiebre est.</div><div class="valor">${fmtDate(p[TABS[TAB_ACTUAL].fechaQuiebre])}</div></div>
-      <div class="detalle-item"><div class="label">Sobrestock</div><div class="valor">${p.sobrestock_categoria || "—"}</div></div>
-      <div class="detalle-item"><div class="label">Canal dominante</div><div class="valor">${p.canal_dominante || "—"}</div></div>
-      <div class="detalle-item"><div class="label">Revenue 60d</div><div class="valor">$${fmtNum(p.revenue_60d)}</div></div>
-      <div class="detalle-item"><div class="label">Ganancia 60d</div><div class="valor">$${fmtNum(p.ganancia_60d)}</div></div>
-      ${Object.entries(canal).map(([k, v]) => `<div class="detalle-item"><div class="label">${k}</div><div class="valor">${fmtNum(v)} uds</div></div>`).join("")}
-    </div>
-    <div class="detalle-acciones">
-      ${yaSolicitado ? '<span class="solicitado">✓ Ya solicitado en este destino</span>' : ""}
-      <button class="secondary btn-descontinuar" data-sku="${p.sku}">Descontinuar</button>
-    </div>
-  </td>`;
-  tr.querySelector(".btn-descontinuar").addEventListener("click", async () => {
+  const td = document.createElement("td");
+  td.colSpan = 8;
+
+  const destinos = document.createElement("div");
+  destinos.className = "destinos";
+  for (const key of Object.keys(DESTINOS)) destinos.appendChild(renderDestinoCard(p, key));
+
+  const resto = document.createElement("div");
+  resto.className = "detalle-grid";
+  resto.innerHTML = `
+    <div class="detalle-item"><div class="label">Confianza métrica</div><div class="valor">${p.confianza || "—"}</div></div>
+    <div class="detalle-item"><div class="label">Sobrestock</div><div class="valor">${p.sobrestock_categoria || "—"}</div></div>
+    <div class="detalle-item"><div class="label">Categoría</div><div class="valor">${p.categoria || "—"}</div></div>
+    <div class="detalle-item"><div class="label">Canal dominante</div><div class="valor">${p.canal_dominante || "—"}</div></div>
+    <div class="detalle-item"><div class="label">Revenue 60d</div><div class="valor">$${fmtNum(p.revenue_60d)}</div></div>
+    <div class="detalle-item"><div class="label">Ganancia 60d</div><div class="valor">$${fmtNum(p.ganancia_60d)}</div></div>
+    ${Object.entries(canal).map(([k, v]) => `<div class="detalle-item"><div class="label">${k}</div><div class="valor">${fmtNum(v)} uds</div></div>`).join("")}
+  `;
+
+  const acciones = document.createElement("div");
+  acciones.className = "detalle-acciones";
+  const btnDescontinuar = document.createElement("button");
+  btnDescontinuar.className = "secondary";
+  btnDescontinuar.textContent = "Descontinuar";
+  btnDescontinuar.addEventListener("click", async () => {
     if (!confirm(`¿Marcar ${p.sku} como descontinuado? Deja de aparecer en las sugerencias de reposición.`)) return;
     await apiFetch(`/productos/${encodeURIComponent(p.sku)}/descontinuar`, {
       method: "POST", body: JSON.stringify({ descontinuado: true, por: getUser() }),
     });
     cargar();
   });
+  acciones.appendChild(btnDescontinuar);
+
+  td.appendChild(destinos);
+  td.appendChild(resto);
+  td.appendChild(acciones);
+  tr.appendChild(td);
   return tr;
 }
 
 function render() {
-  const tab = TABS[TAB_ACTUAL];
   const rows = filasVisibles();
   document.getElementById("contador").textContent = `${rows.length} productos`;
   const tbody = document.getElementById("filas");
@@ -250,30 +303,20 @@ function render() {
   for (const p of rows) {
     const tr = document.createElement("tr");
     tr.className = "fila-producto";
-    const yaSolicitado = (p.destinos_ya_solicitados || []).includes(tab.destino);
     const abierta = EXPANDIDAS.has(p.sku);
+    const alertaResumen = peorAlerta(p);
     tr.innerHTML = `
-      <td><input type="checkbox" class="chk-sku" ${SELECTED.has(p.sku) ? "checked" : ""}></td>
       <td><span class="flecha ${abierta ? "abierta" : ""}">▸</span></td>
-      <td>${p.sku}${yaSolicitado ? ' <span class="solicitado" title="Ya solicitado">✓</span>' : ""}</td>
+      <td>${p.sku}</td>
       <td>${p.nombre || "<span class=muted>(sin nombre)</span>"}</td>
       <td></td>
-      <td>${fmtNum(tab.stock(p))}</td>
-      <td>${fmtNum(p[tab.vendido])}</td>
-      <td>${fmtNum(p[tab.velDiaria])} / ${fmtNum(p[tab.velSemanal])}</td>
-      <td>${fmtNum(p[tab.diasQuiebre])}</td>
-      <td><span class="badge" style="${alertaClass(p[tab.alerta])}">${p[tab.alerta] || "—"}</span></td>
-      <td><b>${fmtNum(p[tab.aReponer])}</b></td>
+      <td>${fmtNum(DESTINOS.deposito.stock(p))}</td>
+      <td>${fmtNum(DESTINOS.full_pret.stock(p))}</td>
+      <td>${fmtNum(DESTINOS.full_lavan.stock(p))}</td>
+      <td><span class="badge" style="${alertaClass(alertaResumen)}">${alertaResumen || "—"}</span></td>
     `;
 
-    const chk = tr.children[0].querySelector("input");
-    chk.addEventListener("click", (e) => e.stopPropagation());
-    chk.addEventListener("change", () => {
-      if (chk.checked) SELECTED.add(p.sku); else SELECTED.delete(p.sku);
-      actualizarToolbarSeleccion();
-    });
-
-    const tdProveedor = tr.children[4];
+    const tdProveedor = tr.children[3];
     const select = document.createElement("select");
     select.className = "proveedor-select";
     for (const prov of Array.from(new Set(PRODUCTOS.map((x) => x.proveedor))).sort()) {
@@ -338,6 +381,7 @@ async function cargar() {
     PRODUCTOS = await apiFetch(`/productos${qs}`);
     renderProveedores();
     render();
+    actualizarBarraCarrito();
     document.getElementById("status").style.display = "none";
     document.getElementById("tabla").style.display = "table";
   } catch (e) {
@@ -345,20 +389,21 @@ async function cargar() {
   }
 }
 
-document.querySelectorAll(".tab-btn").forEach((btn) => {
-  if (btn.dataset.tab === TAB_ACTUAL) btn.classList.add("active");
-  btn.addEventListener("click", () => {
-    TAB_ACTUAL = btn.dataset.tab;
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
-    render();
-  });
-});
+function actualizarBarraCarrito() {
+  const carrito = getCarrito();
+  const bar = document.getElementById("carritoBar");
+  if (!carrito.length) { bar.classList.remove("visible"); return; }
+  bar.classList.add("visible");
+  const totalUnidades = carrito.reduce((s, l) => s + l.cantidad, 0);
+  document.getElementById("carritoTexto").textContent = `🛒 ${carrito.length} líneas · ${totalUnidades} unidades`;
+}
 
 document.getElementById("filtroVista").addEventListener("change", cargar);
 document.getElementById("filtroProveedor").addEventListener("change", render);
 document.getElementById("ocultarSolicitados").addEventListener("change", render);
 document.getElementById("buscador").addEventListener("input", render);
 document.getElementById("btnRefrescar").addEventListener("click", cargar);
+document.getElementById("btnVerCarrito").addEventListener("click", () => { window.location.href = "pedido.html"; });
 document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
   document.getElementById("buscador").value = "";
   document.getElementById("filtroProveedor").value = "";
@@ -367,14 +412,6 @@ document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
   // "Descontinuados" trae un dataset distinto del servidor (no es un filtro
   // client-side) — si veníamos de ahí hace falta recargar, no solo re-renderizar.
   vistaCambio ? cargar() : render();
-});
-document.getElementById("btnArmarPedido").addEventListener("click", armarPedidoConSeleccion);
-document.getElementById("checkTodos").addEventListener("change", (e) => {
-  for (const p of filasVisibles()) {
-    if (e.target.checked) SELECTED.add(p.sku); else SELECTED.delete(p.sku);
-  }
-  actualizarToolbarSeleccion();
-  render();
 });
 
 cargar();

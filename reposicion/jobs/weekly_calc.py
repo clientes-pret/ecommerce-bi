@@ -147,7 +147,12 @@ def main():
     core.tnlog(f"  {len(rows)} tras deduplicar por SKU")
 
     productos = [
-        {"sku": r["SKU"], "nombre": r["Producto"], "proveedor_auto": r["Proveedor"]}
+        {
+            "sku": r["SKU"],
+            "nombre": r["Producto"],
+            "proveedor_auto": r["Proveedor"],
+            "categoria_auto": core.classify_product(r["Producto"]),
+        }
         for r in rows
     ]
     db.upsert(config, "repo_productos", productos, on_conflict="sku")
