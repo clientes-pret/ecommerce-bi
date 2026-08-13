@@ -13,3 +13,4 @@ logs/
 data/
 *.log
 .claude/
+supabase/.temp/

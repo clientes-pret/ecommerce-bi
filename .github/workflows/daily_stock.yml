@@ -1,0 +1,19 @@
+name: Reposición — stock diario
+
+on:
+  schedule:
+    - cron: "0 9 * * *"  # 06:00 AR (UTC-3) — ajustable
+  workflow_dispatch: {}
+
+jobs:
+  daily_stock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r reposicion/requirements.txt
+      - run: python3 -m reposicion.jobs.daily_stock
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}

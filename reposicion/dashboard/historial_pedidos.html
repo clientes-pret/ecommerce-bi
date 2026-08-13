@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reposición — Historial de pedidos</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#e8eaed; --muted:#8b93a1; --accent:#4f8cff;
+    --ok:#1e7e34; --parcial:#b8860b; --enviado:#2b4a7a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--text); }
+  main { padding: 16px 20px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18px; }
+  .pedido { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  .pedido-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
+  .pedido-header:hover { background: rgba(255,255,255,0.03); }
+  .badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; }
+  .badge.enviado { background: var(--enviado); }
+  .badge.recibido_parcial { background: var(--parcial); }
+  .badge.recibido_completo { background: var(--ok); }
+  .badge.cancelado { background: #444; }
+  .proveedor { font-weight: 600; flex: 1; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .detalle { display: none; padding: 0 16px 14px; }
+  .detalle table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .detalle th, .detalle td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+  .detalle th { color: var(--muted); font-weight: 600; font-size: 11px; }
+  #status { padding: 20px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>📋 Historial de pedidos</h1>
+  <div id="status">Cargando…</div>
+  <div id="lista"></div>
+</main>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+renderNav("pedidos");
+
+const ESTADO_LABEL = {
+  enviado: "Enviado", recibido_parcial: "Recibido parcial",
+  recibido_completo: "Recibido completo", cancelado: "Cancelado",
+};
+const DESTINO_LABEL = { deposito: "Depósito", full_pret: "Full Pret", full_lavan: "Full Lavan" };
+
+function renderPedido(p) {
+  const el = document.createElement("div");
+  el.className = "pedido";
+  const pct = p.total_items ? Math.round((p.items_recibidos / p.total_items) * 100) : 0;
+  el.innerHTML = `
+    <div class="pedido-header">
+      <span class="proveedor">📦 ${p.proveedor}</span>
+      <span class="muted">${new Date(p.creado_at).toLocaleDateString("es-AR")} · ${p.creado_por}</span>
+      <span class="muted">${p.items_recibidos}/${p.total_items} líneas recibidas (${pct}%)</span>
+      <span class="badge ${p.estado}">${ESTADO_LABEL[p.estado] || p.estado}</span>
+    </div>
+    <div class="detalle">
+      <table>
+        <thead><tr><th>SKU</th><th>Destino</th><th>Pedido</th><th>Recibido</th><th>Estado</th></tr></thead>
+        <tbody>
+          ${(p.items || []).map((it) => `
+            <tr>
+              <td>${it.sku}</td>
+              <td>${DESTINO_LABEL[it.destino] || it.destino}</td>
+              <td>${it.cantidad_pedida}</td>
+              <td>${it.cantidad_recibida}</td>
+              <td>${it.recibido_completo ? "✓ Completo" : it.cantidad_recibida > 0 ? "Parcial" : "Pendiente"}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+      ${p.notas ? `<p class="muted">Notas: ${p.notas}</p>` : ""}
+    </div>
+  `;
+  el.querySelector(".pedido-header").addEventListener("click", () => {
+    const det = el.querySelector(".detalle");
+    det.style.display = det.style.display === "block" ? "none" : "block";
+  });
+  return el;
+}
+
+async function cargar() {
+  try {
+    const pedidos = await apiFetch("/pedidos");
+    document.getElementById("status").style.display = "none";
+    const cont = document.getElementById("lista");
+    cont.innerHTML = "";
+    if (!pedidos.length) {
+      cont.innerHTML = '<p class="muted">Todavía no hay pedidos registrados.</p>';
+      return;
+    }
+    for (const p of pedidos) cont.appendChild(renderPedido(p));
+  } catch (e) {
+    document.getElementById("status").textContent = `Error: ${e.message}`;
+  }
+}
+
+cargar();
+</script>
+</body>
+</html>

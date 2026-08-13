@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reposición — Tablero</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e8eaed;
+    --muted: #8b93a1; --accent: #4f8cff;
+    --ok: #1e7e34; --bajo: #b8860b; --critico: #b02a37; --nostock: #7a1f2b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; margin-right: auto; }
+  select, input[type=text] { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  button.secondary { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: var(--critico); }
+  main { padding: 16px 20px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+  th { position: sticky; top: 0; background: var(--bg); color: var(--muted); font-weight: 600; cursor: default; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; display: inline-block; }
+  .proveedor-select { max-width: 140px; }
+  .muted { color: var(--muted); }
+  .solicitado { color: #6fcf97; font-weight: 600; }
+  #status { padding: 20px; color: var(--muted); }
+  .toolbar-right { display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📦 Reposición — Tablero</h1>
+  <select id="filtroVista">
+    <option value="necesita" selected>Necesita reposición</option>
+    <option value="todos">Todos los productos</option>
+    <option value="descontinuados">Descontinuados</option>
+  </select>
+  <select id="filtroProveedor"><option value="">Todos los proveedores</option></select>
+  <div class="toolbar-right">
+    <span id="contador" class="muted"></span>
+    <button class="secondary" id="btnRefrescar">↻ Refrescar</button>
+    <button id="btnArmarPedido" disabled>🧾 Armar pedido (0)</button>
+  </div>
+</header>
+<main>
+  <div id="status">Cargando…</div>
+  <table id="tabla" style="display:none">
+    <thead>
+      <tr>
+        <th><input type="checkbox" id="checkTodos"></th>
+        <th>SKU</th>
+        <th>Producto</th>
+        <th>Proveedor</th>
+        <th>Stock dep.</th>
+        <th>Alerta dep.</th>
+        <th>Días quiebre</th>
+        <th>A reponer</th>
+        <th>Stock Full Pret</th>
+        <th>Alerta Full Pret</th>
+        <th>A enviar Full Pret</th>
+        <th>Stock Full Lavan</th>
+        <th>Alerta Full Lavan</th>
+        <th>A enviar Full Lavan</th>
+        <th>Sobrestock</th>
+        <th>Estado</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="filas"></tbody>
+  </table>
+</main>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+renderNav("tablero");
+let PRODUCTOS = [];
+const SELECTED = new Set();
+
+function actualizarToolbarSeleccion() {
+  const btn = document.getElementById("btnArmarPedido");
+  btn.textContent = `🧾 Armar pedido (${SELECTED.size})`;
+  btn.disabled = SELECTED.size === 0;
+}
+
+function armarPedidoConSeleccion() {
+  // Full Pret y Full Lavan son pools de stock separados en Mercado Libre
+  // (no se comparten entre marcas) — cada uno con su propia sugerencia de
+  // reposición, nunca una cifra combinada (ver reposicion/core.py:full_metrics_marca).
+  const items = PRODUCTOS.filter((p) => SELECTED.has(p.sku)).map((p) => ({
+    sku: p.sku,
+    nombre: p.nombre,
+    proveedor: p.proveedor,
+    a_reponer_deposito: p.a_reponer_deposito || 0,
+    a_reponer_full_pret: p.a_reponer_full_pret || 0,
+    a_reponer_full_lavan: p.a_reponer_full_lavan || 0,
+    stock_deposito_hoy: p.stock_deposito_hoy ?? p.stock_deposito ?? 0,
+    stock_full_pret_hoy: p.stock_full_pret_hoy ?? 0,
+    stock_full_lavan_hoy: p.stock_full_lavan_hoy ?? 0,
+  }));
+  localStorage.setItem("repo_pedido_borrador", JSON.stringify(items));
+  window.location.href = "pedido.html";
+}
+
+function alertaClass(alerta) {
+  if (!alerta) return "";
+  if (alerta.includes("SIN STOCK")) return "background:var(--nostock)";
+  if (alerta.includes("CRÍTICO")) return "background:var(--critico)";
+  if (alerta.includes("BAJO")) return "background:var(--bajo)";
+  if (alerta.includes("OK")) return "background:var(--ok)";
+  return "background:#333";
+}
+
+function necesitaReposicion(p) {
+  // Mismo criterio que generar_reporte.py: stock=0 con ventas históricas,
+  // o quiebre <=10 días con velocidad>0 y ventas>0 (ver generar_reporte.py:1498-1500).
+  const stock = p.stock_deposito_hoy ?? p.stock_deposito;
+  const diasQuiebre = p.dias_quiebre_deposito;
+  const velDiaria = p.vel_diaria_deposito || 0;
+  const aReponer = p.a_reponer_deposito || 0;
+  const quebradoConVentas = stock === 0 && (p.a_reponer_deposito || velDiaria > 0);
+  const porQuebrar = diasQuiebre !== null && diasQuiebre !== undefined && diasQuiebre <= 10 && velDiaria > 0;
+  return (quebradoConVentas || porQuebrar) && aReponer > 0;
+}
+
+function renderProveedores() {
+  const sel = document.getElementById("filtroProveedor");
+  const actuales = new Set(Array.from(sel.options).map((o) => o.value));
+  const proveedores = Array.from(new Set(PRODUCTOS.map((p) => p.proveedor))).sort();
+  for (const p of proveedores) {
+    if (!actuales.has(p)) {
+      const opt = document.createElement("option");
+      opt.value = p; opt.textContent = p;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+function filasVisibles() {
+  const vista = document.getElementById("filtroVista").value;
+  const proveedor = document.getElementById("filtroProveedor").value;
+  let rows = PRODUCTOS;
+  if (vista === "necesita") rows = rows.filter(necesitaReposicion);
+  if (proveedor) rows = rows.filter((p) => p.proveedor === proveedor);
+  return rows.sort((a, b) => (b.a_reponer_deposito || 0) - (a.a_reponer_deposito || 0));
+}
+
+function render() {
+  const rows = filasVisibles();
+  document.getElementById("contador").textContent = `${rows.length} productos`;
+  const tbody = document.getElementById("filas");
+  tbody.innerHTML = "";
+  for (const p of rows) {
+    const tr = document.createElement("tr");
+    const yaSolicitadoDeposito = (p.destinos_ya_solicitados || []).includes("deposito");
+    tr.innerHTML = `
+      <td><input type="checkbox" class="chk-sku" ${SELECTED.has(p.sku) ? "checked" : ""}></td>
+      <td>${p.sku}</td>
+      <td>${p.nombre || "<span class=muted>(sin nombre)</span>"}</td>
+      <td></td>
+      <td>${fmtNum(p.stock_deposito_hoy ?? p.stock_deposito)}</td>
+      <td><span class="badge" style="${alertaClass(p.alerta_deposito)}">${p.alerta_deposito || "—"}</span></td>
+      <td>${fmtNum(p.dias_quiebre_deposito)}</td>
+      <td><b>${fmtNum(p.a_reponer_deposito)}</b></td>
+      <td>${fmtNum(p.stock_full_pret_hoy)}</td>
+      <td><span class="badge" style="${alertaClass(p.alerta_full_pret)}">${p.alerta_full_pret || "—"}</span></td>
+      <td>${fmtNum(p.a_reponer_full_pret)}</td>
+      <td>${fmtNum(p.stock_full_lavan_hoy)}</td>
+      <td><span class="badge" style="${alertaClass(p.alerta_full_lavan)}">${p.alerta_full_lavan || "—"}</span></td>
+      <td>${fmtNum(p.a_reponer_full_lavan)}</td>
+      <td>${p.sobrestock_categoria || "—"}</td>
+      <td>${yaSolicitadoDeposito ? '<span class="solicitado">✓ Ya solicitado</span>' : ""}</td>
+      <td></td>
+    `;
+    const chk = tr.children[0].querySelector("input");
+    chk.addEventListener("change", () => {
+      if (chk.checked) SELECTED.add(p.sku); else SELECTED.delete(p.sku);
+      actualizarToolbarSeleccion();
+    });
+
+    const tdProveedor = tr.children[3];
+    const select = document.createElement("select");
+    select.className = "proveedor-select";
+    for (const prov of Array.from(new Set(PRODUCTOS.map((x) => x.proveedor))).sort()) {
+      const opt = document.createElement("option");
+      opt.value = prov; opt.textContent = prov;
+      if (prov === p.proveedor) opt.selected = true;
+      select.appendChild(opt);
+    }
+    const otro = document.createElement("option");
+    otro.value = "__otro__"; otro.textContent = "Otro…";
+    select.appendChild(otro);
+
+    const guardarProveedor = async (valor) => {
+      await apiFetch(`/productos/${encodeURIComponent(p.sku)}/proveedor`, {
+        method: "POST", body: JSON.stringify({ proveedor: valor }),
+      });
+      p.proveedor_manual = valor; p.proveedor = valor;
+      renderProveedores();
+      render();
+    };
+
+    const inputOtro = document.createElement("input");
+    inputOtro.type = "text";
+    inputOtro.placeholder = "Nombre del proveedor…";
+    inputOtro.style.display = "none";
+    inputOtro.style.marginLeft = "4px";
+    inputOtro.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && inputOtro.value.trim()) guardarProveedor(inputOtro.value.trim());
+    });
+    inputOtro.addEventListener("blur", () => {
+      if (inputOtro.value.trim()) guardarProveedor(inputOtro.value.trim());
+    });
+
+    select.addEventListener("change", async () => {
+      if (select.value === "__otro__") {
+        inputOtro.style.display = "inline-block";
+        inputOtro.focus();
+        return;
+      }
+      await guardarProveedor(select.value);
+    });
+    tdProveedor.appendChild(select);
+    tdProveedor.appendChild(inputOtro);
+
+    const tdAcciones = tr.children[16];
+    const btnDescontinuar = document.createElement("button");
+    btnDescontinuar.className = "secondary";
+    btnDescontinuar.textContent = "Descontinuar";
+    btnDescontinuar.addEventListener("click", async () => {
+      if (!confirm(`¿Marcar ${p.sku} como descontinuado? Deja de aparecer en las sugerencias de reposición.`)) return;
+      await apiFetch(`/productos/${encodeURIComponent(p.sku)}/descontinuar`, {
+        method: "POST", body: JSON.stringify({ descontinuado: true, por: getUser() }),
+      });
+      cargar();
+    });
+    tdAcciones.appendChild(btnDescontinuar);
+
+    tbody.appendChild(tr);
+  }
+}
+
+async function cargar() {
+  document.getElementById("status").textContent = "Cargando…";
+  document.getElementById("tabla").style.display = "none";
+  try {
+    const vista = document.getElementById("filtroVista").value;
+    const qs = vista === "descontinuados" ? "?descontinuados=true" : "";
+    PRODUCTOS = await apiFetch(`/productos${qs}`);
+    renderProveedores();
+    render();
+    document.getElementById("status").style.display = "none";
+    document.getElementById("tabla").style.display = "table";
+  } catch (e) {
+    document.getElementById("status").textContent = `Error: ${e.message}`;
+  }
+}
+
+document.getElementById("filtroVista").addEventListener("change", cargar);
+document.getElementById("filtroProveedor").addEventListener("change", render);
+document.getElementById("btnRefrescar").addEventListener("click", cargar);
+document.getElementById("btnArmarPedido").addEventListener("click", armarPedidoConSeleccion);
+document.getElementById("checkTodos").addEventListener("change", (e) => {
+  for (const p of filasVisibles()) {
+    if (e.target.checked) SELECTED.add(p.sku); else SELECTED.delete(p.sku);
+  }
+  actualizarToolbarSeleccion();
+  render();
+});
+
+cargar();
+</script>
+</body>
+</html>

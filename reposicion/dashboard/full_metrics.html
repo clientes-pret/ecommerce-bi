@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reposición — Métricas Full</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#e8eaed; --muted:#8b93a1; --accent:#4f8cff;
+    --ok:#1e7e34; --bajo:#b8860b; --critico:#b02a37; --nostock:#7a1f2b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--text); }
+  main { padding: 16px 20px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 18px; }
+  .cards { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; min-width: 160px; }
+  .card .valor { font-size: 22px; font-weight: 700; }
+  .card .label { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+  th { color: var(--muted); font-weight: 600; cursor: pointer; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); cursor: pointer; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  #status { padding: 20px; color: var(--muted); }
+  #detalle { display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
+  #detalle h3 { margin-top: 0; font-size: 14px; }
+  .leyenda { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .leyenda span::before { content: "●"; margin-right: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🚚 Métricas Full (Mercado Libre)</h1>
+  <div class="cards" id="cards"></div>
+  <div id="status">Cargando…</div>
+  <table id="tabla" style="display:none">
+    <thead>
+      <tr>
+        <th data-k="sku">SKU</th><th data-k="nombre">Producto</th>
+        <th data-k="stock_full_pret_hoy">Stock Pret</th>
+        <th data-k="vel_semanal_full_pret">Vel. sem. Pret</th>
+        <th data-k="dias_quiebre_full_pret">Días quiebre Pret</th>
+        <th data-k="alerta_full_pret">Alerta Pret</th>
+        <th data-k="stock_full_lavan_hoy">Stock Lavan</th>
+        <th data-k="vel_semanal_full_lavan">Vel. sem. Lavan</th>
+        <th data-k="dias_quiebre_full_lavan">Días quiebre Lavan</th>
+        <th data-k="alerta_full_lavan">Alerta Lavan</th>
+      </tr>
+    </thead>
+    <tbody id="filas"></tbody>
+  </table>
+  <div id="detalle">
+    <h3 id="detalleTitulo"></h3>
+    <div id="detalleContenido"></div>
+  </div>
+</main>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+renderNav("full");
+
+let PRODUCTOS = [];
+let ordenActual = { k: "stock_full_pret_hoy", dir: -1 };
+
+function alertaClass(alerta) {
+  if (!alerta) return "";
+  if (alerta.includes("SIN STOCK")) return "background:var(--nostock)";
+  if (alerta.includes("CRÍTICO")) return "background:var(--critico)";
+  if (alerta.includes("BAJO")) return "background:var(--bajo)";
+  if (alerta.includes("OK")) return "background:var(--ok)";
+  return "background:#333";
+}
+
+function renderCards() {
+  // Pret y Lavan son pools de stock separados en Mercado Libre — nunca se
+  // suman para un "total Full" único, cada tarjeta muestra su propia marca.
+  const stockPret = PRODUCTOS.reduce((s, p) => s + (p.stock_full_pret_hoy || 0), 0);
+  const stockLavan = PRODUCTOS.reduce((s, p) => s + (p.stock_full_lavan_hoy || 0), 0);
+  const velPret = PRODUCTOS.reduce((s, p) => s + (p.vel_semanal_full_pret || 0), 0);
+  const velLavan = PRODUCTOS.reduce((s, p) => s + (p.vel_semanal_full_lavan || 0), 0);
+  const criticosPret = PRODUCTOS.filter((p) => (p.alerta_full_pret || "").includes("CRÍTICO") || (p.alerta_full_pret || "").includes("SIN STOCK")).length;
+  const criticosLavan = PRODUCTOS.filter((p) => (p.alerta_full_lavan || "").includes("CRÍTICO") || (p.alerta_full_lavan || "").includes("SIN STOCK")).length;
+  document.getElementById("cards").innerHTML = `
+    <div class="card"><div class="valor">${fmtNum(stockPret)}</div><div class="label">Stock Full Pret (hoy) · vel. sem. ${velPret.toFixed(1)}</div></div>
+    <div class="card"><div class="valor">${fmtNum(stockLavan)}</div><div class="label">Stock Full Lavan (hoy) · vel. sem. ${velLavan.toFixed(1)}</div></div>
+    <div class="card"><div class="valor">${criticosPret}</div><div class="label">SKUs críticos/sin stock Full Pret</div></div>
+    <div class="card"><div class="valor">${criticosLavan}</div><div class="label">SKUs críticos/sin stock Full Lavan</div></div>
+  `;
+}
+
+function render() {
+  const rows = [...PRODUCTOS].sort((a, b) => {
+    const av = a[ordenActual.k] ?? 0, bv = b[ordenActual.k] ?? 0;
+    if (typeof av === "string") return av.localeCompare(bv) * ordenActual.dir;
+    return (av - bv) * ordenActual.dir;
+  });
+  const tbody = document.getElementById("filas");
+  tbody.innerHTML = "";
+  for (const p of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${p.sku}</td>
+      <td>${p.nombre || "—"}</td>
+      <td>${fmtNum(p.stock_full_pret_hoy)}</td>
+      <td>${fmtNum(p.vel_semanal_full_pret)}</td>
+      <td>${fmtNum(p.dias_quiebre_full_pret)}</td>
+      <td><span class="badge" style="${alertaClass(p.alerta_full_pret)}">${p.alerta_full_pret || "—"}</span></td>
+      <td>${fmtNum(p.stock_full_lavan_hoy)}</td>
+      <td>${fmtNum(p.vel_semanal_full_lavan)}</td>
+      <td>${fmtNum(p.dias_quiebre_full_lavan)}</td>
+      <td><span class="badge" style="${alertaClass(p.alerta_full_lavan)}">${p.alerta_full_lavan || "—"}</span></td>
+    `;
+    tr.addEventListener("click", () => mostrarDetalle(p));
+    tbody.appendChild(tr);
+  }
+}
+
+function sparklineSVG(fechas, seriePret, serieLavan) {
+  const w = 600, h = 120, pad = 8;
+  const max = Math.max(1, ...seriePret, ...serieLavan);
+  const puntos = (serie) => serie.map((v, i) => {
+    const x = pad + (i / Math.max(1, serie.length - 1)) * (w - pad * 2);
+    const y = h - pad - (v / max) * (h - pad * 2);
+    return `${x},${y}`;
+  }).join(" ");
+  return `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:120px;">
+      <polyline points="${puntos(seriePret)}" fill="none" stroke="#4f8cff" stroke-width="2"/>
+      <polyline points="${puntos(serieLavan)}" fill="none" stroke="#e0a030" stroke-width="2"/>
+    </svg>
+    <div class="leyenda"><span style="color:#4f8cff">Full Pret</span><span style="color:#e0a030">Full Lavan</span></div>
+  `;
+}
+
+async function mostrarDetalle(p) {
+  const det = document.getElementById("detalle");
+  det.style.display = "block";
+  document.getElementById("detalleTitulo").textContent = `${p.sku} — ${p.nombre || ""}`;
+  document.getElementById("detalleContenido").textContent = "Cargando histórico…";
+  try {
+    const historial = await apiFetch(`/stock-historial?sku=${encodeURIComponent(p.sku)}`);
+    if (!historial.length) {
+      document.getElementById("detalleContenido").innerHTML = '<p class="muted">Todavía no hay histórico diario acumulado para este SKU — se va a ir completando a medida que corra el job diario.</p>';
+      return;
+    }
+    const fechas = historial.map((h) => h.fecha);
+    const seriePret = historial.map((h) => h.stock_full_pret || 0);
+    const serieLavan = historial.map((h) => h.stock_full_lavan || 0);
+    document.getElementById("detalleContenido").innerHTML =
+      sparklineSVG(fechas, seriePret, serieLavan) +
+      `<p class="muted">${fechas[0]} → ${fechas[fechas.length - 1]} (${fechas.length} días)</p>`;
+  } catch (e) {
+    document.getElementById("detalleContenido").textContent = `Error: ${e.message}`;
+  }
+}
+
+async function cargar() {
+  try {
+    PRODUCTOS = await apiFetch("/productos");
+    renderCards();
+    render();
+    document.getElementById("status").style.display = "none";
+    document.getElementById("tabla").style.display = "table";
+  } catch (e) {
+    document.getElementById("status").textContent = `Error: ${e.message}`;
+  }
+}
+
+document.querySelectorAll("th[data-k]").forEach((th) => {
+  th.addEventListener("click", () => {
+    const k = th.dataset.k;
+    ordenActual = { k, dir: ordenActual.k === k ? -ordenActual.dir : -1 };
+    render();
+  });
+});
+
+cargar();
+</script>
+</body>
+</html>

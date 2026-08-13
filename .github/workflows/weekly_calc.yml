@@ -1,0 +1,19 @@
+name: Reposición — cálculo semanal
+
+on:
+  schedule:
+    - cron: "0 10 * * 1"  # lunes 07:00 AR (UTC-3) — ajustable
+  workflow_dispatch: {}
+
+jobs:
+  weekly_calc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r reposicion/requirements.txt
+      - run: python3 -m reposicion.jobs.weekly_calc
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
