@@ -37,40 +37,51 @@ function checkPassword(req: Request): boolean {
 
 // ─── Helpers de agregación ──────────────────────────────────────────────────
 
+// deno-lint-ignore no-explicit-any
+type QueryBuilder = any;
+
+/** Trae TODAS las filas de una tabla, paginando con .range() — el cliente de
+ * Supabase corta en 1000 filas por default si no se pagina explícitamente, y
+ * ya tenemos tablas (repo_productos, repo_calculo_semanal) por encima de eso. */
+async function selectAll(
+  table: string,
+  build: (q: QueryBuilder) => QueryBuilder,
+  pageSize = 1000,
+): Promise<Record<string, unknown>[]> {
+  let from = 0;
+  const all: Record<string, unknown>[] = [];
+  while (true) {
+    const { data, error } = await build(supabase.from(table).select("*")).range(from, from + pageSize - 1);
+    if (error) throw error;
+    all.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
 async function latestCalculoPorSku() {
-  const { data, error } = await supabase
-    .from("repo_calculo_semanal")
-    .select("*")
-    .order("semana_iso", { ascending: false });
-  if (error) throw error;
+  const data = await selectAll("repo_calculo_semanal", (q) => q.order("semana_iso", { ascending: false }));
   const bySku = new Map<string, Record<string, unknown>>();
-  for (const row of data ?? []) {
+  for (const row of data) {
     if (!bySku.has(row.sku as string)) bySku.set(row.sku as string, row);
   }
   return bySku;
 }
 
 async function latestSnapshotPorSku() {
-  const { data, error } = await supabase
-    .from("repo_stock_snapshot")
-    .select("*")
-    .order("fecha", { ascending: false });
-  if (error) throw error;
+  const data = await selectAll("repo_stock_snapshot", (q) => q.order("fecha", { ascending: false }));
   const bySku = new Map<string, Record<string, unknown>>();
-  for (const row of data ?? []) {
+  for (const row of data) {
     if (!bySku.has(row.sku as string)) bySku.set(row.sku as string, row);
   }
   return bySku;
 }
 
 async function pedidosAbiertosPorSku() {
-  const { data, error } = await supabase
-    .from("repo_pedido_items")
-    .select("sku, destino, pedido_id")
-    .eq("recibido_completo", false);
-  if (error) throw error;
+  const data = await selectAll("repo_pedido_items", (q) => q.eq("recibido_completo", false));
   const bySku = new Map<string, Set<string>>();
-  for (const row of data ?? []) {
+  for (const row of data) {
     const set = bySku.get(row.sku as string) ?? new Set<string>();
     set.add(row.destino as string);
     bySku.set(row.sku as string, set);
@@ -84,10 +95,9 @@ async function getProductos(url: URL) {
   const soloDescontinuados = url.searchParams.get("descontinuados") === "true";
   const proveedorFiltro = url.searchParams.get("proveedor");
 
-  let query = supabase.from("repo_productos").select("*");
-  query = soloDescontinuados ? query.eq("descontinuado", true) : query.eq("descontinuado", false);
-  const { data: productos, error } = await query;
-  if (error) throw error;
+  const productos = await selectAll("repo_productos", (q) =>
+    soloDescontinuados ? q.eq("descontinuado", true) : q.eq("descontinuado", false)
+  );
 
   const [calculos, snapshots, abiertos] = await Promise.all([
     latestCalculoPorSku(),
@@ -95,7 +105,7 @@ async function getProductos(url: URL) {
     pedidosAbiertosPorSku(),
   ]);
 
-  let rows = (productos ?? []).map((p) => {
+  let rows = productos.map((p) => {
     const calc = calculos.get(p.sku as string) ?? {};
     const snap = snapshots.get(p.sku as string) ?? {};
     const proveedor = (p.proveedor_manual as string) || (p.proveedor_auto as string) || "Otros";
@@ -118,27 +128,20 @@ async function getProductos(url: URL) {
 }
 
 async function getProveedores() {
-  const { data, error } = await supabase.from("repo_productos").select("proveedor_auto, proveedor_manual");
-  if (error) throw error;
+  const data = await selectAll("repo_productos", (q) => q);
   const set = new Set<string>();
-  for (const r of data ?? []) {
+  for (const r of data) {
     set.add((r.proveedor_manual as string) || (r.proveedor_auto as string) || "Otros");
   }
   return json(Array.from(set).sort());
 }
 
 async function getPedidos() {
-  const { data: pedidos, error } = await supabase
-    .from("repo_pedidos")
-    .select("*")
-    .order("creado_at", { ascending: false });
-  if (error) throw error;
+  const pedidos = await selectAll("repo_pedidos", (q) => q.order("creado_at", { ascending: false }));
+  const items = await selectAll("repo_pedido_items", (q) => q);
 
-  const { data: items, error: itemsError } = await supabase.from("repo_pedido_items").select("*");
-  if (itemsError) throw itemsError;
-
-  const result = (pedidos ?? []).map((p) => {
-    const suyos = (items ?? []).filter((i) => i.pedido_id === p.id);
+  const result = pedidos.map((p) => {
+    const suyos = items.filter((i) => i.pedido_id === p.id);
     const recibidos = suyos.filter((i) => i.recibido_completo).length;
     return { ...p, total_items: suyos.length, items_recibidos: recibidos, items: suyos };
   });
@@ -147,10 +150,10 @@ async function getPedidos() {
 
 async function getQuiebres(url: URL) {
   const sku = url.searchParams.get("sku");
-  let query = supabase.from("repo_quiebre_historial").select("*").order("fecha_quiebre", { ascending: false });
-  if (sku) query = query.eq("sku", sku);
-  const { data, error } = await query;
-  if (error) throw error;
+  const data = await selectAll("repo_quiebre_historial", (q) => {
+    q = q.order("fecha_quiebre", { ascending: false });
+    return sku ? q.eq("sku", sku) : q;
+  });
   return json(data);
 }
 

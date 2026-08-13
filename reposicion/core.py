@@ -374,34 +374,14 @@ def parse_ml_sales(orders):
     return sales_total, sales_first, sales_second
 
 def ml_get_all_items(key, cfg):
+    """Catálogo completo de un canal ML. Usa paginación scroll (sin techo,
+    ver ml_scroll_item_ids) en vez de offset — la paginación por offset de
+    la API de ML se corta alrededor de las 1000 publicaciones, lo que dejaba
+    afuera del cálculo de Full a cualquier catálogo más grande que eso."""
     token   = ml_ensure_token(key, cfg)
     user_id = cfg["user_id"]
-    item_ids, offset = [], 0
-    while True:
-        data = ml_get(f"https://api.mercadolibre.com/users/{user_id}/items/search",
-                      token, params={"offset": offset, "limit": 100})
-        if not data:
-            break
-        batch = data.get("results", [])
-        if not batch:
-            break
-        item_ids.extend(batch)
-        if len(batch) < 100:
-            break
-        offset += 100
-        time.sleep(0.3)
-    details = {}
-    for i in range(0, len(item_ids), 20):
-        batch_ids = item_ids[i:i+20]
-        data = ml_get("https://api.mercadolibre.com/items", token,
-                      params={"ids": ",".join(batch_ids)})
-        if data:
-            for entry in data:
-                if entry.get("code") == 200:
-                    body = entry["body"]
-                    details[body["id"]] = body
-        time.sleep(0.3)
-    return details
+    item_ids = ml_scroll_item_ids(token, user_id)
+    return ml_items_by_ids(token, item_ids)
 
 def ml_item_sku(body):
     return str(body.get("seller_custom_field") or body.get("seller_sku") or "").strip()
@@ -636,6 +616,7 @@ def build_rows(results):
         a_enviar_full = units_to_order(stock_full, vel_full_diaria) if vel_full_diaria > 0 else 0
 
         return {
+            f"Unid. Full {prefix}":          ventas_full,
             f"Stock Full {prefix}":          stock_full,
             f"Vel. Full {prefix} (diaria)":  vel_full_diaria,
             f"Vel. Full {prefix} (semanal)": vel_full_semanal,
@@ -870,6 +851,7 @@ def build_rows(results):
                 "Unid. TN Pret":          sold_tn_pret,
                 "Unid. TN Lavan":         sold_tn_lavan,
                 "Unid. Full":             sold_full,
+                "Unid. depósito":         ventas_deposito,
                 "Total vendido":          total_sold,
                 "Vel. diaria":            vel_diaria,
                 "Vel. semanal":           vel_semanal,
@@ -1007,6 +989,7 @@ def build_rows(results):
                 "Unid. TN Pret":          0,
                 "Unid. TN Lavan":         sold_tn_lavan,
                 "Unid. Full":             sold_full,
+                "Unid. depósito":         ventas_deposito,
                 "Total vendido":          total_sold,
                 "Vel. diaria":            vel_diaria,
                 "Vel. semanal":           vel_semanal,
