@@ -61,6 +61,7 @@
     </select>
     <select id="filtroProveedor"><option value="">Todos los proveedores</option></select>
     <label class="chk"><input type="checkbox" id="ocultarSolicitados" checked> Ocultar ya solicitados</label>
+    <button class="secondary" id="btnLimpiarFiltros" title="Vuelve buscador, proveedor y vista a sus valores por defecto">✕ Limpiar filtros</button>
     <div class="toolbar-right">
       <span id="contador" class="muted"></span>
       <button class="secondary" id="btnRefrescar">↻ Refrescar</button>
@@ -358,6 +359,15 @@ document.getElementById("filtroProveedor").addEventListener("change", render);
 document.getElementById("ocultarSolicitados").addEventListener("change", render);
 document.getElementById("buscador").addEventListener("input", render);
 document.getElementById("btnRefrescar").addEventListener("click", cargar);
+document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
+  document.getElementById("buscador").value = "";
+  document.getElementById("filtroProveedor").value = "";
+  const vistaCambio = document.getElementById("filtroVista").value !== "necesita";
+  document.getElementById("filtroVista").value = "necesita";
+  // "Descontinuados" trae un dataset distinto del servidor (no es un filtro
+  // client-side) — si veníamos de ahí hace falta recargar, no solo re-renderizar.
+  vistaCambio ? cargar() : render();
+});
 document.getElementById("btnArmarPedido").addEventListener("click", armarPedidoConSeleccion);
 document.getElementById("checkTodos").addEventListener("change", (e) => {
   for (const p of filasVisibles()) {

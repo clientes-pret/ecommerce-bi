@@ -384,7 +384,16 @@ def ml_get_all_items(key, cfg):
     return ml_items_by_ids(token, item_ids)
 
 def ml_item_sku(body):
-    return str(body.get("seller_custom_field") or body.get("seller_sku") or "").strip()
+    sku = str(body.get("seller_custom_field") or body.get("seller_sku") or "").strip()
+    if sku:
+        return sku
+    # Mismo caso que en ml_stock_by_sku: algunas publicaciones (típicamente
+    # Full) solo traen el SKU en attributes/SELLER_SKU, no en los campos
+    # clásicos — requiere include_attributes=all en la llamada a /items.
+    for attr in (body.get("attributes") or []):
+        if attr.get("id") == "SELLER_SKU":
+            return str(attr.get("value_name") or "").strip()
+    return ""
 
 def ml_stock_by_sku(item_details):
     """A partir del mismo /items ya obtenido (sin llamadas nuevas), separa el
@@ -400,6 +409,16 @@ def ml_stock_by_sku(item_details):
                 sku = str(v.get("seller_sku") or v.get("seller_custom_field") or "").strip()
                 if not sku:
                     for attr in (v.get("attribute_combinations") or []):
+                        if attr.get("id") == "SELLER_SKU":
+                            sku = str(attr.get("value_name") or "").strip()
+                            break
+                if not sku:
+                    # Publicaciones Full: el SKU del vendedor no está en
+                    # attribute_combinations sino en attributes (variation-level),
+                    # y solo viene poblado si se pide con include_attributes=all
+                    # (ver ml_items_by_ids). Sin este fallback, ml_stock_by_sku()
+                    # descartaba TODO el stock Full silenciosamente.
+                    for attr in (v.get("attributes") or []):
                         if attr.get("id") == "SELLER_SKU":
                             sku = str(attr.get("value_name") or "").strip()
                             break
@@ -1110,12 +1129,16 @@ def ml_scroll_item_ids(token, user_id):
 def ml_items_by_ids(token, item_ids):
     """Detalle completo (/items, batches de 20) para una lista de item_ids ya
     conocida — misma lógica de batching que la segunda mitad de
-    ml_get_all_items(), separada para poder combinarla con ml_scroll_item_ids()."""
+    ml_get_all_items(), separada para poder combinarla con ml_scroll_item_ids().
+
+    include_attributes=all es necesario para que las variaciones Full traigan
+    su SELLER_SKU en variation.attributes — sin este parámetro la API omite
+    ese campo y ml_stock_by_sku() no puede resolver el SKU de esas unidades."""
     details = {}
     for i in range(0, len(item_ids), 20):
         batch_ids = item_ids[i:i + 20]
         data = ml_get("https://api.mercadolibre.com/items", token,
-                      params={"ids": ",".join(batch_ids)})
+                      params={"ids": ",".join(batch_ids), "include_attributes": "all"})
         if data:
             for entry in data:
                 if entry.get("code") == 200:
