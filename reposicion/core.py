@@ -79,10 +79,18 @@ SUPPLIER_KEYWORDS = [
     ("Alcoyana",       ["alcoyana"]),
     ("Palette",        ["palette"]),
     ("Sakura",         ["sakura"]),
+    ("Guiwi",          ["guiwi"]),
     ("Pret",           ["pret a home", "pret"]),
 ]
 
 SUPPLIER_OTHER = "Otros"
+
+# El Google Sheet de proveedores tiene variantes de tipeo para el mismo
+# proveedor real (ej. "Laffite" vs "Laffitte" — la correcta es con doble T).
+# Se normalizan acá en vez de en la planilla para no depender de editarla.
+SUPPLIER_ALIASES = {
+    "Laffite": "Laffitte",
+}
 
 def _load_sku_supplier_map(url: str) -> dict:
     """Descarga el Google Sheet como CSV y devuelve {sku_upper: proveedor}."""
@@ -95,7 +103,8 @@ def _load_sku_supplier_map(url: str) -> dict:
             sku = (row.get("SKU") or "").strip()
             proveedor = (row.get("Proveedor") or "").strip()
             if sku and proveedor:
-                mapping[sku.upper()] = proveedor.strip().title()
+                proveedor = proveedor.strip().title()
+                mapping[sku.upper()] = SUPPLIER_ALIASES.get(proveedor, proveedor)
         print(f"  ✓ Mapeo SKU→Proveedor cargado: {len(mapping)} SKUs desde Google Sheets")
     except Exception as e:
         print(f"  ⚠ No se pudo cargar el sheet de proveedores ({e}). Se usará solo detección por keywords.")

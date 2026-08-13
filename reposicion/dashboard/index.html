@@ -73,6 +73,9 @@
     <div class="toolbar-right">
       <button class="secondary" id="btnArmarPedido" disabled>🧾 Armar pedido (0)</button>
       <button class="secondary" id="btnDescontinuarMasivo" disabled>🚫 Descontinuar (0)</button>
+      <select id="selectProveedorMasivo" disabled style="max-width:150px"><option value="">Asignar proveedor…</option></select>
+      <input type="text" id="inputProveedorMasivoOtro" placeholder="Nombre del proveedor…" style="display:none;width:130px">
+      <button class="secondary" id="btnAsignarProveedorMasivo" disabled>👤 Asignar (0)</button>
       <span id="contador" class="muted"></span>
       <button class="secondary" id="btnRefrescar">↻ Refrescar</button>
     </div>
@@ -91,6 +94,7 @@
         <th>Stock Depósito</th>
         <th>Stock Full PAH</th>
         <th>Stock Full CL</th>
+        <th>Vel/Sem</th>
         <th>Estado</th>
       </tr>
     </thead>
@@ -139,6 +143,15 @@ let PRODUCTOS = [];
 const EXPANDIDAS = new Set();
 const SELECTED = new Set();
 
+// Proveedores conocidos que deben aparecer como opción aunque todavía no
+// tengan ningún SKU asignado (ej. un proveedor nuevo del que se va a cargar
+// stock por primera vez).
+const PROVEEDORES_CONOCIDOS = ["Guiwi"];
+
+function listaProveedores() {
+  return Array.from(new Set([...PRODUCTOS.map((p) => p.proveedor), ...PROVEEDORES_CONOCIDOS])).sort();
+}
+
 function alertaClass(alerta) {
   if (!alerta) return "";
   if (alerta.includes("SIN STOCK")) return "background:var(--nostock)";
@@ -146,6 +159,12 @@ function alertaClass(alerta) {
   if (alerta.includes("BAJO")) return "background:var(--bajo)";
   if (alerta.includes("OK")) return "background:var(--ok)";
   return "background:#333";
+}
+
+function velSemanalTotal(p) {
+  // Vistazo rápido sin expandir: suma la velocidad semanal de los 3 destinos
+  // (depósito + Full Pret + Full Lavan) en un solo número por fila.
+  return Object.values(DESTINOS).reduce((s, d) => s + (p[d.velSemanal] || 0), 0);
 }
 
 function peorAlerta(p) {
@@ -190,7 +209,7 @@ function necesitaReposicion(p) {
 function renderProveedores() {
   const sel = document.getElementById("filtroProveedor");
   const actuales = new Set(Array.from(sel.options).map((o) => o.value));
-  const proveedores = Array.from(new Set(PRODUCTOS.map((p) => p.proveedor))).sort();
+  const proveedores = listaProveedores();
   for (const p of proveedores) {
     if (!actuales.has(p)) {
       const opt = document.createElement("option");
@@ -287,7 +306,7 @@ function renderDetalle(p) {
   const tr = document.createElement("tr");
   tr.className = "fila-detalle";
   const td = document.createElement("td");
-  td.colSpan = 9;
+  td.colSpan = 10;
 
   const destinos = document.createElement("div");
   destinos.className = "destinos";
@@ -356,6 +375,7 @@ function render() {
       <td>${fmtNum(DESTINOS.deposito.stock(p))}</td>
       <td>${fmtNum(DESTINOS.full_pret.stock(p))}</td>
       <td>${fmtNum(DESTINOS.full_lavan.stock(p))}</td>
+      <td>${fmtNum(velSemanalTotal(p))}</td>
       <td><span class="badge" style="${alertaClass(alertaResumen)}">${alertaResumen || "—"}</span></td>
     `;
 
@@ -370,7 +390,7 @@ function render() {
     const tdProveedor = tr.children[4];
     const select = document.createElement("select");
     select.className = "proveedor-select";
-    for (const prov of Array.from(new Set(PRODUCTOS.map((x) => x.proveedor))).sort()) {
+    for (const prov of listaProveedores()) {
       const opt = document.createElement("option");
       opt.value = prov; opt.textContent = prov;
       if (prov === p.proveedor) opt.selected = true;
@@ -431,6 +451,7 @@ async function cargar() {
     const qs = vista === "descontinuados" ? "?descontinuados=true" : "";
     PRODUCTOS = await apiFetch(`/productos${qs}`);
     renderProveedores();
+    renderProveedorMasivoSelect();
     renderCategorias();
     render();
     actualizarBarraCarrito();
@@ -442,14 +463,34 @@ async function cargar() {
   }
 }
 
+function renderProveedorMasivoSelect() {
+  const sel = document.getElementById("selectProveedorMasivo");
+  const valorActual = sel.value;
+  sel.innerHTML = '<option value="">Asignar proveedor…</option>';
+  for (const prov of listaProveedores()) {
+    const opt = document.createElement("option");
+    opt.value = prov; opt.textContent = prov;
+    sel.appendChild(opt);
+  }
+  const otro = document.createElement("option");
+  otro.value = "__otro__"; otro.textContent = "Otro…";
+  sel.appendChild(otro);
+  sel.value = valorActual || "";
+}
+
 function actualizarBotonesMasivos() {
   const n = SELECTED.size;
   const btnPedido = document.getElementById("btnArmarPedido");
   const btnDescontinuar = document.getElementById("btnDescontinuarMasivo");
+  const selectProveedor = document.getElementById("selectProveedorMasivo");
+  const btnAsignarProveedor = document.getElementById("btnAsignarProveedorMasivo");
   btnPedido.textContent = `🧾 Armar pedido (${n})`;
   btnDescontinuar.textContent = `🚫 Descontinuar (${n})`;
+  btnAsignarProveedor.textContent = `👤 Asignar (${n})`;
   btnPedido.disabled = n === 0;
   btnDescontinuar.disabled = n === 0;
+  selectProveedor.disabled = n === 0;
+  btnAsignarProveedor.disabled = n === 0;
 }
 
 function actualizarBarraCarrito() {
@@ -510,6 +551,30 @@ document.getElementById("btnDescontinuarMasivo").addEventListener("click", async
       method: "POST", body: JSON.stringify({ descontinuado: true, por: getUser() }),
     })
   ));
+  SELECTED.clear();
+  cargar();
+});
+
+document.getElementById("selectProveedorMasivo").addEventListener("change", () => {
+  const esOtro = document.getElementById("selectProveedorMasivo").value === "__otro__";
+  document.getElementById("inputProveedorMasivoOtro").style.display = esOtro ? "inline-block" : "none";
+  if (esOtro) document.getElementById("inputProveedorMasivoOtro").focus();
+});
+document.getElementById("btnAsignarProveedorMasivo").addEventListener("click", async () => {
+  const select = document.getElementById("selectProveedorMasivo");
+  const inputOtro = document.getElementById("inputProveedorMasivoOtro");
+  const valor = select.value === "__otro__" ? inputOtro.value.trim() : select.value;
+  const skus = Array.from(SELECTED);
+  if (!valor || !skus.length) return;
+  if (!confirm(`¿Asignar el proveedor "${valor}" a ${skus.length} producto(s)?`)) return;
+  await Promise.all(skus.map((sku) =>
+    apiFetch(`/productos/${encodeURIComponent(sku)}/proveedor`, {
+      method: "POST", body: JSON.stringify({ proveedor: valor }),
+    })
+  ));
+  select.value = "";
+  inputOtro.value = "";
+  inputOtro.style.display = "none";
   SELECTED.clear();
   cargar();
 });
