@@ -50,11 +50,26 @@ def _url(config, table):
     return f"{_sb(config)['url']}/rest/v1/{table}"
 
 
-def select(config, table, params=None):
-    """GET con filtros PostgREST (ej: {'sku': 'eq.ABC123', 'select': 'sku,nombre'})."""
-    r = requests.get(_url(config, table), headers=_headers(config), params=params or {}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def select(config, table, params=None, page_size=1000):
+    """GET con filtros PostgREST (ej: {'sku': 'eq.ABC123', 'select': 'sku,nombre'}),
+    paginado con Range hasta traer todas las filas — PostgREST devuelve como
+    máximo 1000 filas por default si no se pagina explícitamente, y varias
+    tablas de esta app (repo_ventas_items, repo_stock_snapshot acumulado) ya
+    superan eso."""
+    all_rows = []
+    offset = 0
+    headers = _headers(config)
+    while True:
+        headers["Range"] = f"{offset}-{offset + page_size - 1}"
+        r = requests.get(_url(config, table), headers=headers, params=params or {}, timeout=30)
+        if r.status_code not in (200, 206):
+            r.raise_for_status()
+        batch = r.json()
+        all_rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    return all_rows
 
 
 def insert(config, table, rows, ignore_duplicates=False, chunk=500):

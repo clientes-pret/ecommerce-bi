@@ -11,6 +11,8 @@ Uso local: python3 -m reposicion.jobs.weekly_calc
 """
 
 import sys
+import threading
+from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -19,6 +21,123 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from reposicion import core, db
 
 DEFAULT_DAYS = 60
+
+
+def _fetch_catalog(channels):
+    """Igual que core.fetch_all() pero solo trae catálogo (productos TN /
+    items ML — precio, costo, stock, nombre), no órdenes. Las ventas se arman
+    aparte desde repo_ventas_items (ver fetch_all_hybrid) en vez de re-pedir
+    60 días de órdenes en vivo en cada corrida — build_rows() no cambia,
+    solo cambia de dónde sale results[canal]["sales"/"orders"]."""
+    results = {}
+
+    def worker_tn(key, cfg):
+        try:
+            products = core.tn_get_products(cfg)
+            results[key] = {"products": products}
+            core.tnlog(f"✓ {cfg['label']}: catálogo — {len(products)} productos")
+        except Exception as e:
+            core.tnlog(f"✗ {cfg['label']}: ERROR catálogo — {e}")
+            results[key] = {"products": []}
+
+    def worker_ml(key, cfg):
+        try:
+            item_details = core.ml_get_all_items(key, cfg)
+            results[key] = {"item_details": item_details}
+            core.tnlog(f"✓ {cfg['label']}: catálogo — {len(item_details)} items")
+        except Exception as e:
+            core.tnlog(f"✗ {cfg['label']}: ERROR catálogo — {e}")
+            results[key] = {"item_details": {}}
+
+    threads = []
+    for key, cfg in channels.items():
+        if not cfg.get("enabled", True):
+            continue
+        fn = worker_tn if cfg["type"] == "tiendanube" else worker_ml
+        t = threading.Thread(target=fn, args=(key, cfg), daemon=True)
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
+    return results
+
+
+def _fake_tn_orders_from_rows(rows):
+    """Reconstruye la misma forma que espera core.parse_tn_sales() a partir
+    de filas ya persistidas en repo_ventas_items — parse_tn_sales no se toca."""
+    by_order = defaultdict(list)
+    for r in rows:
+        by_order[r["order_id"]].append(r)
+    return [
+        {
+            "created_at": items[0]["creado_at"],
+            "products": [{"sku": r["sku"], "quantity": r["cantidad"]} for r in items],
+        }
+        for items in by_order.values()
+    ]
+
+
+def _fake_ml_orders_from_rows(rows):
+    """Reconstruye la misma forma que esperan core.parse_ml_sales() Y
+    core.ml_sales_full_split() (ambas leen order_items[].item.{id,seller_sku})
+    — ninguna de las dos se toca."""
+    by_order = defaultdict(list)
+    for r in rows:
+        by_order[r["order_id"]].append(r)
+    return [
+        {
+            "date_created": items[0]["creado_at"],
+            "order_items": [
+                {"item": {"id": r["item_id"], "seller_sku": r["sku"]}, "quantity": r["cantidad"]}
+                for r in items
+            ],
+        }
+        for items in by_order.values()
+    ]
+
+
+def _ventas_rows(config, canal, date_from_str):
+    return db.select(config, "repo_ventas_items", params={
+        "canal": f"eq.{canal}",
+        "fecha": f"gte.{date_from_str}",
+        "estado": "eq.activa",
+    })
+
+
+def fetch_all_hybrid(config):
+    """Catálogo en vivo (precio/costo/stock/nombre — cambia todos los días,
+    no tiene sentido persistirlo con esta cadencia) + ventas desde
+    repo_ventas_items (sync incremental diario vía reposicion/ventas_sync.py,
+    wireado en reposicion/jobs/daily_stock.py) en vez de volver a pedir 60
+    días de órdenes en vivo — el cuello de botella real (~22000 órdenes de
+    ML Pret cada corrida)."""
+    channels = config["channels"]
+    results = _fetch_catalog(channels)
+
+    for canal in ("tn_pret", "tn_lavan"):
+        if canal not in results:
+            continue
+        rows = _ventas_rows(config, canal, core.DATE_FROM_STR)
+        fake_orders = _fake_tn_orders_from_rows(rows)
+        sales_total, sales_first, sales_second = core.parse_tn_sales(fake_orders)
+        results[canal]["sales"] = sales_total
+        results[canal]["sales_first"] = sales_first
+        results[canal]["sales_second"] = sales_second
+        core.tnlog(f"  {canal}: {len(rows)} líneas de venta desde repo_ventas_items")
+
+    for canal in ("ml_pret", "ml_lavan"):
+        if canal not in results:
+            continue
+        rows = _ventas_rows(config, canal, core.DATE_FROM_STR)
+        fake_orders = _fake_ml_orders_from_rows(rows)
+        sales_total, sales_first, sales_second = core.parse_ml_sales(fake_orders)
+        results[canal]["orders"] = fake_orders  # ml_sales_full_split() lo usa dentro de build_rows()
+        results[canal]["sales"] = sales_total
+        results[canal]["sales_first"] = sales_first
+        results[canal]["sales_second"] = sales_second
+        core.tnlog(f"  {canal}: {len(rows)} líneas de venta desde repo_ventas_items")
+
+    return results
 
 
 def semana_iso(d=None):
@@ -133,9 +252,7 @@ def main():
     core.configure(days=DEFAULT_DAYS, coverage_days=coverage_days)
     core.load_supplier_map()
 
-    results, errors = core.fetch_all(config["channels"])
-    if errors:
-        core.tnlog(f"⚠ Errores en canales: {errors}")
+    results = fetch_all_hybrid(config)
 
     rows = core.build_rows(results)
     core.tnlog(f"  {len(rows)} variantes procesadas")

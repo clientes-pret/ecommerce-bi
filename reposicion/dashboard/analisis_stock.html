@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reposición — Análisis de stock</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#e8eaed; --muted:#8b93a1; --accent:#4f8cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--text); }
+  main { padding: 16px 20px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 18px; }
+  .cards { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; min-width: 160px; }
+  .card .valor { font-size: 22px; font-weight: 700; }
+  .card .label { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+  th { color: var(--muted); font-weight: 600; cursor: pointer; }
+  tbody tr.fila-categoria { cursor: pointer; }
+  tbody tr.fila-categoria:hover { background: rgba(255,255,255,0.03); }
+  .fila-detalle td { background: rgba(255,255,255,0.02); padding: 12px 20px; }
+  .flecha { display: inline-block; transition: transform 0.15s; color: var(--muted); }
+  .flecha.abierta { transform: rotate(90deg); }
+  #status { padding: 20px; color: var(--muted); }
+  .sub-table { width: 100%; font-size: 12px; }
+  .sub-table th, .sub-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<main>
+  <h1>📊 Análisis de stock por categoría</h1>
+  <div class="cards" id="cards"></div>
+  <div id="status">Cargando…</div>
+  <table id="tabla" style="display:none">
+    <thead>
+      <tr>
+        <th></th>
+        <th data-k="categoria">Categoría</th>
+        <th data-k="skus">SKUs</th>
+        <th data-k="deposito">Stock Depósito</th>
+        <th data-k="full_pret">Stock Full PAH</th>
+        <th data-k="full_lavan">Stock Full CL</th>
+      </tr>
+    </thead>
+    <tbody id="filas"></tbody>
+  </table>
+</main>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+renderNav("analisis");
+
+let PRODUCTOS = [];
+let CATEGORIAS = [];
+const EXPANDIDAS = new Set();
+let ordenActual = { k: "deposito", dir: -1 };
+
+function agregarPorCategoria(productos) {
+  const map = new Map();
+  for (const p of productos) {
+    const cat = p.categoria || "Bazar";
+    if (!map.has(cat)) {
+      map.set(cat, { categoria: cat, skus: 0, deposito: 0, full_pret: 0, full_lavan: 0, porProveedor: new Map() });
+    }
+    const acc = map.get(cat);
+    acc.skus += 1;
+    acc.deposito += p.stock_deposito_hoy ?? p.stock_deposito ?? 0;
+    acc.full_pret += p.stock_full_pret_hoy ?? 0;
+    acc.full_lavan += p.stock_full_lavan_hoy ?? 0;
+
+    const prov = p.proveedor || "Otros";
+    if (!acc.porProveedor.has(prov)) acc.porProveedor.set(prov, { proveedor: prov, skus: 0, deposito: 0, full_pret: 0, full_lavan: 0 });
+    const pv = acc.porProveedor.get(prov);
+    pv.skus += 1;
+    pv.deposito += p.stock_deposito_hoy ?? p.stock_deposito ?? 0;
+    pv.full_pret += p.stock_full_pret_hoy ?? 0;
+    pv.full_lavan += p.stock_full_lavan_hoy ?? 0;
+  }
+  return Array.from(map.values());
+}
+
+function renderCards() {
+  const totalDeposito = CATEGORIAS.reduce((s, c) => s + c.deposito, 0);
+  const totalFullPret = CATEGORIAS.reduce((s, c) => s + c.full_pret, 0);
+  const totalFullLavan = CATEGORIAS.reduce((s, c) => s + c.full_lavan, 0);
+  document.getElementById("cards").innerHTML = `
+    <div class="card"><div class="valor">${fmtNum(PRODUCTOS.length)}</div><div class="label">SKUs totales</div></div>
+    <div class="card"><div class="valor">${fmtNum(totalDeposito)}</div><div class="label">Unidades en Depósito</div></div>
+    <div class="card"><div class="valor">${fmtNum(totalFullPret)}</div><div class="label">Unidades en Full Pret a Home</div></div>
+    <div class="card"><div class="valor">${fmtNum(totalFullLavan)}</div><div class="label">Unidades en Full Casa Lavan</div></div>
+  `;
+}
+
+function renderDetalle(cat) {
+  const tr = document.createElement("tr");
+  tr.className = "fila-detalle";
+  const td = document.createElement("td");
+  td.colSpan = 6;
+  const proveedores = Array.from(cat.porProveedor.values()).sort((a, b) => b.deposito - a.deposito);
+  td.innerHTML = `
+    <table class="sub-table">
+      <thead><tr><th>Proveedor</th><th>SKUs</th><th>Depósito</th><th>Full PAH</th><th>Full CL</th></tr></thead>
+      <tbody>
+        ${proveedores.map((p) => `
+          <tr>
+            <td>${p.proveedor}</td>
+            <td>${fmtNum(p.skus)}</td>
+            <td>${fmtNum(p.deposito)}</td>
+            <td>${fmtNum(p.full_pret)}</td>
+            <td>${fmtNum(p.full_lavan)}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>
+  `;
+  tr.appendChild(td);
+  return tr;
+}
+
+function render() {
+  const rows = [...CATEGORIAS].sort((a, b) => (b[ordenActual.k] ?? 0) > (a[ordenActual.k] ?? 0) ? ordenActual.dir : -ordenActual.dir);
+  const tbody = document.getElementById("filas");
+  tbody.innerHTML = "";
+  for (const cat of rows) {
+    const abierta = EXPANDIDAS.has(cat.categoria);
+    const tr = document.createElement("tr");
+    tr.className = "fila-categoria";
+    tr.innerHTML = `
+      <td><span class="flecha ${abierta ? "abierta" : ""}">▸</span></td>
+      <td><b>${cat.categoria}</b></td>
+      <td>${fmtNum(cat.skus)}</td>
+      <td>${fmtNum(cat.deposito)}</td>
+      <td>${fmtNum(cat.full_pret)}</td>
+      <td>${fmtNum(cat.full_lavan)}</td>
+    `;
+    tr.addEventListener("click", () => {
+      if (EXPANDIDAS.has(cat.categoria)) EXPANDIDAS.delete(cat.categoria); else EXPANDIDAS.add(cat.categoria);
+      render();
+    });
+    tbody.appendChild(tr);
+    if (abierta) tbody.appendChild(renderDetalle(cat));
+  }
+}
+
+document.querySelectorAll("th[data-k]").forEach((th) => {
+  th.addEventListener("click", () => {
+    const k = th.dataset.k;
+    ordenActual = { k, dir: ordenActual.k === k ? -ordenActual.dir : -1 };
+    render();
+  });
+});
+
+async function cargar() {
+  try {
+    // /productos sin query trae los NO descontinuados por default (ver getProductos en la Edge Function)
+    PRODUCTOS = await apiFetch("/productos");
+    CATEGORIAS = agregarPorCategoria(PRODUCTOS);
+    renderCards();
+    render();
+    document.getElementById("status").style.display = "none";
+    document.getElementById("tabla").style.display = "table";
+  } catch (e) {
+    document.getElementById("status").textContent = `Error: ${e.message}`;
+  }
+}
+
+cargar();
+</script>
+</body>
+</html>

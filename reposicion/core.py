@@ -373,6 +373,73 @@ def parse_ml_sales(orders):
 
     return sales_total, sales_first, sales_second
 
+# ─── APLANADO DE ÓRDENES PARA PERSISTIR (dataset de ventas incremental) ────────
+# Estas dos funciones son las únicas piezas nuevas para el dataset de ventas
+# persistente — convierten órdenes ya bajadas en vivo a líneas planas para
+# guardar en repo_ventas_items. NO tocan parse_tn_sales/parse_ml_sales/
+# ml_sales_full_split/build_rows: reposicion/jobs/weekly_calc.py reconstruye
+# "órdenes falsas" con la misma forma exacta que esas funciones ya esperan
+# (ver fake_tn_orders_from_rows/fake_ml_orders_from_rows ahí), así que la
+# lógica de negocio de ventas sigue siendo exactamente la misma tanto si el
+# dato viene de la API en vivo como de la tabla persistida.
+
+def tn_orders_to_lines(orders):
+    """Aplana órdenes de Tiendanube a líneas {order_id, sku, cantidad, fecha,
+    creado_at} para persistir en repo_ventas_items."""
+    lines = []
+    for o in orders:
+        order_id = str(o.get("id", ""))
+        if not order_id:
+            continue
+        try:
+            creado_at = datetime.fromisoformat(o.get("created_at", "").replace("Z", "+00:00"))
+        except Exception:
+            continue
+        for item in o.get("products", []):
+            sku = str(item.get("sku") or item.get("variant_id") or "")
+            if not sku:
+                continue
+            lines.append({
+                "order_id": order_id,
+                "item_id": "",
+                "sku": sku,
+                "cantidad": item.get("quantity", 1),
+                "fecha": creado_at.date().isoformat(),
+                "creado_at": creado_at.isoformat(),
+            })
+    return lines
+
+def ml_orders_to_lines(orders, item_details=None):
+    """Aplana órdenes de ML a líneas {order_id, item_id, sku, cantidad, fecha,
+    creado_at}. Si el order_item no trae seller_sku (común en Full), intenta
+    resolver contra item_details ya bajado ese mismo día (mismo criterio que
+    ml_item_sku) — evita una llamada extra a la API solo para esto."""
+    item_details = item_details or {}
+    lines = []
+    for o in orders:
+        order_id = str(o.get("id", ""))
+        if not order_id:
+            continue
+        try:
+            creado_at = datetime.fromisoformat(o.get("date_created", "").replace("Z", "+00:00"))
+        except Exception:
+            continue
+        for item in o.get("order_items", []):
+            item_obj = item.get("item", {})
+            item_id = str(item_obj.get("id", ""))
+            sku = str(item_obj.get("seller_sku") or item_obj.get("seller_custom_field") or "").strip()
+            if not sku and item_id in item_details:
+                sku = ml_item_sku(item_details[item_id])
+            lines.append({
+                "order_id": order_id,
+                "item_id": item_id,
+                "sku": sku,
+                "cantidad": item.get("quantity", 1),
+                "fecha": creado_at.date().isoformat(),
+                "creado_at": creado_at.isoformat(),
+            })
+    return lines
+
 def ml_get_all_items(key, cfg):
     """Catálogo completo de un canal ML. Usa paginación scroll (sin techo,
     ver ml_scroll_item_ids) en vez de offset — la paginación por offset de

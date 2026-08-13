@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from reposicion import core, db
+from reposicion import core, db, ventas_sync
 
 DESTINOS = ("deposito", "full_pret", "full_lavan")
 DESTINO_A_COLUMNA = {
@@ -31,9 +31,13 @@ DESTINO_A_COLUMNA = {
 
 
 def fetch_stock(config):
-    """Devuelve {sku: {'deposito': int, 'full_pret': int, 'full_lavan': int}}."""
+    """Devuelve ({sku: {'deposito': int, 'full_pret': int, 'full_lavan': int}},
+    {'ml_pret': item_details, 'ml_lavan': item_details}) — el segundo valor se
+    reusa para sincronizar ventas sin volver a pedir el catálogo ML ese mismo
+    día (ver main())."""
     channels = config["channels"]
     stock = defaultdict(lambda: {"deposito": 0, "full_pret": 0, "full_lavan": 0})
+    item_details_by_channel = {}
 
     # ── Depósito: única fuente es TN Pret (ver generar_reporte.py:755/786) ──
     tn_pret_cfg = channels.get("tn_pret")
@@ -58,12 +62,13 @@ def fetch_stock(config):
         token = core.ml_ensure_token(chan_key, cfg)
         item_ids = core.ml_scroll_item_ids(token, cfg["user_id"])
         details = core.ml_items_by_ids(token, item_ids)
+        item_details_by_channel[chan_key] = details
         stock_full, _stock_nofull = core.ml_stock_by_sku(details)
         for sku, qty in stock_full.items():
             stock[sku][destino] += qty
         core.tnlog(f"  ✓ {cfg['label']}: {len(stock_full)} SKUs con stock Full")
 
-    return stock
+    return stock, item_details_by_channel
 
 
 def upsert_productos(config, skus):
@@ -180,7 +185,7 @@ def main():
     fecha_hoy = date.today().isoformat()
 
     core.tnlog(f"═══ Stock diario — {fecha_hoy} ═══")
-    stock_by_sku = fetch_stock(config)
+    stock_by_sku, item_details_by_channel = fetch_stock(config)
     core.tnlog(f"  {len(stock_by_sku)} SKUs con stock relevado")
 
     prev_by_sku = previous_snapshot_by_sku(config, fecha_hoy)
@@ -190,6 +195,13 @@ def main():
 
     detect_quiebres(config, hoy_rows, prev_by_sku, fecha_hoy)
     reconciliar_pedidos(config, stock_by_sku, fecha_hoy)
+
+    core.tnlog("→ Sincronizando ventas incrementales de los 4 canales...")
+    for canal in ("tn_pret", "tn_lavan", "ml_pret", "ml_lavan"):
+        try:
+            ventas_sync.sync_incremental(config, canal, item_details=item_details_by_channel.get(canal))
+        except Exception as e:
+            core.tnlog(f"  ⚠ Sync de ventas falló para {canal}: {e}")
 
     core.tnlog("✓ Job diario terminado")
 
