@@ -11,7 +11,7 @@ Uso local: python3 -m reposicion.jobs.weekly_calc
 """
 
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -56,6 +56,7 @@ def row_to_calculo(row, semana, coverage_days):
     sobrestock = core.sobrestock_category(row)
     return {
         "semana_iso":             semana,
+        "fecha_corrida":          datetime.now(timezone.utc).isoformat(),
         "sku":                    row["SKU"],
         "stock_deposito":         row["Stock actual"] if isinstance(row["Stock actual"], int) else None,
         "vel_diaria_deposito":    row.get("Vel. diaria depósito"),
