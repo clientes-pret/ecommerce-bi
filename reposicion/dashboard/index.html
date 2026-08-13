@@ -338,6 +338,7 @@ function render() {
   chkTodos.onchange = () => {
     if (chkTodos.checked) rows.forEach((p) => SELECTED.add(p.sku));
     else rows.forEach((p) => SELECTED.delete(p.sku));
+    render();
     actualizarBotonesMasivos();
   };
 
