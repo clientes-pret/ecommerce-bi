@@ -465,9 +465,18 @@ def ml_item_sku(body):
 def ml_stock_by_sku(item_details):
     """A partir del mismo /items ya obtenido (sin llamadas nuevas), separa el
     available_quantity de cada publicación en Full (logistic_type=='fulfillment')
-    vs no-Full, agregado por SKU. Devuelve (stock_full, stock_nofull)."""
+    vs no-Full, agregado por SKU. Devuelve (stock_full, stock_nofull).
+
+    Un mismo inventory_id (pool físico real en el depósito Full) puede estar
+    vinculado a varias publicaciones/variaciones distintas (ej. el mismo
+    producto publicado en más de una categoría) — sumar available_quantity de
+    cada una sin deduplicar infla el stock Full varias veces (confirmado con
+    datos reales: 31.643 sumadas vs 14.268 reales). Se cuenta cada
+    inventory_id una sola vez; publicaciones sin inventory_id no comparten
+    pool con nada, así que se suman como antes."""
     stock_full   = defaultdict(int)
     stock_nofull = defaultdict(int)
+    seen_inventory_ids = set()
     for body in item_details.values():
         is_full = (body.get("shipping") or {}).get("logistic_type") == "fulfillment"
         variations = body.get("variations") or []
@@ -492,12 +501,22 @@ def ml_stock_by_sku(item_details):
                 if not sku:
                     continue
                 qty = v.get("available_quantity", 0) or 0
+                inventory_id = v.get("inventory_id")
+                if is_full and inventory_id:
+                    if inventory_id in seen_inventory_ids:
+                        continue
+                    seen_inventory_ids.add(inventory_id)
                 (stock_full if is_full else stock_nofull)[sku] += qty
         else:
             sku = ml_item_sku(body)
             if not sku:
                 continue
             qty = body.get("available_quantity", 0) or 0
+            inventory_id = body.get("inventory_id")
+            if is_full and inventory_id:
+                if inventory_id in seen_inventory_ids:
+                    continue
+                seen_inventory_ids.add(inventory_id)
             (stock_full if is_full else stock_nofull)[sku] += qty
     return stock_full, stock_nofull
 

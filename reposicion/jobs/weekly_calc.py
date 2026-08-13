@@ -104,6 +104,53 @@ def _ventas_rows(config, canal, date_from_str):
     })
 
 
+def _resolver_items_cerrados(config, canal, cfg, rows, item_details):
+    """Ventas de ML pueden referenciar publicaciones que ya no están activas
+    hoy (pausadas/cerradas) y por lo tanto no aparecen en item_details (que
+    solo trae status=active — ver core.ml_scroll_item_ids). Sin resolverlas,
+    ml_sales_full_split() las clasifica por default como no-Full, inflando
+    'Vendido depósito' con ventas que en realidad salieron por Full (caso
+    real verificado: SKU PRET210-CBOGRIS, 313 de 815 ventas mal atribuidas).
+    Se resuelven una sola vez contra repo_items_ml_cache — una publicación
+    cerrada no vuelve a cambiar de logistic_type — y las nuevas se cachean
+    para no volver a pedirlas la próxima corrida."""
+    faltantes = {r["item_id"] for r in rows if r.get("item_id")} - set(item_details.keys())
+    if not faltantes:
+        return {}
+
+    cache_rows = db.select(config, "repo_items_ml_cache", params={
+        "item_id": f"in.({','.join(faltantes)})",
+    })
+    cache_by_id = {r["item_id"]: r for r in cache_rows}
+    aun_faltantes = [iid for iid in faltantes if iid not in cache_by_id]
+
+    resueltos = {}
+    nuevos_encontrados = 0
+    if aun_faltantes:
+        token = core.ml_ensure_token(canal, cfg)
+        nuevos = core.ml_items_by_ids(token, aun_faltantes)
+        nuevas_filas = []
+        for item_id, body in nuevos.items():
+            resueltos[item_id] = body
+            nuevas_filas.append({
+                "item_id": item_id,
+                "canal": canal,
+                "sku": core.ml_item_sku(body),
+                "logistic_type": (body.get("shipping") or {}).get("logistic_type", ""),
+            })
+        if nuevas_filas:
+            db.upsert(config, "repo_items_ml_cache", nuevas_filas, on_conflict="item_id")
+        nuevos_encontrados = len(nuevos)
+
+    for item_id, cached in cache_by_id.items():
+        resueltos[item_id] = {"shipping": {"logistic_type": cached.get("logistic_type") or ""}}
+
+    core.tnlog(f"  {canal}: {len(faltantes)} publicaciones de ventas fuera del catálogo activo — "
+               f"{len(cache_by_id)} desde caché, {nuevos_encontrados} resueltas ahora "
+               f"({len(aun_faltantes) - nuevos_encontrados} no encontradas)")
+    return resueltos
+
+
 def fetch_all_hybrid(config):
     """Catálogo en vivo (precio/costo/stock/nombre — cambia todos los días,
     no tiene sentido persistirlo con esta cadencia) + ventas desde
@@ -129,6 +176,8 @@ def fetch_all_hybrid(config):
         if canal not in results:
             continue
         rows = _ventas_rows(config, canal, core.DATE_FROM_STR)
+        resueltos = _resolver_items_cerrados(config, canal, channels[canal], rows, results[canal]["item_details"])
+        results[canal]["item_details"].update(resueltos)
         fake_orders = _fake_ml_orders_from_rows(rows)
         sales_total, sales_first, sales_second = core.parse_ml_sales(fake_orders)
         results[canal]["orders"] = fake_orders  # ml_sales_full_split() lo usa dentro de build_rows()

@@ -62,9 +62,17 @@
       <option value="descontinuados">Descontinuados</option>
     </select>
     <select id="filtroProveedor"><option value="">Todos los proveedores</option></select>
+    <select id="filtroCategoria"><option value="">Todas las categorías</option></select>
+    <select id="ordenarPor">
+      <option value="sugerido" selected>Ordenar: sugerido a reponer</option>
+      <option value="ganancia">Ordenar: mayor ganancia 60d</option>
+      <option value="revenue">Ordenar: mayor revenue 60d</option>
+    </select>
     <label class="chk"><input type="checkbox" id="ocultarSolicitados" checked> Ocultar ya solicitados</label>
-    <button class="secondary" id="btnLimpiarFiltros" title="Vuelve buscador, proveedor y vista a sus valores por defecto">✕ Limpiar filtros</button>
+    <button class="secondary" id="btnLimpiarFiltros" title="Vuelve buscador, proveedor, categoría, orden y vista a sus valores por defecto">✕ Limpiar filtros</button>
     <div class="toolbar-right">
+      <button class="secondary" id="btnArmarPedido" disabled>🧾 Armar pedido (0)</button>
+      <button class="secondary" id="btnDescontinuarMasivo" disabled>🚫 Descontinuar (0)</button>
       <span id="contador" class="muted"></span>
       <button class="secondary" id="btnRefrescar">↻ Refrescar</button>
     </div>
@@ -75,6 +83,7 @@
   <table id="tabla" style="display:none">
     <thead>
       <tr>
+        <th><input type="checkbox" id="chkTodos" title="Seleccionar todos los que cumplen el filtro actual"></th>
         <th></th>
         <th>SKU</th>
         <th>Producto</th>
@@ -128,6 +137,7 @@ const DESTINOS = {
 
 let PRODUCTOS = [];
 const EXPANDIDAS = new Set();
+const SELECTED = new Set();
 
 function alertaClass(alerta) {
   if (!alerta) return "";
@@ -190,15 +200,41 @@ function renderProveedores() {
   }
 }
 
+const ORDENADORES = {
+  sugerido: (a, b) => {
+    const maxA = Math.max(a.a_reponer_deposito || 0, a.a_reponer_full_pret || 0, a.a_reponer_full_lavan || 0);
+    const maxB = Math.max(b.a_reponer_deposito || 0, b.a_reponer_full_pret || 0, b.a_reponer_full_lavan || 0);
+    return maxB - maxA;
+  },
+  ganancia: (a, b) => (b.ganancia_60d || 0) - (a.ganancia_60d || 0),
+  revenue: (a, b) => (b.revenue_60d || 0) - (a.revenue_60d || 0),
+};
+
+function renderCategorias() {
+  const sel = document.getElementById("filtroCategoria");
+  const actuales = new Set(Array.from(sel.options).map((o) => o.value));
+  const categorias = Array.from(new Set(PRODUCTOS.map((p) => p.categoria || "Bazar"))).sort();
+  for (const c of categorias) {
+    if (!actuales.has(c)) {
+      const opt = document.createElement("option");
+      opt.value = c; opt.textContent = c;
+      sel.appendChild(opt);
+    }
+  }
+}
+
 function filasVisibles() {
   const vista = document.getElementById("filtroVista").value;
   const proveedor = document.getElementById("filtroProveedor").value;
+  const categoria = document.getElementById("filtroCategoria").value;
+  const ordenarPor = document.getElementById("ordenarPor").value;
   const ocultarSolicitados = document.getElementById("ocultarSolicitados").checked;
   const busqueda = document.getElementById("buscador").value.trim().toLowerCase();
 
   let rows = PRODUCTOS;
   if (vista === "necesita") rows = rows.filter(necesitaReposicion);
   if (proveedor) rows = rows.filter((p) => p.proveedor === proveedor);
+  if (categoria) rows = rows.filter((p) => (p.categoria || "Bazar") === categoria);
   if (ocultarSolicitados) {
     rows = rows.filter((p) => (p.destinos_ya_solicitados || []).length === 0);
   }
@@ -207,11 +243,7 @@ function filasVisibles() {
       p.sku.toLowerCase().includes(busqueda) || (p.nombre || "").toLowerCase().includes(busqueda)
     );
   }
-  return rows.sort((a, b) => {
-    const maxA = Math.max(a.a_reponer_deposito || 0, a.a_reponer_full_pret || 0, a.a_reponer_full_lavan || 0);
-    const maxB = Math.max(b.a_reponer_deposito || 0, b.a_reponer_full_pret || 0, b.a_reponer_full_lavan || 0);
-    return maxB - maxA;
-  });
+  return rows.sort(ORDENADORES[ordenarPor] || ORDENADORES.sugerido);
 }
 
 function renderDestinoCard(p, key) {
@@ -255,7 +287,7 @@ function renderDetalle(p) {
   const tr = document.createElement("tr");
   tr.className = "fila-detalle";
   const td = document.createElement("td");
-  td.colSpan = 8;
+  td.colSpan = 9;
 
   const destinos = document.createElement("div");
   destinos.className = "destinos";
@@ -300,12 +332,22 @@ function render() {
   const tbody = document.getElementById("filas");
   tbody.innerHTML = "";
 
+  const chkTodos = document.getElementById("chkTodos");
+  chkTodos.checked = rows.length > 0 && rows.every((p) => SELECTED.has(p.sku));
+  chkTodos.onclick = (e) => e.stopPropagation();
+  chkTodos.onchange = () => {
+    if (chkTodos.checked) rows.forEach((p) => SELECTED.add(p.sku));
+    else rows.forEach((p) => SELECTED.delete(p.sku));
+    actualizarBotonesMasivos();
+  };
+
   for (const p of rows) {
     const tr = document.createElement("tr");
     tr.className = "fila-producto";
     const abierta = EXPANDIDAS.has(p.sku);
     const alertaResumen = peorAlerta(p);
     tr.innerHTML = `
+      <td><input type="checkbox" class="chk-fila" ${SELECTED.has(p.sku) ? "checked" : ""}></td>
       <td><span class="flecha ${abierta ? "abierta" : ""}">▸</span></td>
       <td>${p.sku}</td>
       <td>${p.nombre || "<span class=muted>(sin nombre)</span>"}</td>
@@ -316,7 +358,15 @@ function render() {
       <td><span class="badge" style="${alertaClass(alertaResumen)}">${alertaResumen || "—"}</span></td>
     `;
 
-    const tdProveedor = tr.children[3];
+    const chkFila = tr.querySelector(".chk-fila");
+    chkFila.addEventListener("click", (e) => e.stopPropagation());
+    chkFila.addEventListener("change", () => {
+      if (chkFila.checked) SELECTED.add(p.sku); else SELECTED.delete(p.sku);
+      chkTodos.checked = rows.length > 0 && rows.every((x) => SELECTED.has(x.sku));
+      actualizarBotonesMasivos();
+    });
+
+    const tdProveedor = tr.children[4];
     const select = document.createElement("select");
     select.className = "proveedor-select";
     for (const prov of Array.from(new Set(PRODUCTOS.map((x) => x.proveedor))).sort()) {
@@ -380,13 +430,25 @@ async function cargar() {
     const qs = vista === "descontinuados" ? "?descontinuados=true" : "";
     PRODUCTOS = await apiFetch(`/productos${qs}`);
     renderProveedores();
+    renderCategorias();
     render();
     actualizarBarraCarrito();
+    actualizarBotonesMasivos();
     document.getElementById("status").style.display = "none";
     document.getElementById("tabla").style.display = "table";
   } catch (e) {
     document.getElementById("status").textContent = `Error: ${e.message}`;
   }
+}
+
+function actualizarBotonesMasivos() {
+  const n = SELECTED.size;
+  const btnPedido = document.getElementById("btnArmarPedido");
+  const btnDescontinuar = document.getElementById("btnDescontinuarMasivo");
+  btnPedido.textContent = `🧾 Armar pedido (${n})`;
+  btnDescontinuar.textContent = `🚫 Descontinuar (${n})`;
+  btnPedido.disabled = n === 0;
+  btnDescontinuar.disabled = n === 0;
 }
 
 function actualizarBarraCarrito() {
@@ -400,6 +462,8 @@ function actualizarBarraCarrito() {
 
 document.getElementById("filtroVista").addEventListener("change", cargar);
 document.getElementById("filtroProveedor").addEventListener("change", render);
+document.getElementById("filtroCategoria").addEventListener("change", render);
+document.getElementById("ordenarPor").addEventListener("change", render);
 document.getElementById("ocultarSolicitados").addEventListener("change", render);
 document.getElementById("buscador").addEventListener("input", render);
 document.getElementById("btnRefrescar").addEventListener("click", cargar);
@@ -407,11 +471,46 @@ document.getElementById("btnVerCarrito").addEventListener("click", () => { windo
 document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
   document.getElementById("buscador").value = "";
   document.getElementById("filtroProveedor").value = "";
+  document.getElementById("filtroCategoria").value = "";
+  document.getElementById("ordenarPor").value = "sugerido";
   const vistaCambio = document.getElementById("filtroVista").value !== "necesita";
   document.getElementById("filtroVista").value = "necesita";
   // "Descontinuados" trae un dataset distinto del servidor (no es un filtro
   // client-side) — si veníamos de ahí hace falta recargar, no solo re-renderizar.
   vistaCambio ? cargar() : render();
+});
+
+// Selección masiva (checkbox por fila + "tildar todos los filtrados", ver
+// render()/SELECTED más arriba) — segundo punto de entrada a estas dos
+// acciones, además de los botones dentro del panel expandido por fila.
+document.getElementById("btnArmarPedido").addEventListener("click", () => {
+  const seleccionados = PRODUCTOS.filter((p) => SELECTED.has(p.sku));
+  for (const p of seleccionados) {
+    for (const key of Object.keys(DESTINOS)) {
+      const d = DESTINOS[key];
+      const sugerido = p[d.aReponer] || 0;
+      if (sugerido > 0) {
+        addLineaCarrito({
+          sku: p.sku, nombre: p.nombre, proveedor: p.proveedor,
+          destino: d.destino, cantidad: sugerido, cantidad_sugerida: sugerido,
+          stock_hoy: d.stock(p) ?? 0,
+        });
+      }
+    }
+  }
+  window.location.href = "pedido.html";
+});
+document.getElementById("btnDescontinuarMasivo").addEventListener("click", async () => {
+  const skus = Array.from(SELECTED);
+  if (!skus.length) return;
+  if (!confirm(`¿Marcar ${skus.length} producto(s) como descontinuado(s)? Dejan de aparecer en las sugerencias de reposición.`)) return;
+  await Promise.all(skus.map((sku) =>
+    apiFetch(`/productos/${encodeURIComponent(sku)}/descontinuar`, {
+      method: "POST", body: JSON.stringify({ descontinuado: true, por: getUser() }),
+    })
+  ));
+  SELECTED.clear();
+  cargar();
 });
 
 cargar();
