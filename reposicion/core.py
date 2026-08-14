@@ -1166,8 +1166,22 @@ def sobrestock_category(row):
     return None
 
 CATEGORY_KEYWORDS = [
+    # Orden importa: classify_product() devuelve la primera que matchea, así
+    # que las categorías más específicas van antes que las más genéricas —
+    # ej. "funda de almohada" (ropa de cama) tiene que resolverse ANTES de
+    # llegar al keyword suelto "almohada", si no cualquier funda de almohada
+    # se contaba como si fuera una almohada real (bug reportado por el
+    # usuario: "creo que estás mezclando fundas de almohadas con almohadas").
     ("Cortinas",                ["cortina"]),
-    ("Sábanas",                 ["sábana", "sabana", "sabanas", "sábanas"]),
+    ("Frazadas y Mantas",       ["frazada", "manta"]),
+    ("Protectores de Colchón",  ["colchón", "colchon"]),
+    ("Covers y Almohadones",    ["almohadón", "almohadon", "cover"]),
+    ("Alfombras",               ["alfombra"]),
+    ("Manteles y Individuales", ["mantel", "individual"]),
+    ("Repasadores",             ["repasador"]),
+    ("Sábanas",                 ["sábana", "sabana", "sabanas", "sábanas",
+                                  "funda de almohada", "fundas de almohada",
+                                  "funda almohada", "fundas almohada"]),
     ("Acolchados y Edredones",  ["acolchado", "edredón", "edredon", "quilt", "cubrecama"]),
     ("Toallas y Toallones",     ["toallón", "toallon", "toalla"]),
     ("Almohadas",                ["almohada"]),
