@@ -26,6 +26,7 @@
   main { padding: 0 20px 20px; overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  td.col-producto { max-width: 280px; overflow: hidden; text-overflow: ellipsis; cursor: help; }
   th { color: var(--muted); font-weight: 600; }
   tbody tr.fila-producto { cursor: pointer; }
   tbody tr.fila-producto:hover { background: rgba(255,255,255,0.03); }
@@ -250,7 +251,13 @@ function filasVisibles() {
   const busqueda = document.getElementById("buscador").value.trim().toLowerCase();
 
   let rows = PRODUCTOS;
-  if (vista === "necesita") rows = rows.filter(necesitaReposicion);
+  // Si hay término de búsqueda, se busca en TODO el catálogo cargado —
+  // el filtro "Necesita reposición" no debe esconder un SKU real que el
+  // usuario está buscando a propósito (confirmado: familia 002225-* tiene
+  // 26 variantes reales, pero solo 1 tenía sugerencia de reposición > 0,
+  // así que buscando "002225-" con la vista en "Necesita reposición" antes
+  // solo mostraba esa una, pareciendo que faltaban productos).
+  if (!busqueda && vista === "necesita") rows = rows.filter(necesitaReposicion);
   if (proveedor) rows = rows.filter((p) => p.proveedor === proveedor);
   if (categoria) rows = rows.filter((p) => (p.categoria || "Bazar") === categoria);
   if (ocultarSolicitados) {
@@ -369,7 +376,7 @@ function render() {
       <td><input type="checkbox" class="chk-fila" ${SELECTED.has(p.sku) ? "checked" : ""}></td>
       <td><span class="flecha ${abierta ? "abierta" : ""}">▸</span></td>
       <td>${p.sku}</td>
-      <td>${p.nombre || "<span class=muted>(sin nombre)</span>"}</td>
+      <td class="col-producto" title="${(p.nombre || "").replace(/"/g, "&quot;")}">${p.nombre || "<span class=muted>(sin nombre)</span>"}</td>
       <td></td>
       <td>${fmtNum(DESTINOS.deposito.stock(p))}</td>
       <td>${fmtNum(DESTINOS.full_pret.stock(p))}</td>
