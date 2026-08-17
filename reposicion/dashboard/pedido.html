@@ -76,7 +76,7 @@ function generarPDF(proveedor, lineas) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const hoy = new Date().toLocaleDateString("es-AR");
-  doc.addImage(LOGO_PDF_BASE64, "PNG", 14, 8, 50, 8.13);
+  doc.addImage(LOGO_PDF_BASE64, "PNG", 14, 8, 50, 8.89);
   doc.setFontSize(14);
   doc.text(`Orden de pedido — ${proveedor}`, 14, 32);
   doc.setFontSize(10);
