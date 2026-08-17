@@ -55,6 +55,7 @@
 <body>
 <div class="toppanel">
   <h1>📦 Reposición — Tablero</h1>
+  <div id="ultimaActualizacion" class="muted" style="margin:2px 0 8px;"></div>
   <div class="toolbar">
     <input type="text" id="buscador" placeholder="Buscar por SKU o producto…">
     <select id="filtroVista">
@@ -178,10 +179,14 @@ function estadoGeneral(p) {
   const stockTotal = Object.values(DESTINOS).reduce((s, d) => s + (d.stock(p) || 0), 0);
   const ventasTotal = Object.values(DESTINOS).reduce((s, d) => s + (p[d.vendido] || 0), 0);
   const velDiariaTotal = Object.values(DESTINOS).reduce((s, d) => s + (p[d.velDiaria] || 0), 0);
-  const velSemanal = velSemanalTotal(p);
 
   if (ventasTotal === 0) return "⚫ Sin ventas";
-  if (stockTotal === 0 && velSemanal >= 1) return "🔴 SIN STOCK";
+  // Con stock total en 0 no hay "días de cobertura" que calcular — es SIN
+  // STOCK directo. Antes exigía vel/semana >= 1 (heredado del criterio por
+  // destino de core.py) y sin eso el cálculo de días-a-quiebre daba 0/lo-que-
+  // sea = 0 días, mostrando "CRÍTICO" para productos con stock 0 en los 3
+  // destinos pero apenas 1 venta ocasional — confuso, ya está en cero.
+  if (stockTotal === 0) return "🔴 SIN STOCK";
   if (velDiariaTotal > 0) {
     const diasQuiebre = stockTotal / velDiariaTotal;
     if (diasQuiebre < 14) return "🔴 CRÍTICO";
@@ -449,6 +454,20 @@ function render() {
   }
 }
 
+function actualizarUltimaActualizacion() {
+  // El stock se sincroniza todos los días (06:00 AR) y el cálculo de
+  // velocidad/reposición una vez por semana (lunes 07:00 AR) — se muestran
+  // los dos por separado para que se note si alguno de los dos dejó de
+  // correr, en vez de un solo timestamp que puede tapar ese problema.
+  let stockAt = null, calculoAt = null;
+  for (const p of PRODUCTOS) {
+    if (p.stock_actualizado_at && (!stockAt || p.stock_actualizado_at > stockAt)) stockAt = p.stock_actualizado_at;
+    if (p.fecha_corrida && (!calculoAt || p.fecha_corrida > calculoAt)) calculoAt = p.fecha_corrida;
+  }
+  document.getElementById("ultimaActualizacion").textContent =
+    `Última actualización — Stock: ${fmtFechaHora(stockAt)} · Cálculo semanal: ${fmtFechaHora(calculoAt)}`;
+}
+
 async function cargar() {
   document.getElementById("status").textContent = "Cargando…";
   document.getElementById("tabla").style.display = "none";
@@ -460,6 +479,7 @@ async function cargar() {
     renderProveedorMasivoSelect();
     renderCategorias();
     render();
+    actualizarUltimaActualizacion();
     actualizarBarraCarrito();
     actualizarBotonesMasivos();
     document.getElementById("status").style.display = "none";

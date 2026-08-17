@@ -118,6 +118,7 @@ async function getProductos(url: URL) {
       stock_deposito_hoy: snap.stock_deposito ?? null,
       stock_full_pret_hoy: snap.stock_full_pret ?? null,
       stock_full_lavan_hoy: snap.stock_full_lavan ?? null,
+      stock_actualizado_at: snap.captured_at ?? null,
       destinos_ya_solicitados: Array.from(abiertos.get(p.sku as string) ?? []),
     };
   });
