@@ -147,6 +147,18 @@ def reconciliar_pedidos(config, hoy_by_sku, fecha_hoy):
     if not pendientes:
         return
 
+    # Un pedido cancelado no debe seguir "recibiendo" stock por esta
+    # reconciliación automática — si no, un pedido cancelado con líneas aún
+    # sin cerrar quedaría marcado como recibido_parcial/completo apenas
+    # entrara stock nuevo de ese SKU por cualquier otro motivo.
+    cancelados = db.select(config, "repo_pedidos", params={
+        "select": "id", "estado": "eq.cancelado",
+    })
+    ids_cancelados = {p["id"] for p in cancelados}
+    pendientes = [i for i in pendientes if i["pedido_id"] not in ids_cancelados]
+    if not pendientes:
+        return
+
     pedidos_tocados = set()
     for item in pendientes:
         sku, destino = item["sku"], item["destino"]

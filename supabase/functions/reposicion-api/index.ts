@@ -247,6 +247,51 @@ async function postPedido(req: Request) {
   return json({ ok: true, pedido_id: pedido.id });
 }
 
+async function postCancelarPedido(id: string, req: Request) {
+  const { por } = await req.json().catch(() => ({}));
+  const { data: pedido, error: getError } = await supabase
+    .from("repo_pedidos").select("estado").eq("id", id).maybeSingle();
+  if (getError) throw getError;
+  if (!pedido) return json({ error: "Pedido no encontrado" }, 404);
+  if (pedido.estado === "recibido_completo") {
+    return json({ error: "No se puede cancelar un pedido ya recibido completo" }, 400);
+  }
+  if (pedido.estado === "cancelado") {
+    return json({ error: "El pedido ya está cancelado" }, 400);
+  }
+  const { error } = await supabase.from("repo_pedidos").update({
+    estado: "cancelado",
+    cancelado_at: new Date().toISOString(),
+    cancelado_por: por ?? null,
+  }).eq("id", id);
+  if (error) throw error;
+  return json({ ok: true });
+}
+
+async function patchPedidoItems(id: string, req: Request) {
+  const { items } = await req.json() as {
+    items: { id: number; cantidad_pedida: number }[];
+  };
+  if (!items?.length) return json({ error: "Falta items" }, 400);
+
+  const { data: pedido, error: getError } = await supabase
+    .from("repo_pedidos").select("estado").eq("id", id).maybeSingle();
+  if (getError) throw getError;
+  if (!pedido) return json({ error: "Pedido no encontrado" }, 404);
+  if (pedido.estado !== "enviado") {
+    return json({ error: "Solo se pueden editar cantidades de un pedido en estado 'enviado'" }, 400);
+  }
+
+  for (const it of items) {
+    if (!(it.cantidad_pedida > 0)) continue;
+    const { error } = await supabase.from("repo_pedido_items")
+      .update({ cantidad_pedida: it.cantidad_pedida })
+      .eq("id", it.id).eq("pedido_id", id);
+    if (error) throw error;
+  }
+  return json({ ok: true });
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -276,6 +321,12 @@ Deno.serve(async (req) => {
       return await postDescontinuar(decodeURIComponent(parts[1]), req);
     }
     if (req.method === "POST" && path === "/pedidos") return await postPedido(req);
+    if (req.method === "POST" && parts[0] === "pedidos" && parts[2] === "cancelar") {
+      return await postCancelarPedido(decodeURIComponent(parts[1]), req);
+    }
+    if (req.method === "PATCH" && parts[0] === "pedidos" && parts[2] === "items") {
+      return await patchPedidoItems(decodeURIComponent(parts[1]), req);
+    }
 
     return json({ error: "Ruta no encontrada" }, 404);
   } catch (err) {

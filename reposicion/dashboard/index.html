@@ -167,27 +167,26 @@ function velSemanalTotal(p) {
   return Object.values(DESTINOS).reduce((s, d) => s + (p[d.velSemanal] || 0), 0);
 }
 
-function peorAlerta(p) {
-  // Para el badge compacto de la fila: el peor estado entre los 3 destinos
-  // (sin stock > crítico > bajo > ok > sin datos), solo entre destinos con
-  // alguna sugerencia de reposición real (a_reponer > 0) para no alarmar
-  // por Full Casa Lavan cuando esa marca directamente no usa Full.
-  const prioridad = (a) => {
-    if (!a) return -1;
-    if (a.includes("SIN STOCK")) return 4;
-    if (a.includes("CRÍTICO")) return 3;
-    if (a.includes("BAJO")) return 2;
-    if (a.includes("OK")) return 1;
-    return 0;
-  };
-  let mejor = null, mejorPrio = -1;
-  for (const key of Object.keys(DESTINOS)) {
-    const d = DESTINOS[key];
-    const alerta = p[d.alerta];
-    const prio = prioridad(alerta);
-    if (prio > mejorPrio) { mejorPrio = prio; mejor = alerta; }
+function estadoGeneral(p) {
+  // Badge compacto de la fila: NO es "el peor de los 3 destinos" (eso hacía
+  // que Full Casa Lavan, que hoy no maneja stock Full, dominara el badge con
+  // un falso "SIN STOCK" aunque depósito y Full Pret estuvieran perfectos).
+  // En cambio suma stock y velocidad de los 3 destinos y aplica los mismos
+  // umbrales que ya usa core.py por destino (14/30 días) sobre ese total —
+  // "en base al número general", como pidió el usuario.
+  const stockTotal = Object.values(DESTINOS).reduce((s, d) => s + (d.stock(p) || 0), 0);
+  const ventasTotal = Object.values(DESTINOS).reduce((s, d) => s + (p[d.vendido] || 0), 0);
+  const velDiariaTotal = Object.values(DESTINOS).reduce((s, d) => s + (p[d.velDiaria] || 0), 0);
+  const velSemanal = velSemanalTotal(p);
+
+  if (ventasTotal === 0) return "⚫ Sin ventas";
+  if (stockTotal === 0 && velSemanal >= 1) return "🔴 SIN STOCK";
+  if (velDiariaTotal > 0) {
+    const diasQuiebre = stockTotal / velDiariaTotal;
+    if (diasQuiebre < 14) return "🔴 CRÍTICO";
+    if (diasQuiebre < 30) return "🟡 BAJO";
   }
-  return mejor;
+  return "🟢 OK";
 }
 
 function necesitaReposicionDestino(p, d) {
@@ -365,7 +364,7 @@ function render() {
     const tr = document.createElement("tr");
     tr.className = "fila-producto";
     const abierta = EXPANDIDAS.has(p.sku);
-    const alertaResumen = peorAlerta(p);
+    const alertaResumen = estadoGeneral(p);
     tr.innerHTML = `
       <td><input type="checkbox" class="chk-fila" ${SELECTED.has(p.sku) ? "checked" : ""}></td>
       <td><span class="flecha ${abierta ? "abierta" : ""}">▸</span></td>

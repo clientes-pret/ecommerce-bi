@@ -25,6 +25,11 @@
   .detalle table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .detalle th, .detalle td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; }
   .detalle th { color: var(--muted); font-weight: 600; font-size: 11px; }
+  .pedido-acciones { margin-top: 12px; display: flex; gap: 8px; }
+  .pedido-acciones button { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .pedido-acciones button:hover { background: rgba(255,255,255,0.05); }
+  .pedido-acciones button:disabled { opacity: 0.5; cursor: default; }
+  .qty-edit { width: 70px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
   #status { padding: 20px; color: var(--muted); }
 </style>
 </head>
@@ -50,6 +55,8 @@ function renderPedido(p) {
   const el = document.createElement("div");
   el.className = "pedido";
   const pct = p.total_items ? Math.round((p.items_recibidos / p.total_items) * 100) : 0;
+  const editable = p.estado === "enviado";
+  const cancelable = p.estado === "enviado" || p.estado === "recibido_parcial";
   el.innerHTML = `
     <div class="pedido-header">
       <span class="proveedor">📦 ${p.proveedor}</span>
@@ -62,22 +69,65 @@ function renderPedido(p) {
         <thead><tr><th>SKU</th><th>Destino</th><th>Pedido</th><th>Recibido</th><th>Estado</th></tr></thead>
         <tbody>
           ${(p.items || []).map((it) => `
-            <tr>
+            <tr data-item-id="${it.id}">
               <td>${it.sku}</td>
               <td>${DESTINO_LABEL[it.destino] || it.destino}</td>
-              <td>${it.cantidad_pedida}</td>
+              <td>${editable
+                ? `<input type="number" min="1" class="qty-edit" value="${it.cantidad_pedida}">`
+                : it.cantidad_pedida}</td>
               <td>${it.cantidad_recibida}</td>
               <td>${it.recibido_completo ? "✓ Completo" : it.cantidad_recibida > 0 ? "Parcial" : "Pendiente"}</td>
             </tr>`).join("")}
         </tbody>
       </table>
       ${p.notas ? `<p class="muted">Notas: ${p.notas}</p>` : ""}
+      <div class="pedido-acciones">
+        ${editable ? `<button class="secondary btn-guardar-cantidades">💾 Guardar cambios</button>` : ""}
+        ${cancelable ? `<button class="secondary btn-cancelar-pedido">🗑️ Cancelar pedido</button>` : ""}
+      </div>
     </div>
   `;
   el.querySelector(".pedido-header").addEventListener("click", () => {
     const det = el.querySelector(".detalle");
     det.style.display = det.style.display === "block" ? "none" : "block";
   });
+
+  const btnGuardar = el.querySelector(".btn-guardar-cantidades");
+  if (btnGuardar) {
+    btnGuardar.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const items = Array.from(el.querySelectorAll("tr[data-item-id]")).map((tr) => ({
+        id: Number(tr.dataset.itemId),
+        cantidad_pedida: Number(tr.querySelector(".qty-edit").value),
+      })).filter((it) => it.cantidad_pedida > 0);
+      if (!items.length) return;
+      btnGuardar.disabled = true;
+      try {
+        await apiFetch(`/pedidos/${p.id}/items`, { method: "PATCH", body: JSON.stringify({ items }) });
+        cargar();
+      } catch (err) {
+        alert(`No se pudo guardar: ${err.message}`);
+        btnGuardar.disabled = false;
+      }
+    });
+  }
+
+  const btnCancelar = el.querySelector(".btn-cancelar-pedido");
+  if (btnCancelar) {
+    btnCancelar.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`¿Cancelar el pedido a ${p.proveedor} del ${new Date(p.creado_at).toLocaleDateString("es-AR")}?`)) return;
+      btnCancelar.disabled = true;
+      try {
+        await apiFetch(`/pedidos/${p.id}/cancelar`, { method: "POST", body: JSON.stringify({ por: getUser() }) });
+        cargar();
+      } catch (err) {
+        alert(`No se pudo cancelar: ${err.message}`);
+        btnCancelar.disabled = false;
+      }
+    });
+  }
+
   return el;
 }
 

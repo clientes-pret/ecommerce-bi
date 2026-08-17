@@ -105,8 +105,13 @@ const NAV_LINKS = [
 function renderNav(activeKey) {
   const nav = document.createElement("nav");
   nav.style.cssText =
-    "display:flex;gap:4px;padding:10px 20px;border-bottom:1px solid #2a2f3a;" +
+    "display:flex;align-items:center;gap:4px;padding:10px 20px;border-bottom:1px solid #2a2f3a;" +
     "background:#0f1115;flex-wrap:wrap;";
+  const logo = document.createElement("img");
+  logo.src = "assets/logo-white.png";
+  logo.alt = "Pret a Home";
+  logo.style.cssText = "height:20px;margin-right:16px;display:block;";
+  nav.appendChild(logo);
   for (const link of NAV_LINKS) {
     const a = document.createElement("a");
     a.href = link.href;

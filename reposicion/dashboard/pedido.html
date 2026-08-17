@@ -39,6 +39,7 @@
 
 <script src="config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="assets/logo-black-base64.js"></script>
 <script src="app.js"></script>
 <script>
 renderNav("pedido");
@@ -75,12 +76,13 @@ function generarPDF(proveedor, lineas) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const hoy = new Date().toLocaleDateString("es-AR");
+  doc.addImage(LOGO_PDF_BASE64, "PNG", 14, 8, 50, 8.13);
   doc.setFontSize(14);
-  doc.text(`Orden de pedido — ${proveedor}`, 14, 18);
+  doc.text(`Orden de pedido — ${proveedor}`, 14, 32);
   doc.setFontSize(10);
-  doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 25);
+  doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 39);
 
-  let y = 38;
+  let y = 52;
   doc.setFontSize(11);
   doc.text("SKU", 14, y);
   doc.text("Producto", 50, y);
