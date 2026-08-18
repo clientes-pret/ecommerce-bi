@@ -82,24 +82,34 @@ function generarPDF(proveedor, lineas) {
   doc.setFontSize(10);
   doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 39);
 
+  // Columnas: SKU tiene prioridad — nunca se corta, así que necesita ancho
+  // de sobra (algunos SKU pasan los 20 caracteres). Producto se banca hasta
+  // 2 líneas si no entra en una sola; la altura de cada fila de la tabla se
+  // ajusta según cuántas líneas terminó ocupando el producto.
+  const colSku = 14, colProducto = 68, colDestino = 145, colCantidad = 180;
+  const anchoProducto = colDestino - colProducto - 4;
+  const lineHeight = 4.2;
+
   let y = 52;
   doc.setFontSize(11);
-  doc.text("SKU", 14, y);
-  doc.text("Producto", 50, y);
-  doc.text("Destino", 140, y);
-  doc.text("Cantidad", 175, y);
+  doc.text("SKU", colSku, y);
+  doc.text("Producto", colProducto, y);
+  doc.text("Destino", colDestino, y);
+  doc.text("Cantidad", colCantidad, y);
   y += 4;
   doc.line(14, y, 196, y);
   y += 6;
 
-  doc.setFontSize(10);
+  doc.setFontSize(9);
   for (const l of lineas) {
-    if (y > 280) { doc.addPage(); y = 20; }
-    doc.text(String(l.sku), 14, y);
-    doc.text(String(l.nombre || "").slice(0, 45), 50, y);
-    doc.text(DESTINO_LABEL[l.destino] || l.destino, 140, y);
-    doc.text(String(l.cantidad_pedida), 175, y);
-    y += 7;
+    const nombreLineas = doc.splitTextToSize(String(l.nombre || ""), anchoProducto).slice(0, 2);
+    const filaAlto = Math.max(1, nombreLineas.length) * lineHeight;
+    if (y + filaAlto > 280) { doc.addPage(); y = 20; }
+    doc.text(String(l.sku), colSku, y);
+    doc.text(nombreLineas, colProducto, y);
+    doc.text(DESTINO_LABEL[l.destino] || l.destino, colDestino, y);
+    doc.text(String(l.cantidad_pedida), colCantidad, y);
+    y += filaAlto + 3;
   }
 
   const totalUnidades = lineas.reduce((s, l) => s + l.cantidad_pedida, 0);
