@@ -101,15 +101,14 @@ async function apiFetch(path, options = {}) {
 
 const DESTINO_LABEL = { deposito: "Depósito", full_pret: "Full Pret a Home", full_lavan: "Full Casa Lavan" };
 
-function generarPDF(proveedor, lineas) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  const hoy = new Date().toLocaleDateString("es-AR");
-  doc.addImage(LOGO_PDF_BASE64, "PNG", 14, 8, 50, 8.89);
+function _renderHojaPDF(doc, proveedor, tituloHoja, lineas, hoy) {
+  doc.addImage(LOGO_PDF_BASE64, "PNG", 14, 8, 50, 8.63);
   doc.setFontSize(14);
   doc.text(`Orden de pedido — ${proveedor}`, 14, 32);
+  doc.setFontSize(12);
+  doc.text(tituloHoja, 14, 39);
   doc.setFontSize(10);
-  doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 39);
+  doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 46);
 
   // Columnas: SKU tiene prioridad — nunca se corta, así que necesita ancho
   // de sobra (algunos SKU pasan los 20 caracteres). Producto se banca hasta
@@ -119,7 +118,7 @@ function generarPDF(proveedor, lineas) {
   const anchoProducto = colDestino - colProducto - 4;
   const lineHeight = 4.2;
 
-  let y = 52;
+  let y = 58;
   doc.setFontSize(11);
   doc.text("SKU", colSku, y);
   doc.text("Producto", colProducto, y);
@@ -145,6 +144,27 @@ function generarPDF(proveedor, lineas) {
   y += 4;
   doc.setFontSize(11);
   doc.text(`Total: ${lineas.length} líneas, ${totalUnidades} unidades`, 14, y);
+}
+
+function generarPDF(proveedor, lineas) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const hoy = new Date().toLocaleDateString("es-AR");
+
+  // El depósito y Full se preparan/despachan por separado en la operación
+  // diaria, así que van en hojas distintas del mismo PDF en vez de mezclados
+  // en una sola tabla — Full Pret y Full Lavan comparten hoja (la columna
+  // Destino ya los distingue entre sí) porque a ambos se les manda por el
+  // mismo circuito de envío a Mercado Libre, a diferencia de depósito.
+  const grupos = [
+    { titulo: "Depósito", lineas: lineas.filter((l) => l.destino === "deposito") },
+    { titulo: "Full (Pret a Home / Casa Lavan)", lineas: lineas.filter((l) => l.destino !== "deposito") },
+  ].filter((g) => g.lineas.length > 0);
+
+  grupos.forEach((grupo, idx) => {
+    if (idx > 0) doc.addPage();
+    _renderHojaPDF(doc, proveedor, grupo.titulo, grupo.lineas, hoy);
+  });
 
   doc.save(`pedido_${proveedor.replace(/\s+/g, "_")}_${hoy.replace(/\//g, "-")}.pdf`);
 }

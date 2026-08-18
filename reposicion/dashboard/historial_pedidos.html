@@ -68,11 +68,12 @@ function renderPedido(p) {
     </div>
     <div class="detalle">
       <table>
-        <thead><tr><th>SKU</th><th>Destino</th><th>Pedido</th><th>Recibido</th><th>Estado</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Producto</th><th>Destino</th><th>Pedido</th><th>Recibido</th><th>Estado</th></tr></thead>
         <tbody>
           ${(p.items || []).map((it) => `
             <tr data-item-id="${it.id}">
               <td>${it.sku}</td>
+              <td>${it.nombre || "—"}</td>
               <td>${DESTINO_LABEL[it.destino] || it.destino}</td>
               <td>${editable
                 ? `<input type="number" min="1" class="qty-edit" value="${it.cantidad_pedida}">`
