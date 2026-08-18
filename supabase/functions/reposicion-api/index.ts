@@ -142,9 +142,16 @@ async function getProveedores() {
 async function getPedidos() {
   const pedidos = await selectAll("repo_pedidos", (q) => q.order("creado_at", { ascending: false }));
   const items = await selectAll("repo_pedido_items", (q) => q);
+  // repo_pedido_items no guarda el nombre del producto (no hace falta para
+  // la reconciliación) — se suma acá solo para poder re-generar el PDF del
+  // pedido desde el historial sin tener que cargar todo el catálogo aparte.
+  const productos = await selectAll("repo_productos", (q) => q.select("sku,nombre"));
+  const nombrePorSku = new Map(productos.map((p) => [p.sku as string, p.nombre as string]));
 
   const result = pedidos.map((p) => {
-    const suyos = items.filter((i) => i.pedido_id === p.id);
+    const suyos = items
+      .filter((i) => i.pedido_id === p.id)
+      .map((i) => ({ ...i, nombre: nombrePorSku.get(i.sku as string) ?? "" }));
     const recibidos = suyos.filter((i) => i.recibido_completo).length;
     return { ...p, total_items: suyos.length, items_recibidos: recibidos, items: suyos };
   });

@@ -41,6 +41,8 @@
 </main>
 
 <script src="config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="assets/logo-black-base64.js"></script>
 <script src="app.js"></script>
 <script>
 renderNav("pedidos");
@@ -49,7 +51,7 @@ const ESTADO_LABEL = {
   enviado: "Enviado", recibido_parcial: "Recibido parcial",
   recibido_completo: "Recibido completo", cancelado: "Cancelado",
 };
-const DESTINO_LABEL = { deposito: "Depósito", full_pret: "Full Pret", full_lavan: "Full Lavan" };
+// DESTINO_LABEL y generarPDF() vienen de app.js — compartidos con pedido.html.
 
 function renderPedido(p) {
   const el = document.createElement("div");
@@ -82,6 +84,7 @@ function renderPedido(p) {
       </table>
       ${p.notas ? `<p class="muted">Notas: ${p.notas}</p>` : ""}
       <div class="pedido-acciones">
+        <button class="secondary btn-descargar-pdf">⬇️ Descargar PDF</button>
         ${editable ? `<button class="secondary btn-guardar-cantidades">💾 Guardar cambios</button>` : ""}
         ${cancelable ? `<button class="secondary btn-cancelar-pedido">🗑️ Cancelar pedido</button>` : ""}
       </div>
@@ -90,6 +93,11 @@ function renderPedido(p) {
   el.querySelector(".pedido-header").addEventListener("click", () => {
     const det = el.querySelector(".detalle");
     det.style.display = det.style.display === "block" ? "none" : "block";
+  });
+
+  el.querySelector(".btn-descargar-pdf").addEventListener("click", (e) => {
+    e.stopPropagation();
+    generarPDF(p.proveedor, p.items || []);
   });
 
   const btnGuardar = el.querySelector(".btn-guardar-cantidades");
