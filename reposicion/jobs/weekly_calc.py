@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-reposicion/jobs/weekly_calc.py — corre 1 vez por semana (GitHub Actions cron).
+reposicion/jobs/weekly_calc.py — corre todos los días (GitHub Actions cron;
+el nombre del archivo quedó de cuando corría 1 vez por semana). Cada corrida
+pisa la fila de repo_calculo_semanal de la semana ISO actual (on_conflict
+semana_iso+sku), así que correrlo varias veces en la misma semana no genera
+duplicados — sólo refresca los números.
 
 Reusa core.fetch_all() + core.build_rows() (misma lógica de
 generar_reporte.py: velocidad, quiebre, confianza, tendencia, sobrestock,

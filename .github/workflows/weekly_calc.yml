@@ -1,8 +1,8 @@
-name: Reposición — cálculo semanal
+name: Reposición — cálculo de reposición
 
 on:
   schedule:
-    - cron: "0 10 * * 1" # lunes 07:00 AR (UTC-3) — ajustable
+    - cron: "0 10 * * *" # todos los días 07:00 AR (UTC-3) — ajustable
   workflow_dispatch: {}
 
 jobs:
