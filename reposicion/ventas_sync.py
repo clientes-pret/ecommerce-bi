@@ -24,9 +24,15 @@ CANAL_TIPO = {"tn_pret": "tn", "tn_lavan": "tn", "ml_pret": "ml", "ml_lavan": "m
 def _tn_orders_updated_since(cfg, since_iso):
     """Órdenes de TN actualizadas desde `since_iso` — paginado simple, sin
     depender de core.DATE_FROM_ISO (esa es la ventana fija de 60d que usa el
-    fetch en vivo; acá la ventana es dinámica según el cursor de sync)."""
+    fetch en vivo; acá la ventana es dinámica según el cursor de sync).
+
+    Devuelve (orders_validas, order_ids_cancelados) — una orden que ya se
+    había sincronizado como venta puede pasar a 'cancelled' después; sin
+    trackear esto acá, esa venta fantasma quedaba contando para siempre en
+    la ventana de 60 días (auditoría 2026-08-20, confirmado con órdenes
+    reales: 2047482061, 2044060965, 2042496324)."""
     base = f"https://api.tiendanube.com/v1/{cfg['store_id']}"
-    orders, page = [], 1
+    orders, cancelados, page = [], [], 1
     while True:
         r = requests.get(f"{base}/orders", headers=core.tn_headers(cfg), params={
             "per_page": 200, "page": page, "updated_at_min": since_iso,
@@ -39,13 +45,15 @@ def _tn_orders_updated_since(cfg, since_iso):
         if not batch:
             break
         for o in batch:
-            if o.get("payment_status") in ("paid", "authorized") and o.get("status") != "cancelled":
+            if o.get("status") == "cancelled":
+                cancelados.append(str(o["id"]))
+            elif o.get("payment_status") in ("paid", "authorized"):
                 orders.append(o)
         if len(batch) < 200:
             break
         page += 1
         time.sleep(0.5)
-    return orders
+    return orders, cancelados
 
 
 def _ml_orders_updated_since(key, cfg, since_iso, until_iso):
@@ -53,14 +61,20 @@ def _ml_orders_updated_since(key, cfg, since_iso, until_iso):
     incremental el volumen diario es chico, así que no hace falta la lógica
     de subdivisión por volumen que sí necesita el fetch en vivo de 60d
     (core.ml_get_orders). Corta con un aviso si el offset se va de rango
-    (indicaría un volumen inusual para una corrida diaria)."""
+    (indicaría un volumen inusual para una corrida diaria).
+
+    Antes filtraba `order.status=paid` server-side, así que una orden que
+    pasaba a cancelada/reembolsada simplemente dejaba de aparecer — nunca se
+    detectaba la cancelación, la venta ya sincronizada quedaba contando para
+    siempre. Ahora trae todas las actualizadas en la ventana y clasifica acá:
+    devuelve (orders_pagadas, order_ids_cancelados)."""
     token = core.ml_ensure_token(key, cfg)
     user_id = cfg["user_id"]
     offset, limit = 0, 50
-    orders = []
+    orders, cancelados = [], []
     while True:
         data = core.ml_get("https://api.mercadolibre.com/orders/search", token, params={
-            "seller": user_id, "order.status": "paid",
+            "seller": user_id,
             "order.date_last_updated.from": since_iso,
             "order.date_last_updated.to": until_iso,
             "sort": "date_asc", "offset": offset, "limit": limit,
@@ -70,7 +84,11 @@ def _ml_orders_updated_since(key, cfg, since_iso, until_iso):
         batch = data.get("results", [])
         if not batch:
             break
-        orders.extend(batch)
+        for o in batch:
+            if o.get("status") == "cancelled":
+                cancelados.append(str(o["id"]))
+            elif o.get("status") == "paid":
+                orders.append(o)
         if len(batch) < limit:
             break
         offset += limit
@@ -79,7 +97,7 @@ def _ml_orders_updated_since(key, cfg, since_iso, until_iso):
             core.tnlog(f"  ⚠ ML orders (sync) offset > 5000 para {cfg['label']}, "
                        f"cortando — volumen inusual para una corrida incremental")
             break
-    return orders
+    return orders, cancelados
 
 
 def _dedupe_lineas(lines):
@@ -98,12 +116,29 @@ def _dedupe_lineas(lines):
     return list(por_clave.values())
 
 
-def _guardar_lineas(config, canal_key, lines, orders_count, notas=None):
+def _marcar_canceladas(config, canal_key, order_ids):
+    """Pone estado='cancelada' en todas las líneas ya guardadas de estas
+    órdenes — no se borran (mismo criterio que repo_pedidos: baja lógica,
+    mantiene historial). weekly_calc.py ya filtra por estado=activa, así
+    que esto las saca del cálculo de velocidad/alertas/sugerencias."""
+    if not order_ids:
+        return
+    for i in range(0, len(order_ids), 200):
+        lote = order_ids[i:i + 200]
+        db.patch(config, "repo_ventas_items", params={
+            "canal": f"eq.{canal_key}", "order_id": f"in.({','.join(lote)})",
+        }, body={"estado": "cancelada"})
+
+
+def _guardar_lineas(config, canal_key, lines, orders_count, cancelados=None, notas=None):
     lines = _dedupe_lineas(lines)
     for l in lines:
         l["canal"] = canal_key
     if lines:
         db.upsert(config, "repo_ventas_items", lines, on_conflict="canal,order_id,item_id,sku")
+    if cancelados:
+        _marcar_canceladas(config, canal_key, cancelados)
+        core.tnlog(f"  ✓ {canal_key}: {len(cancelados)} órdenes canceladas marcadas en repo_ventas_items")
     ahora = datetime.now(timezone.utc).isoformat()
     db.upsert(config, "repo_sync_estado", [{
         "canal": canal_key,
@@ -117,7 +152,8 @@ def _guardar_lineas(config, canal_key, lines, orders_count, notas=None):
 def sync_incremental(config, canal_key, item_details=None, buffer_days=3):
     """Trae solo las órdenes nuevas/actualizadas desde el último cursor (con
     un buffer hacia atrás para cubrir correcciones tardías de estado, ej. una
-    orden que pasa a 'paid' unos días después de creada) y las persiste."""
+    orden que pasa a 'paid' unos días después de creada, o que se cancela)
+    y las persiste."""
     cfg = config["channels"][canal_key]
     if not cfg.get("enabled", True):
         return []
@@ -130,15 +166,15 @@ def sync_incremental(config, canal_key, item_details=None, buffer_days=3):
 
     tipo = CANAL_TIPO[canal_key]
     if tipo == "tn":
-        orders = _tn_orders_updated_since(cfg, desde.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        orders, cancelados = _tn_orders_updated_since(cfg, desde.strftime("%Y-%m-%dT%H:%M:%SZ"))
         lines = core.tn_orders_to_lines(orders)
     else:
         since_iso = desde.strftime("%Y-%m-%dT%H:%M:%S.000-00:00")
         until_iso = ahora.strftime("%Y-%m-%dT%H:%M:%S.000-00:00")
-        orders = _ml_orders_updated_since(canal_key, cfg, since_iso, until_iso)
+        orders, cancelados = _ml_orders_updated_since(canal_key, cfg, since_iso, until_iso)
         lines = core.ml_orders_to_lines(orders, item_details)
 
-    _guardar_lineas(config, canal_key, lines, len(orders))
+    _guardar_lineas(config, canal_key, lines, len(orders), cancelados=cancelados)
     core.tnlog(f"  ✓ {canal_key}: sync incremental — {len(orders)} órdenes, {len(lines)} líneas "
                f"(desde {desde.date().isoformat()})")
     return lines

@@ -147,7 +147,14 @@ def _resolver_items_cerrados(config, canal, cfg, rows, item_details):
         nuevos_encontrados = len(nuevos)
 
     for item_id, cached in cache_by_id.items():
-        resueltos[item_id] = {"shipping": {"logistic_type": cached.get("logistic_type") or ""}}
+        # El stub tiene que traer también el SKU cacheado (bug encontrado en
+        # auditoría: sin esto, ml_item_sku() no encuentra nada y la venta
+        # queda con sku='' para siempre — invisible para el cálculo de ese
+        # producto puntual, aunque repo_items_ml_cache sí lo tenía guardado).
+        resueltos[item_id] = {
+            "shipping": {"logistic_type": cached.get("logistic_type") or ""},
+            "seller_custom_field": cached.get("sku") or "",
+        }
 
     core.tnlog(f"  {canal}: {len(faltantes)} publicaciones de ventas fuera del catálogo activo — "
                f"{len(cache_by_id)} desde caché, {nuevos_encontrados} resueltas ahora "

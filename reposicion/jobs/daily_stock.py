@@ -2,8 +2,9 @@
 """
 reposicion/jobs/daily_stock.py — corre 1 vez por día (GitHub Actions cron).
 
-1) Baja stock actual: depósito (TN Pret, única fuente — ver core.py) y Full
-   (ML Pret / ML Lavan, separados) usando paginación scroll (sin techo).
+1) Baja stock actual: depósito (TN Pret, con fallback a TN Lavan para SKUs
+   exclusivos de esa marca — mismo criterio que core.py) y Full (ML Pret /
+   ML Lavan, separados) usando paginación scroll (sin techo).
 2) Upsertea repo_stock_snapshot para la fecha de hoy.
 3) Compara contra el snapshot anterior: abre/cierra filas en
    repo_quiebre_historial cuando un SKU/destino pasa a 0 o vuelve a tener stock.
@@ -39,8 +40,9 @@ def fetch_stock(config):
     stock = defaultdict(lambda: {"deposito": 0, "full_pret": 0, "full_lavan": 0})
     item_details_by_channel = {}
 
-    # ── Depósito: única fuente es TN Pret (ver generar_reporte.py:755/786) ──
+    # ── Depósito: fuente principal es TN Pret ──
     tn_pret_cfg = channels.get("tn_pret")
+    skus_tn_pret = set()
     if tn_pret_cfg and tn_pret_cfg.get("enabled", True):
         core.tnlog("→ TN Pret: bajando stock de depósito...")
         products = core.tn_get_products(tn_pret_cfg)
@@ -50,7 +52,28 @@ def fetch_stock(config):
                 if not sku:
                     continue
                 stock[sku]["deposito"] += variant.get("stock", 0) or 0
+                skus_tn_pret.add(sku)
         core.tnlog(f"  ✓ {len(products)} productos TN Pret procesados")
+
+    # SKUs que solo existen en el catálogo de TN Lavan (no están en TN Pret)
+    # caen a su propio stock — mismo criterio que build_rows() en core.py
+    # (Paso 2). Sin esto, esos SKUs quedaban directamente ausentes de
+    # repo_stock_snapshot (ni con 0), lo que rompía en silencio el
+    # historial de quiebres y la reconciliación de pedidos para ellos
+    # (auditoría 2026-08-20, confirmado con 83 SKUs reales).
+    tn_lavan_cfg = channels.get("tn_lavan")
+    if tn_lavan_cfg and tn_lavan_cfg.get("enabled", True):
+        core.tnlog("→ TN Lavan: bajando stock de depósito para SKUs exclusivos...")
+        products = core.tn_get_products(tn_lavan_cfg)
+        nuevos = 0
+        for prod in products:
+            for variant in prod.get("variants", []):
+                sku = str(variant.get("sku") or variant.get("id") or "")
+                if not sku or sku in skus_tn_pret:
+                    continue
+                stock[sku]["deposito"] += variant.get("stock", 0) or 0
+                nuevos += 1
+        core.tnlog(f"  ✓ {nuevos} SKUs exclusivos de TN Lavan sumados al depósito")
 
     # ── Full: ML Pret y ML Lavan, separados ──
     full_key_by_channel = {"ml_pret": "full_pret", "ml_lavan": "full_lavan"}
