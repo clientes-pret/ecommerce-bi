@@ -16,7 +16,7 @@
   th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
   input[type=number] { width: 80px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
-  select.destino-edit { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 13px; }
+  .total-cell { font-weight: 600; }
   .hint { color: var(--muted); font-size: 11px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-right: 8px; }
   button.secondary { background: #0f1115; border: 1px solid var(--border); color: var(--text); }
@@ -54,17 +54,41 @@ function agruparPorProveedor(lineas) {
   return grupos;
 }
 
+// Depósito y Full ya no son filas separadas — se juntan en una fila por SKU
+// con una columna editable por destino (Full Pret y Full Lavan comparten la
+// columna "Full", ver nota en app.js:agruparLineasPorSku), ordenada por
+// nombre de producto A-Z.
+function agruparPorSku(lineas) {
+  const bySku = new Map();
+  for (const l of lineas) {
+    if (!bySku.has(l.sku)) bySku.set(l.sku, { sku: l.sku, nombre: l.nombre, deposito: null, full: null });
+    const g = bySku.get(l.sku);
+    if (l.destino === "deposito") g.deposito = l; else g.full = l;
+  }
+  return Array.from(bySku.values()).sort((a, b) =>
+    (a.nombre || "").localeCompare(b.nombre || "", "es", { sensitivity: "base" })
+  );
+}
+
 function lineasDelGrupo(grupoEl) {
   const lineas = [];
   grupoEl.querySelectorAll("tbody tr[data-sku]").forEach((tr) => {
-    const qty = Number(tr.querySelector("input.qty-linea").value);
-    if (qty > 0) {
+    const sku = tr.dataset.sku;
+    const nombre = tr.dataset.nombre;
+    const inpDep = tr.querySelector(".qty-deposito");
+    const inpFull = tr.querySelector(".qty-full");
+    const qDep = Number(inpDep.value) || 0;
+    const qFull = Number(inpFull.value) || 0;
+    if (qDep > 0) {
       lineas.push({
-        sku: tr.dataset.sku,
-        nombre: tr.dataset.nombre,
-        destino: tr.dataset.destino,
-        cantidad_pedida: qty,
-        cantidad_sugerida: Number(tr.dataset.sugerida || 0),
+        sku, nombre, destino: "deposito", cantidad_pedida: qDep,
+        cantidad_sugerida: Number(inpDep.dataset.sugerida || 0),
+      });
+    }
+    if (qFull > 0) {
+      lineas.push({
+        sku, nombre, destino: inpFull.dataset.destino || "full_pret", cantidad_pedida: qFull,
+        cantidad_sugerida: Number(inpFull.dataset.sugerida || 0),
       });
     }
   });
@@ -96,36 +120,43 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
   }
 }
 
-function quitarLinea(sku, destino) {
-  quitarLineaCarrito(sku, destino);
+function quitarLinea(sku) {
+  quitarLineaCarrito(sku, "deposito");
+  quitarLineaCarrito(sku, "full_pret");
+  quitarLineaCarrito(sku, "full_lavan");
   render();
 }
 
 function renderGrupo(proveedor, lineas) {
   const el = document.createElement("div");
   el.className = "grupo";
-  const filas = lineas.map((l) => `
-    <tr data-sku="${l.sku}" data-nombre="${(l.nombre || "").replace(/"/g, "&quot;")}" data-destino="${l.destino}" data-sugerida="${l.cantidad_sugerida || 0}">
-      <td>${l.sku}</td>
-      <td>${l.nombre || "—"}</td>
+  const grupos = agruparPorSku(lineas);
+  const filas = grupos.map((g) => {
+    const nombre = g.nombre || (g.deposito || g.full)?.nombre || "";
+    const totalInicial = (g.deposito?.cantidad || 0) + (g.full?.cantidad || 0);
+    return `
+    <tr data-sku="${g.sku}" data-nombre="${(nombre || "").replace(/"/g, "&quot;")}">
+      <td>${g.sku}</td>
+      <td>${nombre || "—"}</td>
       <td>
-        <select class="destino-edit">
-          <option value="deposito" ${l.destino === "deposito" ? "selected" : ""}>Depósito</option>
-          <option value="full_pret" ${l.destino === "full_pret" ? "selected" : ""}>Full Pret a Home</option>
-          ${l.destino === "full_lavan" ? `<option value="full_lavan" selected>Full Casa Lavan</option>` : ""}
-        </select>
+        <input type="number" class="qty-deposito" value="${g.deposito ? g.deposito.cantidad : 0}" min="0"
+               data-sugerida="${g.deposito?.cantidad_sugerida || 0}">
+        <div class="hint">stock: ${fmtNum(g.deposito?.stock_hoy)}</div>
       </td>
       <td>
-        <input type="number" class="qty-linea" value="${l.cantidad}" min="0">
-        <div class="hint">stock al agregar: ${fmtNum(l.stock_hoy)}</div>
+        <input type="number" class="qty-full" value="${g.full ? g.full.cantidad : 0}" min="0"
+               data-destino="${g.full?.destino || "full_pret"}" data-sugerida="${g.full?.cantidad_sugerida || 0}">
+        <div class="hint">stock: ${fmtNum(g.full?.stock_hoy)}</div>
       </td>
+      <td class="total-cell">${totalInicial}</td>
       <td><button class="link btn-quitar">✕ Quitar</button></td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   el.innerHTML = `
-    <h2>📦 ${proveedor} — ${lineas.length} líneas</h2>
+    <h2>📦 ${proveedor} — ${grupos.length} producto${grupos.length === 1 ? "" : "s"}</h2>
     <table>
-      <thead><tr><th>SKU</th><th>Producto</th><th>Destino</th><th>Cantidad</th><th></th></tr></thead>
+      <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th>Full</th><th>Total</th><th></th></tr></thead>
       <tbody>${filas}</tbody>
     </table>
     <div class="grupo-acciones">
@@ -137,25 +168,15 @@ function renderGrupo(proveedor, lineas) {
   el.querySelectorAll(".btn-quitar").forEach((btn) => {
     btn.addEventListener("click", () => {
       const tr = btn.closest("tr");
-      quitarLinea(tr.dataset.sku, tr.dataset.destino);
+      quitarLinea(tr.dataset.sku);
     });
   });
-  el.querySelectorAll(".destino-edit").forEach((sel) => {
-    sel.addEventListener("change", () => {
-      const tr = sel.closest("tr");
-      const sku = tr.dataset.sku;
-      const destinoAnterior = tr.dataset.destino;
-      const destinoNuevo = sel.value;
-      if (destinoNuevo === destinoAnterior) return;
-      const cantidad = Number(tr.querySelector(".qty-linea").value) || 0;
-      quitarLineaCarrito(sku, destinoAnterior);
-      addLineaCarrito({
-        sku, nombre: tr.dataset.nombre, proveedor, destino: destinoNuevo,
-        cantidad, cantidad_sugerida: Number(tr.dataset.sugerida || 0),
-        stock_hoy: null,
-      });
-      tr.dataset.destino = destinoNuevo;
-      actualizarBarraCarrito();
+  el.querySelectorAll(".qty-deposito, .qty-full").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const tr = inp.closest("tr");
+      const qDep = Number(tr.querySelector(".qty-deposito").value) || 0;
+      const qFull = Number(tr.querySelector(".qty-full").value) || 0;
+      tr.querySelector(".total-cell").textContent = qDep + qFull;
     });
   });
   el.querySelector(".btn-pdf").addEventListener("click", () => {

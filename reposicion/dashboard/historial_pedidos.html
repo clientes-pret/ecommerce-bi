@@ -30,13 +30,21 @@
   .pedido-acciones button:hover { background: rgba(255,255,255,0.05); }
   .pedido-acciones button:disabled { opacity: 0.5; cursor: default; }
   .qty-edit { width: 70px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
-  .destino-edit { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: 12px; }
+  .total-cell { font-weight: 600; }
   #status { padding: 20px; color: var(--muted); }
+  .filtros-estado { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 0 16px; font-size: 13px; color: var(--muted); }
+  .filtros-estado label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 </style>
 </head>
 <body>
 <main>
   <h1>📋 Historial de pedidos</h1>
+  <div class="filtros-estado">
+    <label><input type="checkbox" class="filtro-estado" value="enviado" checked> Enviado</label>
+    <label><input type="checkbox" class="filtro-estado" value="recibido_parcial" checked> Recibido parcial</label>
+    <label><input type="checkbox" class="filtro-estado" value="recibido_completo"> Recibido completo</label>
+    <label><input type="checkbox" class="filtro-estado" value="cancelado"> Cancelado</label>
+  </div>
   <div id="status">Cargando…</div>
   <div id="lista"></div>
 </main>
@@ -54,12 +62,38 @@ const ESTADO_LABEL = {
 };
 // DESTINO_LABEL y generarPDF() vienen de app.js — compartidos con pedido.html.
 
+// Mismo criterio que pedido.html: una fila por SKU con columnas Depósito/
+// Full/Total en vez de una fila por destino, ordenado por nombre A-Z.
+function agruparItemsPorSku(items) {
+  const bySku = new Map();
+  for (const it of items) {
+    if (!bySku.has(it.sku)) bySku.set(it.sku, { sku: it.sku, nombre: it.nombre, deposito: null, full: null });
+    const g = bySku.get(it.sku);
+    if (it.destino === "deposito") g.deposito = it; else g.full = it;
+  }
+  return Array.from(bySku.values()).sort((a, b) =>
+    (a.nombre || "").localeCompare(b.nombre || "", "es", { sensitivity: "base" })
+  );
+}
+
+// El estado de recepción es por ítem (depósito y Full llegan por separado) —
+// se resume a nivel de fila igual que el badge de Estado del tablero: peor
+// caso entre los ítems que realmente tiene esa fila.
+function estadoAgregado(g) {
+  const items = [g.deposito, g.full].filter(Boolean);
+  if (!items.length) return "—";
+  if (items.every((i) => i.recibido_completo)) return "✓ Completo";
+  if (items.some((i) => i.recibido_completo || i.cantidad_recibida > 0)) return "Parcial";
+  return "Pendiente";
+}
+
 function renderPedido(p) {
   const el = document.createElement("div");
   el.className = "pedido";
   const pct = p.total_items ? Math.round((p.items_recibidos / p.total_items) * 100) : 0;
   const editable = p.estado === "enviado";
   const cancelable = p.estado === "enviado" || p.estado === "recibido_parcial";
+  const grupos = agruparItemsPorSku(p.items || []);
   el.innerHTML = `
     <div class="pedido-header">
       <span class="proveedor">📦 ${p.proveedor}</span>
@@ -69,25 +103,26 @@ function renderPedido(p) {
     </div>
     <div class="detalle">
       <table>
-        <thead><tr><th>SKU</th><th>Producto</th><th>Destino</th><th>Pedido</th><th>Recibido</th><th>Estado</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th>Full</th><th>Total</th><th>Recibido</th><th>Estado</th></tr></thead>
         <tbody>
-          ${(p.items || []).map((it) => `
-            <tr data-item-id="${it.id}">
-              <td>${it.sku}</td>
-              <td>${it.nombre || "—"}</td>
-              <td>${editable
-                ? `<select class="destino-edit">
-                    <option value="deposito" ${it.destino === "deposito" ? "selected" : ""}>Depósito</option>
-                    <option value="full_pret" ${it.destino === "full_pret" ? "selected" : ""}>Full Pret a Home</option>
-                    ${it.destino === "full_lavan" ? `<option value="full_lavan" selected>Full Casa Lavan</option>` : ""}
-                  </select>`
-                : (DESTINO_LABEL[it.destino] || it.destino)}</td>
-              <td>${editable
-                ? `<input type="number" min="1" class="qty-edit" value="${it.cantidad_pedida}">`
-                : it.cantidad_pedida}</td>
-              <td>${it.cantidad_recibida}</td>
-              <td>${it.recibido_completo ? "✓ Completo" : it.cantidad_recibida > 0 ? "Parcial" : "Pendiente"}</td>
-            </tr>`).join("")}
+          ${grupos.map((g) => {
+            const totalPedido = (g.deposito?.cantidad_pedida || 0) + (g.full?.cantidad_pedida || 0);
+            const totalRecibido = (g.deposito?.cantidad_recibida || 0) + (g.full?.cantidad_recibida || 0);
+            return `
+            <tr data-sku="${g.sku}">
+              <td>${g.sku}</td>
+              <td>${g.nombre || "—"}</td>
+              <td>${editable && g.deposito
+                ? `<input type="number" min="1" class="qty-edit" data-item-id="${g.deposito.id}" data-destino="deposito" value="${g.deposito.cantidad_pedida}">`
+                : (g.deposito ? g.deposito.cantidad_pedida : "—")}</td>
+              <td>${editable && g.full
+                ? `<input type="number" min="1" class="qty-edit" data-item-id="${g.full.id}" data-destino="${g.full.destino}" value="${g.full.cantidad_pedida}">`
+                : (g.full ? g.full.cantidad_pedida : "—")}</td>
+              <td class="total-cell">${totalPedido}</td>
+              <td>${totalRecibido}</td>
+              <td>${estadoAgregado(g)}</td>
+            </tr>`;
+          }).join("")}
         </tbody>
       </table>
       ${p.notas ? `<p class="muted">Notas: ${p.notas}</p>` : ""}
@@ -112,10 +147,10 @@ function renderPedido(p) {
   if (btnGuardar) {
     btnGuardar.addEventListener("click", async (e) => {
       e.stopPropagation();
-      const items = Array.from(el.querySelectorAll("tr[data-item-id]")).map((tr) => ({
-        id: Number(tr.dataset.itemId),
-        cantidad_pedida: Number(tr.querySelector(".qty-edit").value),
-        destino: tr.querySelector(".destino-edit")?.value,
+      const items = Array.from(el.querySelectorAll(".qty-edit")).map((inp) => ({
+        id: Number(inp.dataset.itemId),
+        cantidad_pedida: Number(inp.value),
+        destino: inp.dataset.destino,
       })).filter((it) => it.cantidad_pedida > 0);
       if (!items.length) return;
       btnGuardar.disabled = true;
@@ -148,21 +183,43 @@ function renderPedido(p) {
   return el;
 }
 
+let TODOS_PEDIDOS = [];
+
+function estadosSeleccionados() {
+  return new Set(
+    Array.from(document.querySelectorAll(".filtro-estado:checked")).map((chk) => chk.value)
+  );
+}
+
+function renderLista() {
+  const seleccionados = estadosSeleccionados();
+  const pedidos = TODOS_PEDIDOS.filter((p) => seleccionados.has(p.estado));
+  const cont = document.getElementById("lista");
+  cont.innerHTML = "";
+  if (!pedidos.length) {
+    cont.innerHTML = '<p class="muted">No hay pedidos que cumplan el filtro actual.</p>';
+    return;
+  }
+  for (const p of pedidos) cont.appendChild(renderPedido(p));
+}
+
 async function cargar() {
   try {
-    const pedidos = await apiFetch("/pedidos");
+    TODOS_PEDIDOS = await apiFetch("/pedidos");
     document.getElementById("status").style.display = "none";
-    const cont = document.getElementById("lista");
-    cont.innerHTML = "";
-    if (!pedidos.length) {
-      cont.innerHTML = '<p class="muted">Todavía no hay pedidos registrados.</p>';
+    if (!TODOS_PEDIDOS.length) {
+      document.getElementById("lista").innerHTML = '<p class="muted">Todavía no hay pedidos registrados.</p>';
       return;
     }
-    for (const p of pedidos) cont.appendChild(renderPedido(p));
+    renderLista();
   } catch (e) {
     document.getElementById("status").textContent = `Error: ${e.message}`;
   }
 }
+
+document.querySelectorAll(".filtro-estado").forEach((chk) => {
+  chk.addEventListener("change", renderLista);
+});
 
 cargar();
 </script>

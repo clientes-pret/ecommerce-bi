@@ -101,70 +101,76 @@ async function apiFetch(path, options = {}) {
 
 const DESTINO_LABEL = { deposito: "Depósito", full_pret: "Full Pret a Home", full_lavan: "Full Casa Lavan" };
 
-function _renderHojaPDF(doc, proveedor, tituloHoja, lineas, hoy) {
-  doc.addImage(LOGO_PDF_BASE64, "PNG", 14, 8, 50, 8.63);
-  doc.setFontSize(14);
-  doc.text(`Orden de pedido — ${proveedor}`, 14, 32);
-  doc.setFontSize(12);
-  doc.text(tituloHoja, 14, 39);
-  doc.setFontSize(10);
-  doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 46);
-
-  // Columnas: SKU tiene prioridad — nunca se corta, así que necesita ancho
-  // de sobra (algunos SKU pasan los 20 caracteres). Producto se banca hasta
-  // 2 líneas si no entra en una sola; la altura de cada fila de la tabla se
-  // ajusta según cuántas líneas terminó ocupando el producto.
-  const colSku = 14, colProducto = 68, colDestino = 145, colCantidad = 180;
-  const anchoProducto = colDestino - colProducto - 4;
-  const lineHeight = 4.2;
-
-  let y = 58;
-  doc.setFontSize(11);
-  doc.text("SKU", colSku, y);
-  doc.text("Producto", colProducto, y);
-  doc.text("Destino", colDestino, y);
-  doc.text("Cantidad", colCantidad, y);
-  y += 4;
-  doc.line(14, y, 196, y);
-  y += 6;
-
-  doc.setFontSize(9);
+/** Agrupa líneas planas (sku+destino+cantidad) en una fila por SKU con
+ * columnas Depósito/Full/Total — Full Pret y Full Lavan se suman juntos
+ * (Casa Lavan hoy no maneja stock Full, así que en la práctica esto es
+ * Full Pret). Ordena por nombre de producto A-Z. */
+function agruparLineasPorSku(lineas) {
+  const bySku = new Map();
   for (const l of lineas) {
-    const nombreLineas = doc.splitTextToSize(String(l.nombre || ""), anchoProducto).slice(0, 2);
-    const filaAlto = Math.max(1, nombreLineas.length) * lineHeight;
-    if (y + filaAlto > 280) { doc.addPage(); y = 20; }
-    doc.text(String(l.sku), colSku, y);
-    doc.text(nombreLineas, colProducto, y);
-    doc.text(DESTINO_LABEL[l.destino] || l.destino, colDestino, y);
-    doc.text(String(l.cantidad_pedida), colCantidad, y);
-    y += filaAlto + 3;
+    if (!bySku.has(l.sku)) bySku.set(l.sku, { sku: l.sku, nombre: l.nombre, deposito: 0, full: 0 });
+    const g = bySku.get(l.sku);
+    if (l.destino === "deposito") g.deposito += l.cantidad_pedida;
+    else g.full += l.cantidad_pedida;
   }
-
-  const totalUnidades = lineas.reduce((s, l) => s + l.cantidad_pedida, 0);
-  y += 4;
-  doc.setFontSize(11);
-  doc.text(`Total: ${lineas.length} líneas, ${totalUnidades} unidades`, 14, y);
+  return Array.from(bySku.values()).sort((a, b) =>
+    (a.nombre || "").localeCompare(b.nombre || "", "es", { sensitivity: "base" })
+  );
 }
 
 function generarPDF(proveedor, lineas) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const hoy = new Date().toLocaleDateString("es-AR");
+  const grupos = agruparLineasPorSku(lineas);
 
-  // El depósito y Full se preparan/despachan por separado en la operación
-  // diaria, así que van en hojas distintas del mismo PDF en vez de mezclados
-  // en una sola tabla — Full Pret y Full Lavan comparten hoja (la columna
-  // Destino ya los distingue entre sí) porque a ambos se les manda por el
-  // mismo circuito de envío a Mercado Libre, a diferencia de depósito.
-  const grupos = [
-    { titulo: "Depósito", lineas: lineas.filter((l) => l.destino === "deposito") },
-    { titulo: "Full (Pret a Home / Casa Lavan)", lineas: lineas.filter((l) => l.destino !== "deposito") },
-  ].filter((g) => g.lineas.length > 0);
+  doc.addImage(LOGO_PDF_BASE64, "PNG", 14, 8, 50, 8.63);
+  doc.setFontSize(14);
+  doc.text(`Orden de pedido — ${proveedor}`, 14, 32);
+  doc.setFontSize(10);
+  doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 39);
 
-  grupos.forEach((grupo, idx) => {
-    if (idx > 0) doc.addPage();
-    _renderHojaPDF(doc, proveedor, grupo.titulo, grupo.lineas, hoy);
-  });
+  // Columnas: SKU tiene prioridad — nunca se corta, así que necesita ancho
+  // de sobra (algunos SKU pasan los 20 caracteres). Producto se banca hasta
+  // 2 líneas si no entra en una sola; la altura de cada fila de la tabla se
+  // ajusta según cuántas líneas terminó ocupando el producto.
+  const colSku = 14, colProducto = 60, colDeposito = 140, colFull = 162, colTotal = 184;
+  const anchoProducto = colDeposito - colProducto - 4;
+  const lineHeight = 4.2;
+
+  let y = 52;
+  doc.setFontSize(11);
+  doc.text("SKU", colSku, y);
+  doc.text("Producto", colProducto, y);
+  doc.text("Depósito", colDeposito, y);
+  doc.text("Full", colFull, y);
+  doc.text("Total", colTotal, y);
+  y += 4;
+  doc.line(14, y, 196, y);
+  y += 6;
+
+  doc.setFontSize(9);
+  let totalDeposito = 0, totalFull = 0;
+  for (const g of grupos) {
+    const nombreLineas = doc.splitTextToSize(String(g.nombre || ""), anchoProducto).slice(0, 2);
+    const filaAlto = Math.max(1, nombreLineas.length) * lineHeight;
+    if (y + filaAlto > 280) { doc.addPage(); y = 20; }
+    doc.text(String(g.sku), colSku, y);
+    doc.text(nombreLineas, colProducto, y);
+    doc.text(String(g.deposito), colDeposito, y);
+    doc.text(String(g.full), colFull, y);
+    doc.text(String(g.deposito + g.full), colTotal, y);
+    totalDeposito += g.deposito;
+    totalFull += g.full;
+    y += filaAlto + 3;
+  }
+
+  y += 4;
+  doc.setFontSize(11);
+  doc.text(
+    `Total: ${grupos.length} productos — Depósito: ${totalDeposito}, Full: ${totalFull}, General: ${totalDeposito + totalFull}`,
+    14, y
+  );
 
   doc.save(`pedido_${proveedor.replace(/\s+/g, "_")}_${hoy.replace(/\//g, "-")}.pdf`);
 }
