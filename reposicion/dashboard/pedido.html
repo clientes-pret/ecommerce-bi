@@ -16,6 +16,7 @@
   th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
   input[type=number] { width: 80px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+  select.destino-edit { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 13px; }
   .hint { color: var(--muted); font-size: 11px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-right: 8px; }
   button.secondary { background: #0f1115; border: 1px solid var(--border); color: var(--text); }
@@ -107,7 +108,13 @@ function renderGrupo(proveedor, lineas) {
     <tr data-sku="${l.sku}" data-nombre="${(l.nombre || "").replace(/"/g, "&quot;")}" data-destino="${l.destino}" data-sugerida="${l.cantidad_sugerida || 0}">
       <td>${l.sku}</td>
       <td>${l.nombre || "—"}</td>
-      <td>${DESTINO_LABEL[l.destino] || l.destino}</td>
+      <td>
+        <select class="destino-edit">
+          <option value="deposito" ${l.destino === "deposito" ? "selected" : ""}>Depósito</option>
+          <option value="full_pret" ${l.destino === "full_pret" ? "selected" : ""}>Full Pret a Home</option>
+          ${l.destino === "full_lavan" ? `<option value="full_lavan" selected>Full Casa Lavan</option>` : ""}
+        </select>
+      </td>
       <td>
         <input type="number" class="qty-linea" value="${l.cantidad}" min="0">
         <div class="hint">stock al agregar: ${fmtNum(l.stock_hoy)}</div>
@@ -131,6 +138,24 @@ function renderGrupo(proveedor, lineas) {
     btn.addEventListener("click", () => {
       const tr = btn.closest("tr");
       quitarLinea(tr.dataset.sku, tr.dataset.destino);
+    });
+  });
+  el.querySelectorAll(".destino-edit").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const tr = sel.closest("tr");
+      const sku = tr.dataset.sku;
+      const destinoAnterior = tr.dataset.destino;
+      const destinoNuevo = sel.value;
+      if (destinoNuevo === destinoAnterior) return;
+      const cantidad = Number(tr.querySelector(".qty-linea").value) || 0;
+      quitarLineaCarrito(sku, destinoAnterior);
+      addLineaCarrito({
+        sku, nombre: tr.dataset.nombre, proveedor, destino: destinoNuevo,
+        cantidad, cantidad_sugerida: Number(tr.dataset.sugerida || 0),
+        stock_hoy: null,
+      });
+      tr.dataset.destino = destinoNuevo;
+      actualizarBarraCarrito();
     });
   });
   el.querySelector(".btn-pdf").addEventListener("click", () => {

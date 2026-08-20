@@ -278,7 +278,7 @@ async function postCancelarPedido(id: string, req: Request) {
 
 async function patchPedidoItems(id: string, req: Request) {
   const { items } = await req.json() as {
-    items: { id: number; cantidad_pedida: number }[];
+    items: { id: number; cantidad_pedida: number; destino?: string }[];
   };
   if (!items?.length) return json({ error: "Falta items" }, 400);
 
@@ -292,8 +292,15 @@ async function patchPedidoItems(id: string, req: Request) {
 
   for (const it of items) {
     if (!(it.cantidad_pedida > 0)) continue;
+    // El destino solo se puede corregir entre depósito y Full Pret a Home
+    // (Casa Lavan no maneja stock Full hoy — ver core.py) — cualquier otro
+    // valor se ignora en vez de dejar pasar un dato inconsistente.
+    const body: Record<string, unknown> = { cantidad_pedida: it.cantidad_pedida };
+    if (it.destino === "deposito" || it.destino === "full_pret") {
+      body.destino = it.destino;
+    }
     const { error } = await supabase.from("repo_pedido_items")
-      .update({ cantidad_pedida: it.cantidad_pedida })
+      .update(body)
       .eq("id", it.id).eq("pedido_id", id);
     if (error) throw error;
   }

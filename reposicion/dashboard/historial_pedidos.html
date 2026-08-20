@@ -30,6 +30,7 @@
   .pedido-acciones button:hover { background: rgba(255,255,255,0.05); }
   .pedido-acciones button:disabled { opacity: 0.5; cursor: default; }
   .qty-edit { width: 70px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+  .destino-edit { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: 12px; }
   #status { padding: 20px; color: var(--muted); }
 </style>
 </head>
@@ -74,7 +75,13 @@ function renderPedido(p) {
             <tr data-item-id="${it.id}">
               <td>${it.sku}</td>
               <td>${it.nombre || "—"}</td>
-              <td>${DESTINO_LABEL[it.destino] || it.destino}</td>
+              <td>${editable
+                ? `<select class="destino-edit">
+                    <option value="deposito" ${it.destino === "deposito" ? "selected" : ""}>Depósito</option>
+                    <option value="full_pret" ${it.destino === "full_pret" ? "selected" : ""}>Full Pret a Home</option>
+                    ${it.destino === "full_lavan" ? `<option value="full_lavan" selected>Full Casa Lavan</option>` : ""}
+                  </select>`
+                : (DESTINO_LABEL[it.destino] || it.destino)}</td>
               <td>${editable
                 ? `<input type="number" min="1" class="qty-edit" value="${it.cantidad_pedida}">`
                 : it.cantidad_pedida}</td>
@@ -108,6 +115,7 @@ function renderPedido(p) {
       const items = Array.from(el.querySelectorAll("tr[data-item-id]")).map((tr) => ({
         id: Number(tr.dataset.itemId),
         cantidad_pedida: Number(tr.querySelector(".qty-edit").value),
+        destino: tr.querySelector(".destino-edit")?.value,
       })).filter((it) => it.cantidad_pedida > 0);
       if (!items.length) return;
       btnGuardar.disabled = true;
