@@ -79,9 +79,18 @@ async function latestSnapshotPorSku() {
 }
 
 async function pedidosAbiertosPorSku() {
+  // Un pedido cancelado no debe contar como "ya solicitado" — sus items
+  // quedan con recibido_completo=false para siempre (nunca se recibieron,
+  // se canceló), así que sin este filtro un producto con el único pedido
+  // cancelado quedaba escondido detrás de "Ocultar ya solicitados" como si
+  // todavía tuviera un pedido en curso.
+  const cancelados = await selectAll("repo_pedidos", (q) => q.eq("estado", "cancelado").select("id"));
+  const idsCancelados = new Set(cancelados.map((p) => p.id));
+
   const data = await selectAll("repo_pedido_items", (q) => q.eq("recibido_completo", false));
   const bySku = new Map<string, Set<string>>();
   for (const row of data) {
+    if (idsCancelados.has(row.pedido_id)) continue;
     const set = bySku.get(row.sku as string) ?? new Set<string>();
     set.add(row.destino as string);
     bySku.set(row.sku as string, set);
