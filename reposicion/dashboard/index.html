@@ -107,6 +107,7 @@
         <th>Vel/Sem</th>
         <th>Reposición 60d</th>
         <th>Estado</th>
+        <th>Fecha quiebre</th>
       </tr>
     </thead>
     <tbody id="filas"></tbody>
@@ -185,30 +186,58 @@ function reposicion60d(p) {
   return Object.values(DESTINOS).reduce((s, d) => s + (p[d.aReponer] || 0), 0);
 }
 
-function estadoGeneral(p) {
-  // Badge compacto de la fila: NO es "el peor de los 3 destinos" (eso hacía
-  // que Full Casa Lavan, que hoy no maneja stock Full, dominara el badge con
-  // un falso "SIN STOCK" aunque depósito y Full Pret estuvieran perfectos).
-  // En cambio suma stock y velocidad de los 3 destinos y aplica los mismos
-  // umbrales que ya usa core.py por destino (14/30 días) sobre ese total —
-  // "en base al número general", como pidió el usuario.
-  const stockTotal = Object.values(DESTINOS).reduce((s, d) => s + (d.stock(p) || 0), 0);
-  const ventasTotal = Object.values(DESTINOS).reduce((s, d) => s + (p[d.vendido] || 0), 0);
-  const velDiariaTotal = Object.values(DESTINOS).reduce((s, d) => s + (p[d.velDiaria] || 0), 0);
+function nivelAlertaDestino(p, d) {
+  // Mismo criterio de severidad que ya usa cada alerta_* por canal en
+  // core.py (SIN STOCK > CRÍTICO > BAJO > OK, umbrales 14/30 días),
+  // reevaluado acá (en vez de parsear el string alerta_full_pret, que trae
+  // sufijo de marca, ej. "CRÍTICO FULL Pret") para poder comparar la
+  // severidad entre destinos y quedarme con la peor.
+  const stock = d.stock(p) || 0;
+  const ventas = p[d.vendido] || 0;
+  const velDiaria = p[d.velDiaria] || 0;
+  const velSemanal = p[d.velSemanal] || 0;
+  const diasQuiebre = p[d.diasQuiebre];
+  const fecha = p[d.fechaQuiebre];
+  if (ventas === 0) return null; // sin ventas en este destino: no participa del "peor"
+  if (stock === 0 && velSemanal >= 1) return { nivel: 3, label: "🔴 SIN STOCK", fecha, destino: d.label };
+  if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 14) return { nivel: 2, label: "🔴 CRÍTICO", fecha, destino: d.label };
+  if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 30) return { nivel: 1, label: "🟡 BAJO", fecha, destino: d.label };
+  return { nivel: 0, label: "🟢 OK", fecha, destino: d.label };
+}
 
-  if (ventasTotal === 0) return "⚫ Sin ventas";
-  // Con stock total en 0 no hay "días de cobertura" que calcular — es SIN
-  // STOCK directo. Antes exigía vel/semana >= 1 (heredado del criterio por
-  // destino de core.py) y sin eso el cálculo de días-a-quiebre daba 0/lo-que-
-  // sea = 0 días, mostrando "CRÍTICO" para productos con stock 0 en los 3
-  // destinos pero apenas 1 venta ocasional — confuso, ya está en cero.
-  if (stockTotal === 0) return "🔴 SIN STOCK";
-  if (velDiariaTotal > 0) {
-    const diasQuiebre = stockTotal / velDiariaTotal;
-    if (diasQuiebre < 14) return "🔴 CRÍTICO";
-    if (diasQuiebre < 30) return "🟡 BAJO";
-  }
-  return "🟢 OK";
+function peorEvaluacion(p) {
+  // Toma la PEOR alerta entre los destinos activos, no un promedio de
+  // stock/velocidad total. Sumar todo (como se hacía antes) puede esconder
+  // que Full está por quebrar mientras depósito está sobrado, mostrando
+  // "OK" cuando en realidad un canal es crítico (caso real detectado
+  // 2026-08-21: PAH-TT420VERDE con depósito en 149 días de cobertura pero
+  // Full Pret a 9 días — el badge combinado decía "OK", y "92+32 unidades a
+  // 27/semana" también engaña: cada destino vende a su propio ritmo, el
+  // stock de depósito no se le puede vender a un cliente de Full sin
+  // moverlo físicamente primero). "Peor de los destinos" se había
+  // descartado antes justamente porque Full Casa Lavan, siempre en 0,
+  // dominaba con un falso SIN STOCK — pero ya no participa (desactivado,
+  // ver DESTINOS), así que este enfoque vuelve a ser seguro.
+  const evaluaciones = Object.values(DESTINOS)
+    .map((d) => nivelAlertaDestino(p, d))
+    .filter((e) => e !== null);
+  if (!evaluaciones.length) return null;
+  evaluaciones.sort((a, b) => b.nivel - a.nivel);
+  return evaluaciones[0];
+}
+
+function estadoGeneral(p) {
+  const peor = peorEvaluacion(p);
+  return peor ? peor.label : "⚫ Sin ventas";
+}
+
+function fechaQuiebreGeneral(p) {
+  // Fecha probable de quiebre del MISMO destino que ganó el badge de
+  // Estado, para que ambas columnas cuenten la misma historia (pedido del
+  // usuario 2026-08-21, viendo un producto con badge OK pero un canal a 9
+  // días de quebrar).
+  const peor = peorEvaluacion(p);
+  return peor ? peor.fecha : null;
 }
 
 function necesitaReposicionDestino(p, d) {
@@ -411,6 +440,7 @@ function render() {
       <td>${fmtNum(velSemanalTotal(p))}</td>
       <td>${fmtNum(reposicion60d(p))}</td>
       <td><span class="badge" style="${alertaClass(alertaResumen)}">${alertaResumen || "—"}</span></td>
+      <td>${fmtDate(fechaQuiebreGeneral(p))}</td>
     `;
 
     const chkFila = tr.querySelector(".chk-fila");
