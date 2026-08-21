@@ -48,6 +48,7 @@
   .destino-card h4 { margin: 0 0 8px; font-size: 13px; }
   .destino-card .fila-mini { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
   .destino-card .agregar { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+  .qty-input-error { outline: 2px solid var(--critico); }
   .detalle-acciones { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
   #carritoBar { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--border);
     padding: 10px 20px; display: none; align-items: center; gap: 12px; z-index: 500; }
@@ -344,13 +345,24 @@ function renderDestinoCard(p, key) {
     <div class="fila-mini"><span>Alerta</span><span><span class="badge" style="${alertaClass(p[d.alerta])}">${p[d.alerta] || "—"}</span></span></div>
     ${yaSolicitado ? '<div class="fila-mini solicitado">✓ Ya solicitado en este destino</div>' : ""}
     <div class="agregar">
-      <input type="number" min="0" value="${sugerido}" class="qty-input" data-destino="${d.destino}">
+      <input type="number" min="0" value="${sugerido}" class="qty-input" data-destino="${d.destino}"
+        title="${sugerido === 0 ? "Sin sugerencia automática (sin ventas en este destino) — escribí la cantidad que quieras pedir" : ""}">
       <button class="secondary btn-agregar" data-destino="${d.destino}">🛒 Agregar</button>
     </div>
   `;
+  const inputQty = card.querySelector(".qty-input");
+  inputQty.addEventListener("focus", () => inputQty.select());
   card.querySelector(".btn-agregar").addEventListener("click", () => {
-    const qty = Number(card.querySelector(".qty-input").value);
-    if (!qty || qty <= 0) return;
+    const qty = Number(inputQty.value);
+    if (!qty || qty <= 0) {
+      // Antes esto no hacía nada — parecía que el sistema bloqueaba agregar
+      // productos "sin ventas" (que arrancan en cantidad sugerida 0) cuando
+      // en realidad solo faltaba escribir una cantidad manual.
+      inputQty.focus();
+      inputQty.classList.add("qty-input-error");
+      setTimeout(() => inputQty.classList.remove("qty-input-error"), 1200);
+      return;
+    }
     addLineaCarrito({
       sku: p.sku, nombre: p.nombre, proveedor: p.proveedor,
       destino: d.destino, cantidad: qty, cantidad_sugerida: sugerido,
