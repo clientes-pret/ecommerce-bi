@@ -529,6 +529,70 @@ def ml_stock_by_sku(item_details):
             (stock_full if is_full else stock_nofull)[sku] += qty
     return stock_full, stock_nofull
 
+def _ml_full_inventory_ids(item_details):
+    """Set de inventory_id únicos usados por publicaciones/variaciones Full en
+    item_details — mismo criterio de detección que ml_stock_by_sku()."""
+    ids = set()
+    for body in item_details.values():
+        is_full = (body.get("shipping") or {}).get("logistic_type") == "fulfillment"
+        if not is_full:
+            continue
+        variations = body.get("variations") or []
+        if variations:
+            for v in variations:
+                inv = v.get("inventory_id")
+                if inv:
+                    ids.add(inv)
+        else:
+            inv = body.get("inventory_id")
+            if inv:
+                ids.add(inv)
+    return ids
+
+def ml_inventory_quantities(token, inventory_ids):
+    """Cantidad real de cada pool Full vía /inventories/{id}/stock/fulfillment.
+    No existe endpoint bulk — una llamada por inventory_id.
+
+    Necesario porque available_quantity en /items (lo que usa ml_stock_by_sku)
+    puede quedar desactualizado para publicaciones Full: bajas de stock ya
+    despachadas en el depósito Full a veces no se reflejan ahí, mientras que
+    este endpoint específico de inventario sí (confirmado en auditoría
+    2026-08-20: sobre una muestra de 120 pools, 22 estaban desactualizados,
+    siempre de más — nunca de menos — ej. GAKN14552 reportaba 195 en /items
+    contra 0 real)."""
+    quantities = {}
+    for inv_id in inventory_ids:
+        data = ml_get(f"https://api.mercadolibre.com/inventories/{inv_id}/stock/fulfillment", token)
+        if data is not None:
+            quantities[inv_id] = data.get("available_quantity", 0) or 0
+        time.sleep(0.1)
+    return quantities
+
+def ml_refresh_full_quantities(token, item_details):
+    """Sobrescribe available_quantity de las publicaciones/variaciones Full en
+    item_details con el valor real de ml_inventory_quantities() — ver ahí el
+    motivo. Muta item_details in-place; publicaciones sin inventory_id o
+    no-Full quedan intactas. Si una consulta puntual falla, se deja el valor
+    de /items sin tocar (no se asume 0 por un error de red)."""
+    inventory_ids = _ml_full_inventory_ids(item_details)
+    if not inventory_ids:
+        return
+    quantities = ml_inventory_quantities(token, inventory_ids)
+    for body in item_details.values():
+        is_full = (body.get("shipping") or {}).get("logistic_type") == "fulfillment"
+        if not is_full:
+            continue
+        variations = body.get("variations") or []
+        if variations:
+            for v in variations:
+                inv = v.get("inventory_id")
+                if inv in quantities:
+                    v["available_quantity"] = quantities[inv]
+        else:
+            inv = body.get("inventory_id")
+            if inv in quantities:
+                body["available_quantity"] = quantities[inv]
+
 def ml_sales_full_split(orders, item_details):
     """Separa las ventas de `orders` en Full vs no-Full según el logistic_type
     ACTUAL de la publicación (foto de hoy, no histórico exacto). Usa el mismo

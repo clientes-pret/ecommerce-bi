@@ -47,6 +47,8 @@ def _fetch_catalog(channels):
     def worker_ml(key, cfg):
         try:
             item_details = core.ml_get_all_items(key, cfg)
+            token = core.ml_ensure_token(key, cfg)
+            core.ml_refresh_full_quantities(token, item_details)
             results[key] = {"item_details": item_details}
             core.tnlog(f"✓ {cfg['label']}: catálogo — {len(item_details)} items")
         except Exception as e:

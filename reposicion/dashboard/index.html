@@ -23,6 +23,8 @@
   .toppanel { padding: 16px 20px 0; }
   .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 0; }
   .toolbar-right { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+  .filtros-alerta { display: flex; gap: 14px; flex-wrap: wrap; padding: 0 0 14px; font-size: 13px; color: var(--muted); }
+  .filtros-alerta label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   main { padding: 0 20px 20px; overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
@@ -82,6 +84,13 @@
       <button class="secondary" id="btnRefrescar">↻ Refrescar</button>
     </div>
   </div>
+  <div class="filtros-alerta">
+    <label><input type="checkbox" class="filtro-alerta" value="🔴 SIN STOCK" checked> 🔴 Sin stock</label>
+    <label><input type="checkbox" class="filtro-alerta" value="🔴 CRÍTICO" checked> 🔴 Crítico</label>
+    <label><input type="checkbox" class="filtro-alerta" value="🟡 BAJO" checked> 🟡 Bajo</label>
+    <label><input type="checkbox" class="filtro-alerta" value="🟢 OK" checked> 🟢 OK</label>
+    <label><input type="checkbox" class="filtro-alerta" value="⚫ Sin ventas" checked> ⚫ Sin ventas</label>
+  </div>
 </div>
 <main>
   <div id="status">Cargando…</div>
@@ -95,8 +104,8 @@
         <th>Proveedor</th>
         <th>Stock Depósito</th>
         <th>Stock Full PAH</th>
-        <th>Stock Full CL</th>
         <th>Vel/Sem</th>
+        <th>Reposición 60d</th>
         <th>Estado</th>
       </tr>
     </thead>
@@ -132,13 +141,12 @@ const DESTINOS = {
     vendido: "vendido_full_pret", diasQuiebre: "dias_quiebre_full_pret",
     fechaQuiebre: "fecha_quiebre_full_pret", alerta: "alerta_full_pret", aReponer: "a_reponer_full_pret",
   },
-  full_lavan: {
-    label: "Full Casa Lavan", destino: "full_lavan",
-    stock: (p) => p.stock_full_lavan_hoy,
-    velDiaria: "vel_diaria_full_lavan", velSemanal: "vel_semanal_full_lavan",
-    vendido: "vendido_full_lavan", diasQuiebre: "dias_quiebre_full_lavan",
-    fechaQuiebre: "fecha_quiebre_full_lavan", alerta: "alerta_full_lavan", aReponer: "a_reponer_full_lavan",
-  },
+  // Full Casa Lavan desactivado a pedido del usuario (2026-08-20): "no
+  // estamos mandando nada a Full Lavan" — sacado de DESTINOS para que no
+  // dispare alertas, no cuente para "necesita reposición" ni aparezca en la
+  // tarjeta de "Agregar"/"Armar pedido". El stock sigue viendose en la
+  // columna de la tabla (informativo). Para reactivarlo: volver a agregar
+  // esta entrada, igual a la de full_pret con sufijo _full_lavan.
 };
 
 let PRODUCTOS = [];
@@ -164,9 +172,17 @@ function alertaClass(alerta) {
 }
 
 function velSemanalTotal(p) {
-  // Vistazo rápido sin expandir: suma la velocidad semanal de los 3 destinos
-  // (depósito + Full Pret + Full Lavan) en un solo número por fila.
+  // Vistazo rápido sin expandir: suma la velocidad semanal de los destinos
+  // activos (depósito + Full Pret — Full Lavan desactivado, ver DESTINOS).
   return Object.values(DESTINOS).reduce((s, d) => s + (p[d.velSemanal] || 0), 0);
+}
+
+function reposicion60d(p) {
+  // Suma lo que necesita depósito + Full Pret para llegar a 60 días de
+  // cobertura cada uno con su propia velocidad — un solo número por fila
+  // para no tener que expandir la fila para ver cuánto reponer en total
+  // (pedido del usuario 2026-08-20). Full Lavan desactivado, no suma acá.
+  return Object.values(DESTINOS).reduce((s, d) => s + (p[d.aReponer] || 0), 0);
 }
 
 function estadoGeneral(p) {
@@ -226,8 +242,9 @@ function renderProveedores() {
 
 const ORDENADORES = {
   sugerido: (a, b) => {
-    const maxA = Math.max(a.a_reponer_deposito || 0, a.a_reponer_full_pret || 0, a.a_reponer_full_lavan || 0);
-    const maxB = Math.max(b.a_reponer_deposito || 0, b.a_reponer_full_pret || 0, b.a_reponer_full_lavan || 0);
+    // Full Lavan queda afuera del ordenamiento — ver nota en DESTINOS más arriba.
+    const maxA = Math.max(a.a_reponer_deposito || 0, a.a_reponer_full_pret || 0);
+    const maxB = Math.max(b.a_reponer_deposito || 0, b.a_reponer_full_pret || 0);
     return maxB - maxA;
   },
   ganancia: (a, b) => (b.ganancia_60d || 0) - (a.ganancia_60d || 0),
@@ -247,6 +264,10 @@ function renderCategorias() {
   }
 }
 
+function alertasSeleccionadas() {
+  return new Set(Array.from(document.querySelectorAll(".filtro-alerta:checked")).map((chk) => chk.value));
+}
+
 function filasVisibles() {
   const vista = document.getElementById("filtroVista").value;
   const proveedor = document.getElementById("filtroProveedor").value;
@@ -254,6 +275,7 @@ function filasVisibles() {
   const ordenarPor = document.getElementById("ordenarPor").value;
   const ocultarSolicitados = document.getElementById("ocultarSolicitados").checked;
   const busqueda = document.getElementById("buscador").value.trim().toLowerCase();
+  const alertas = alertasSeleccionadas();
 
   let rows = PRODUCTOS;
   // Si hay término de búsqueda, se busca en TODO el catálogo cargado —
@@ -263,6 +285,7 @@ function filasVisibles() {
   // así que buscando "002225-" con la vista en "Necesita reposición" antes
   // solo mostraba esa una, pareciendo que faltaban productos).
   if (!busqueda && vista === "necesita") rows = rows.filter(necesitaReposicion);
+  rows = rows.filter((p) => alertas.has(estadoGeneral(p)));
   if (proveedor) rows = rows.filter((p) => p.proveedor === proveedor);
   if (categoria) rows = rows.filter((p) => (p.categoria || "Bazar") === categoria);
   if (ocultarSolicitados) {
@@ -385,8 +408,8 @@ function render() {
       <td></td>
       <td>${fmtNum(DESTINOS.deposito.stock(p))}</td>
       <td>${fmtNum(DESTINOS.full_pret.stock(p))}</td>
-      <td>${fmtNum(DESTINOS.full_lavan.stock(p))}</td>
       <td>${fmtNum(velSemanalTotal(p))}</td>
+      <td>${fmtNum(reposicion60d(p))}</td>
       <td><span class="badge" style="${alertaClass(alertaResumen)}">${alertaResumen || "—"}</span></td>
     `;
 
@@ -534,6 +557,7 @@ document.getElementById("filtroCategoria").addEventListener("change", render);
 document.getElementById("ordenarPor").addEventListener("change", render);
 document.getElementById("ocultarSolicitados").addEventListener("change", render);
 document.getElementById("buscador").addEventListener("input", render);
+document.querySelectorAll(".filtro-alerta").forEach((chk) => { chk.addEventListener("change", render); });
 document.getElementById("btnRefrescar").addEventListener("click", cargar);
 document.getElementById("btnVerCarrito").addEventListener("click", () => { window.location.href = "pedido.html"; });
 document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
@@ -541,6 +565,7 @@ document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
   document.getElementById("filtroProveedor").value = "";
   document.getElementById("filtroCategoria").value = "";
   document.getElementById("ordenarPor").value = "sugerido";
+  document.querySelectorAll(".filtro-alerta").forEach((chk) => { chk.checked = true; });
   const vistaCambio = document.getElementById("filtroVista").value !== "necesita";
   document.getElementById("filtroVista").value = "necesita";
   // "Descontinuados" trae un dataset distinto del servidor (no es un filtro

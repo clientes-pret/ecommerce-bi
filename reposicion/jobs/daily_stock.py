@@ -85,6 +85,7 @@ def fetch_stock(config):
         token = core.ml_ensure_token(chan_key, cfg)
         item_ids = core.ml_scroll_item_ids(token, cfg["user_id"])
         details = core.ml_items_by_ids(token, item_ids)
+        core.ml_refresh_full_quantities(token, details)
         item_details_by_channel[chan_key] = details
         stock_full, _stock_nofull = core.ml_stock_by_sku(details)
         for sku, qty in stock_full.items():
