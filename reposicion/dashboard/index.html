@@ -615,29 +615,20 @@ document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
 document.getElementById("btnArmarPedido").addEventListener("click", () => {
   const seleccionados = PRODUCTOS.filter((p) => SELECTED.has(p.sku));
   for (const p of seleccionados) {
-    let agregado = false;
+    // Se agrega SIEMPRE una línea por destino activo, incluso con sugerencia
+    // 0 — antes solo se agregaba el destino con sugerencia > 0, así que si
+    // (por ej.) depósito tenía sugerencia y Full no, la línea de Full nunca
+    // se creaba: el carrito mostraba "stock: —" en Full aunque el usuario
+    // cargara una cantidad a mano ahí, porque ese stock_hoy nunca se había
+    // capturado. Una cantidad en 0 no rompe nada — el carrito/PDF/pedido ya
+    // ignoran las líneas en 0 al confirmar (ver lineasDelGrupo en pedido.html).
     for (const key of Object.keys(DESTINOS)) {
       const d = DESTINOS[key];
       const sugerido = p[d.aReponer] || 0;
-      if (sugerido > 0) {
-        addLineaCarrito({
-          sku: p.sku, nombre: p.nombre, proveedor: p.proveedor,
-          destino: d.destino, cantidad: sugerido, cantidad_sugerida: sugerido,
-          stock_hoy: d.stock(p) ?? 0,
-        });
-        agregado = true;
-      }
-    }
-    // Un producto elegido a mano (ej. "Sin ventas", sin sugerencia automática
-    // en ningún destino) antes se salteaba en silencio acá — el usuario lo
-    // tildaba pero "Armar pedido" no lo sumaba al carrito. Si no entró por
-    // ningún destino, se agrega igual a depósito con cantidad 0 para que
-    // aparezca en el carrito y se pueda cargar la cantidad a mano.
-    if (!agregado) {
       addLineaCarrito({
         sku: p.sku, nombre: p.nombre, proveedor: p.proveedor,
-        destino: DESTINOS.deposito.destino, cantidad: 0, cantidad_sugerida: 0,
-        stock_hoy: DESTINOS.deposito.stock(p) ?? 0,
+        destino: d.destino, cantidad: sugerido, cantidad_sugerida: sugerido,
+        stock_hoy: d.stock(p) ?? 0,
       });
     }
   }
