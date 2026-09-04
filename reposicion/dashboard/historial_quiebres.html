@@ -45,7 +45,10 @@
 <script>
 renderNav("quiebres");
 
-const DESTINO_LABEL = { deposito: "Depósito", full_pret: "Full Pret", full_lavan: "Full Lavan" };
+// DESTINO_LABEL viene de app.js — declararlo también acá chocaba con esa
+// constante global (mismo <script> scope) y reventaba TODO el script con un
+// SyntaxError, incluido el renderNav() de arriba — por eso no aparecía ni el
+// menú de navegación al entrar a esta página.
 
 function render(quiebres) {
   const tbody = document.getElementById("filas");
