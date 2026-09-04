@@ -170,10 +170,18 @@ async function getPedidos() {
 async function getQuiebres(url: URL) {
   const sku = url.searchParams.get("sku");
   const data = await selectAll("repo_quiebre_historial", (q) => {
-    q = q.order("fecha_quiebre", { ascending: false });
+    q = q.select("*,repo_productos(nombre)").order("fecha_quiebre", { ascending: false });
     return sku ? q.eq("sku", sku) : q;
   });
-  return json(data);
+  // El nombre viene embebido por la FK repo_quiebre_historial.sku -> repo_productos.sku
+  // (relación 1-a-1, PostgREST lo trae como objeto anidado) — se aplana acá para
+  // que el frontend no tenga que desarmar la relación.
+  const rows = data.map((r) => {
+    const producto = r.repo_productos as { nombre?: string } | null;
+    const { repo_productos: _omit, ...rest } = r;
+    return { ...rest, nombre: producto?.nombre ?? null };
+  });
+  return json(rows);
 }
 
 async function getStockHistorial(url: URL) {

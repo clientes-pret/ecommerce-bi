@@ -21,6 +21,7 @@
   .badge.abierto { background: var(--abierto); }
   .badge.cerrado { background: var(--cerrado); }
   #status { padding: 20px; color: var(--muted); }
+  .muted { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -34,7 +35,7 @@
   <div id="status">Cargando…</div>
   <table id="tabla" style="display:none">
     <thead>
-      <tr><th>SKU</th><th>Destino</th><th>Fecha quiebre</th><th>Stock previo</th><th>Vel. semanal al quebrar</th><th>Repuesto</th><th>Estado</th></tr>
+      <tr><th>SKU</th><th>Producto</th><th>Destino</th><th>Fecha quiebre</th><th>Stock previo</th><th>Vel. semanal al quebrar</th><th>Repuesto</th><th>Estado</th></tr>
     </thead>
     <tbody id="filas"></tbody>
   </table>
@@ -58,6 +59,7 @@ function render(quiebres) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${q.sku}</td>
+      <td>${q.nombre || "<span class=muted>(sin nombre)</span>"}</td>
       <td>${DESTINO_LABEL[q.destino] || q.destino}</td>
       <td>${fmtDate(q.fecha_quiebre)}</td>
       <td>${fmtNum(q.stock_previo)}</td>
