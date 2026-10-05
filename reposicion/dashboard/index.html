@@ -847,8 +847,15 @@ document.getElementById("btnGuardarEstrella").addEventListener("click", async ()
 // sugerencia (repo_settings.coverage_days → coverage_days_usado en cada fila),
 // así el rótulo nunca miente si ese setting cambia.
 function etiquetaCobertura() {
-  const fila = PRODUCTOS.find((p) => p.coverage_days_usado);
-  return fila ? ` (${fila.coverage_days_usado} D)` : "";
+  // El valor más frecuente, no el de la primera fila: unos pocos SKU que ya no
+  // están en el catálogo de Tiendanube quedan con el cálculo de la última vez
+  // que se recalcularon (con la cobertura de entonces).
+  const cuenta = new Map();
+  for (const p of PRODUCTOS) {
+    if (p.coverage_days_usado) cuenta.set(p.coverage_days_usado, (cuenta.get(p.coverage_days_usado) || 0) + 1);
+  }
+  const mayoritario = [...cuenta.entries()].sort((a, b) => b[1] - a[1])[0];
+  return mayoritario ? ` (${mayoritario[0]} D)` : "";
 }
 
 function actualizarEtiquetasCobertura() {
