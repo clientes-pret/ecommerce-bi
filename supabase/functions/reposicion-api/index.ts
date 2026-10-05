@@ -60,21 +60,45 @@ async function selectAll(
   return all;
 }
 
-async function latestCalculoPorSku() {
-  const data = await selectAll("repo_calculo_semanal", (q) => q.order("semana_iso", { ascending: false }));
-  const bySku = new Map<string, Record<string, unknown>>();
-  for (const row of data) {
-    if (!bySku.has(row.sku as string)) bySku.set(row.sku as string, row);
+// repo_calculo_semanal y repo_stock_snapshot son historial que crece ~8.500
+// filas/día (una fila por SKU por corrida de cron) — traer la tabla entera acá
+// (como antes, vía selectAll paginado de a 1000) significaba ~283 llamadas
+// REST secuenciales en cada carga del tablero, empeorando cada semana que
+// pasa. repo_calculo_semanal_latest()/repo_stock_snapshot_latest() son RPCs
+// (ver supabase/migrations/20260914181008_latest_por_sku_rpc.sql) que hacen el
+// "quedarme con la fila más nueva de cada SKU" directo en Postgres con un
+// loose index scan en vez de leer cada fila del historial.
+//
+// El RPC igual hay que paginarlo (PostgREST corta en 1000 filas por
+// default incluso llamando a una función — confirmado a mano: sin range()
+// devuelve 1000 filas fijas sin avisar, ni error ni truncamiento visible).
+// Además, ese límite de PostgREST solo respeta el header Range en pedidos
+// GET, no POST (el método que usa .rpc() por default) — por eso { get: true }
+// acá abajo. Con eso, 9 llamadas de ~0.3s c/u (8.500 filas) en vez de ~241.
+async function rpcSelectAll(fn: string, pageSize = 1000): Promise<Record<string, unknown>[]> {
+  let from = 0;
+  const all: Record<string, unknown>[] = [];
+  while (true) {
+    const { data, error } = await supabase.rpc(fn, {}, { get: true }).range(from, from + pageSize - 1);
+    if (error) throw error;
+    all.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
   }
+  return all;
+}
+
+async function latestCalculoPorSku() {
+  const data = await rpcSelectAll("repo_calculo_semanal_latest");
+  const bySku = new Map<string, Record<string, unknown>>();
+  for (const row of data) bySku.set(row.sku as string, row);
   return bySku;
 }
 
 async function latestSnapshotPorSku() {
-  const data = await selectAll("repo_stock_snapshot", (q) => q.order("fecha", { ascending: false }));
+  const data = await rpcSelectAll("repo_stock_snapshot_latest");
   const bySku = new Map<string, Record<string, unknown>>();
-  for (const row of data) {
-    if (!bySku.has(row.sku as string)) bySku.set(row.sku as string, row);
-  }
+  for (const row of data) bySku.set(row.sku as string, row);
   return bySku;
 }
 
@@ -104,11 +128,13 @@ async function getProductos(url: URL) {
   const soloDescontinuados = url.searchParams.get("descontinuados") === "true";
   const proveedorFiltro = url.searchParams.get("proveedor");
 
-  const productos = await selectAll("repo_productos", (q) =>
-    soloDescontinuados ? q.eq("descontinuado", true) : q.eq("descontinuado", false)
-  );
-
-  const [calculos, snapshots, abiertos] = await Promise.all([
+  // Las 4 consultas son independientes entre sí — antes `productos` se
+  // esperaba sola y recién después arrancaban las otras tres en paralelo,
+  // sumando el tiempo de ambas etapas en vez de superponerlas.
+  const [productos, calculos, snapshots, abiertos] = await Promise.all([
+    selectAll("repo_productos", (q) =>
+      soloDescontinuados ? q.eq("descontinuado", true) : q.eq("descontinuado", false)
+    ),
     latestCalculoPorSku(),
     latestSnapshotPorSku(),
     pedidosAbiertosPorSku(),
@@ -324,6 +350,46 @@ async function patchPedidoItems(id: string, req: Request) {
   return json({ ok: true });
 }
 
+// ─── Productos estrella ─────────────────────────────────────────────────────
+// Grupos de productos que el dueño marca como prioritarios para reposición.
+// Cada grupo = un prefijo de SKU (ej. "PAH-FTR" → todas las variantes de la
+// funda de sillón) + un nombre para mostrar. Se guarda como una lista JSON en
+// repo_settings (clave "grupos_estrella") — es config chica y compartida, no
+// justifica una tabla propia.
+
+const CLAVE_GRUPOS_ESTRELLA = "grupos_estrella";
+
+async function getGruposEstrella() {
+  const { data, error } = await supabase.from("repo_settings")
+    .select("valor").eq("clave", CLAVE_GRUPOS_ESTRELLA).maybeSingle();
+  if (error) throw error;
+  return json(Array.isArray(data?.valor) ? data.valor : []);
+}
+
+async function putGruposEstrella(req: Request) {
+  const body = await req.json();
+  const lista = body?.grupos;
+  if (!Array.isArray(lista) || lista.length > 200) {
+    return json({ error: "grupos debe ser una lista de hasta 200 elementos" }, 400);
+  }
+  const grupos: { prefijo: string; nombre: string }[] = [];
+  for (const g of lista) {
+    const prefijo = String(g?.prefijo ?? "").trim().toUpperCase();
+    const nombre = String(g?.nombre ?? "").trim() || prefijo;
+    // Un prefijo muy corto ("P", "PA") agarraría media tabla — se exige un
+    // mínimo para que un error de tipeo no marque medio catálogo como estrella.
+    if (prefijo.length < 3 || prefijo.length > 60 || nombre.length > 120) {
+      return json({ error: `Grupo inválido: "${prefijo}"` }, 400);
+    }
+    if (grupos.some((x) => x.prefijo === prefijo)) continue;
+    grupos.push({ prefijo, nombre });
+  }
+  const { error } = await supabase.from("repo_settings")
+    .upsert({ clave: CLAVE_GRUPOS_ESTRELLA, valor: grupos }, { onConflict: "clave" });
+  if (error) throw error;
+  return json(grupos);
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -342,6 +408,8 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && path === "/pedidos") return await getPedidos();
     if (req.method === "GET" && path === "/quiebres") return await getQuiebres(url);
     if (req.method === "GET" && path === "/stock-historial") return await getStockHistorial(url);
+    if (req.method === "GET" && path === "/grupos-estrella") return await getGruposEstrella();
+    if (req.method === "POST" && path === "/grupos-estrella") return await putGruposEstrella(req);
 
     if (req.method === "POST" && parts[0] === "productos" && parts[2] === "proveedor") {
       return await postProveedor(decodeURIComponent(parts[1]), req);

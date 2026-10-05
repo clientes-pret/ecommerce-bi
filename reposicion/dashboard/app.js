@@ -177,6 +177,7 @@ function generarPDF(proveedor, lineas) {
 
 const NAV_LINKS = [
   { href: "index.html", label: "📦 Tablero", key: "tablero" },
+  { href: "index.html?vista=estrella", label: "⭐ Productos estrella", key: "estrella" },
   { href: "pedido.html", label: "🛒 Carrito", key: "pedido" },
   { href: "historial_pedidos.html", label: "📋 Pedidos", key: "pedidos" },
   { href: "historial_quiebres.html", label: "🕳️ Quiebres", key: "quiebres" },

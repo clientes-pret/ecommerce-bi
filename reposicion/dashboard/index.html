@@ -53,12 +53,43 @@
   #carritoBar { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--border);
     padding: 10px 20px; display: none; align-items: center; gap: 12px; z-index: 500; }
   #carritoBar.visible { display: flex; }
+  #paginacion { display: none; align-items: center; justify-content: center; gap: 14px; padding: 16px 0; }
+  #barraEstrella { display: none; padding: 4px 0 12px; }
+  .estrella-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .estrella-chip { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 6px 14px; }
+  .estrella-chip.activo { background: var(--accent); border-color: var(--accent); }
+  .estrella-resumen { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .estrella-resumen b { color: var(--text); font-size: 15px; margin-left: 4px; }
+  #panelAgregarEstrella { display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-top: 12px; max-width: 760px; }
+  #panelAgregarEstrella label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  #panelAgregarEstrella input[type=text] { width: 100%; }
+  #estrellaPreview { margin-top: 10px; font-size: 13px; color: var(--muted); white-space: normal; }
+  #estrellaPreview .ok { color: #6fcf97; }
+  #estrellaPreview .warn { color: #e5b567; }
 </style>
 </head>
 <body>
 <div class="toppanel">
-  <h1>📦 Reposición — Tablero</h1>
+  <h1 id="titulo">📦 Reposición — Tablero</h1>
   <div id="ultimaActualizacion" class="muted" style="margin:2px 0 8px;"></div>
+  <div id="barraEstrella">
+    <div class="estrella-chips" id="estrellaChips"></div>
+    <div class="estrella-resumen" id="estrellaResumen"></div>
+    <div id="panelAgregarEstrella">
+      <strong>⭐ Nuevo grupo estrella</strong>
+      <label for="estrellaBuscar">1. Buscá un producto del grupo (por nombre o SKU)</label>
+      <input type="text" id="estrellaBuscar" placeholder="Ej: funda tusor sillón">
+      <label for="estrellaPrefijo">2. Prefijo de SKU — entran todas las variantes cuyo SKU empiece así</label>
+      <input type="text" id="estrellaPrefijo" placeholder="Ej: PAH-FTR">
+      <label for="estrellaNombre">3. Nombre del grupo</label>
+      <input type="text" id="estrellaNombre" placeholder="Ej: Funda Tusor 100% Algodón para Sillón">
+      <div id="estrellaPreview"></div>
+      <div style="margin-top:12px;display:flex;gap:8px;">
+        <button id="btnGuardarEstrella">Guardar grupo</button>
+        <button class="secondary" id="btnCancelarEstrella">Cancelar</button>
+      </div>
+    </div>
+  </div>
   <div class="toolbar">
     <input type="text" id="buscador" placeholder="Buscar por SKU o producto…">
     <select id="filtroVista">
@@ -90,7 +121,8 @@
     <label><input type="checkbox" class="filtro-alerta" value="🔴 CRÍTICO" checked> 🔴 Crítico</label>
     <label><input type="checkbox" class="filtro-alerta" value="🟡 BAJO" checked> 🟡 Bajo</label>
     <label><input type="checkbox" class="filtro-alerta" value="🟢 OK" checked> 🟢 OK</label>
-    <label><input type="checkbox" class="filtro-alerta" value="⚫ Sin ventas" checked> ⚫ Sin ventas</label>
+    <label><input type="checkbox" class="filtro-alerta" value="⚫ Sin ventas con stock" checked> ⚫ Sin ventas con stock</label>
+    <label><input type="checkbox" class="filtro-alerta" value="⚫ Sin stock +60 d" checked> ⚫ Sin stock +60 d</label>
   </div>
 </div>
 <main>
@@ -106,14 +138,19 @@
         <th>Stock Depósito</th>
         <th>Stock Full PAH</th>
         <th>Vel/Sem</th>
-        <th>Reponer Depósito</th>
-        <th>Reponer Full</th>
+        <th id="thReponerDeposito">Reponer Depósito</th>
+        <th id="thReponerFull">Reponer Full</th>
         <th>Estado</th>
-        <th>Fecha quiebre</th>
+        <th>Quiebre depósito</th>
       </tr>
     </thead>
     <tbody id="filas"></tbody>
   </table>
+  <div id="paginacion">
+    <button class="secondary" id="btnPaginaAnterior">← Anterior</button>
+    <span id="paginaInfo" class="muted"></span>
+    <button class="secondary" id="btnPaginaSiguiente">Siguiente →</button>
+  </div>
 </main>
 
 <div id="carritoBar">
@@ -124,7 +161,11 @@
 <script src="config.js"></script>
 <script src="app.js"></script>
 <script>
-renderNav("tablero");
+// "Productos estrella" es el mismo tablero (misma tabla, mismo "Armar pedido")
+// pero acotado a los grupos de productos que el usuario marcó como prioritarios
+// — se activa con ?vista=estrella (link del menú).
+const MODO_ESTRELLA = new URLSearchParams(location.search).get("vista") === "estrella";
+renderNav(MODO_ESTRELLA ? "estrella" : "tablero");
 
 // Config por destino — cada uno es un pool de stock independiente (ver
 // reposicion/core.py:full_metrics_marca), la velocidad de depósito es
@@ -156,6 +197,14 @@ let PRODUCTOS = [];
 const EXPANDIDAS = new Set();
 const SELECTED = new Set();
 
+// Paginación client-side: con miles de filas, renderizar la tabla entera cada
+// vez que cambia un filtro tardaba varios segundos. SELECTED no se toca acá
+// (es un Set de SKUs independiente del DOM) — por eso una fila tildada en la
+// página 1 sigue tildada al volver de la página 2, aunque esa fila ya no
+// esté en el tbody.
+const FILAS_POR_PAGINA = 50;
+let paginaActual = 1;
+
 // Proveedores conocidos que deben aparecer como opción aunque todavía no
 // tengan ningún SKU asignado (ej. un proveedor nuevo del que se va a cargar
 // stock por primera vez).
@@ -171,6 +220,7 @@ function alertaClass(alerta) {
   if (alerta.includes("CRÍTICO")) return "background:var(--critico)";
   if (alerta.includes("BAJO")) return "background:var(--bajo)";
   if (alerta.includes("OK")) return "background:var(--ok)";
+  if (alerta.includes("Sin stock +60 d")) return "background:#4a3f5c";
   return "background:#333";
 }
 
@@ -178,6 +228,19 @@ function velSemanalTotal(p) {
   // Vistazo rápido sin expandir: suma la velocidad semanal de los destinos
   // activos (depósito + Full Pret — Full Lavan desactivado, ver DESTINOS).
   return Object.values(DESTINOS).reduce((s, d) => s + (p[d.velSemanal] || 0), 0);
+}
+
+function otroDestinoConStock(p, actual) {
+  // "SIN STOCK" en un canal no es tan grave si otro canal activo todavía
+  // tiene unidades — se puede mover stock físicamente de depósito a Full (o
+  // viceversa) para tapar el hueco, cosa que "OK"/"BAJO" no necesitan.
+  // Pedido del usuario (2026-09-17): reservar "SIN STOCK" para cuando
+  // NINGÚN canal activo tiene nada, y bajar a "CRÍTICO" cuando sí hay de
+  // dónde mover. Esto es solo el label del canal en cuestión — no toca
+  // a_reponer_* ni mezcla los pools entre sí, sigue siendo responsabilidad
+  // manual del usuario decidir si mueve stock interno o pide al proveedor
+  // (ver "Decisiones de diseño no obvias" en CLAUDE.md).
+  return Object.values(DESTINOS).some((d) => d !== actual && (d.stock(p) || 0) > 0);
 }
 
 function nivelAlertaDestino(p, d) {
@@ -191,12 +254,14 @@ function nivelAlertaDestino(p, d) {
   const velDiaria = p[d.velDiaria] || 0;
   const velSemanal = p[d.velSemanal] || 0;
   const diasQuiebre = p[d.diasQuiebre];
-  const fecha = p[d.fechaQuiebre];
   if (ventas === 0) return null; // sin ventas en este destino: no participa del "peor"
-  if (stock === 0 && velSemanal >= 1) return { nivel: 3, label: "🔴 SIN STOCK", fecha, destino: d.label };
-  if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 14) return { nivel: 2, label: "🔴 CRÍTICO", fecha, destino: d.label };
-  if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 30) return { nivel: 1, label: "🟡 BAJO", fecha, destino: d.label };
-  return { nivel: 0, label: "🟢 OK", fecha, destino: d.label };
+  if (stock === 0 && velSemanal >= 1) {
+    if (otroDestinoConStock(p, d)) return { nivel: 2, label: "🔴 CRÍTICO", destino: d.label };
+    return { nivel: 3, label: "🔴 SIN STOCK", destino: d.label };
+  }
+  if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 14) return { nivel: 2, label: "🔴 CRÍTICO", destino: d.label };
+  if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 30) return { nivel: 1, label: "🟡 BAJO", destino: d.label };
+  return { nivel: 0, label: "🟢 OK", destino: d.label };
 }
 
 function peorEvaluacion(p) {
@@ -222,16 +287,50 @@ function peorEvaluacion(p) {
 
 function estadoGeneral(p) {
   const peor = peorEvaluacion(p);
-  return peor ? peor.label : "⚫ Sin ventas";
+  if (peor) return peor.label;
+  // Ningún destino activo vendió nada en los últimos 60 días. Se separa según
+  // haya o no stock hoy (pedido del usuario, 2026-10-05): sin ventas pero CON
+  // stock es mercadería parada; sin ventas y SIN stock en ningún canal es un
+  // producto que lleva más de 60 días agotado (por eso no tiene ventas en la
+  // ventana), distinto de un quiebre reciente, que sí tiene ventas y cae en
+  // SIN STOCK / CRÍTICO.
+  const hayStock = Object.values(DESTINOS).some((d) => (d.stock(p) || 0) > 0);
+  return hayStock ? "⚫ Sin ventas con stock" : "⚫ Sin stock +60 d";
 }
 
-function fechaQuiebreGeneral(p) {
-  // Fecha probable de quiebre del MISMO destino que ganó el badge de
-  // Estado, para que ambas columnas cuenten la misma historia (pedido del
-  // usuario 2026-08-21, viendo un producto con badge OK pero un canal a 9
-  // días de quebrar).
-  const peor = peorEvaluacion(p);
-  return peor ? peor.fecha : null;
+// Primer día con snapshots diarios guardados (repo_stock_snapshot). Un destino
+// que ya estaba en 0 desde entonces no tiene fecha de quiebre exacta.
+const STOCK_HISTORIAL_DESDE = "2026-08-12";
+
+function hoyLocalISO() {
+  return new Date().toLocaleDateString("en-CA"); // yyyy-mm-dd en la zona horaria del navegador
+}
+
+function quiebreDestinoHTML(p, d) {
+  // Fecha de quiebre de UN destino:
+  //  - con stock: la estimada (stock / velocidad de venta de ese destino).
+  //  - ya quebrado con ventas: cuándo quebró de verdad. core.py devuelve
+  //    "hoy" para un destino en 0, lo que mostraba siempre la fecha de la
+  //    última actualización; weekly_calc.py lo reemplaza por el primer día
+  //    en 0 del historial de snapshots (aplicar_fecha_quiebre_real).
+  const stock = d.stock(p);
+  const fecha = p[d.fechaQuiebre];
+  const velDiaria = p[d.velDiaria] || 0;
+  if (stock === 0 && velDiaria > 0) {
+    let texto;
+    if (fecha && fecha <= hoyLocalISO()) {
+      texto = `Quebró ${fmtDate(fecha)}`;
+    } else if (fecha) {
+      // El cálculo todavía lo veía con stock (fecha estimada a futuro) pero el
+      // último relevamiento de stock ya lo trae en 0: quebró entre ambos.
+      const desde = p.stock_actualizado_at ? new Date(p.stock_actualizado_at).toLocaleDateString("en-CA") : hoyLocalISO();
+      texto = `Quebró ${fmtDate(desde)}`;
+    } else {
+      texto = `Quebró antes del ${fmtDate(STOCK_HISTORIAL_DESDE)}`;
+    }
+    return `<span style="color:#e57373">${texto}</span>`;
+  }
+  return fmtDate(fecha);
 }
 
 function necesitaReposicionDestino(p, d) {
@@ -307,7 +406,14 @@ function filasVisibles() {
   // 26 variantes reales, pero solo 1 tenía sugerencia de reposición > 0,
   // así que buscando "002225-" con la vista en "Necesita reposición" antes
   // solo mostraba esa una, pareciendo que faltaban productos).
-  if (!busqueda && vista === "necesita") rows = rows.filter(necesitaReposicion);
+  if (MODO_ESTRELLA) {
+    // Todas las variantes del grupo (también las que hoy no necesitan
+    // reposición) — el objetivo es ver el grupo completo de un vistazo.
+    const grupos = grupoActivo ? GRUPOS_ESTRELLA.filter((g) => g.prefijo === grupoActivo) : GRUPOS_ESTRELLA;
+    rows = rows.filter((p) => grupos.some((g) => enGrupo(p, g)));
+  } else if (!busqueda && vista === "necesita") {
+    rows = rows.filter(necesitaReposicion);
+  }
   rows = rows.filter((p) => alertas.has(estadoGeneral(p)));
   if (proveedor) rows = rows.filter((p) => p.proveedor === proveedor);
   if (categoria) rows = rows.filter((p) => (p.categoria || "Bazar") === categoria);
@@ -334,7 +440,7 @@ function renderDestinoCard(p, key) {
     <div class="fila-mini"><span>Vendido 60d</span><span>${fmtNum(p[d.vendido])}</span></div>
     <div class="fila-mini"><span>Vel. diaria/sem.</span><span>${fmtNum(p[d.velDiaria])} / ${fmtNum(p[d.velSemanal])}</span></div>
     <div class="fila-mini"><span>Días quiebre</span><span>${fmtNum(p[d.diasQuiebre])}</span></div>
-    <div class="fila-mini"><span>Fecha quiebre</span><span>${fmtDate(p[d.fechaQuiebre])}</span></div>
+    <div class="fila-mini"><span>Fecha quiebre</span><span>${quiebreDestinoHTML(p, d)}</span></div>
     <div class="fila-mini"><span>Alerta</span><span><span class="badge" style="${alertaClass(p[d.alerta])}">${p[d.alerta] || "—"}</span></span></div>
     ${yaSolicitado ? '<div class="fila-mini solicitado">✓ Ya solicitado en este destino</div>' : ""}
     <div class="agregar">
@@ -413,13 +519,37 @@ function renderDetalle(p) {
   return tr;
 }
 
+function renderPaginacion(totalFilas, totalPaginas) {
+  const cont = document.getElementById("paginacion");
+  if (totalPaginas <= 1) { cont.style.display = "none"; return; }
+  cont.style.display = "flex";
+  document.getElementById("paginaInfo").textContent =
+    `Página ${paginaActual} de ${totalPaginas} (${totalFilas} productos)`;
+  const btnAnt = document.getElementById("btnPaginaAnterior");
+  const btnSig = document.getElementById("btnPaginaSiguiente");
+  btnAnt.disabled = paginaActual <= 1;
+  btnSig.disabled = paginaActual >= totalPaginas;
+  btnAnt.onclick = () => { paginaActual--; render(); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  btnSig.onclick = () => { paginaActual++; render(); window.scrollTo({ top: 0, behavior: "smooth" }); };
+}
+
 function render() {
   const rows = filasVisibles();
   document.getElementById("contador").textContent = `${rows.length} productos`;
+
+  const totalPaginas = Math.max(1, Math.ceil(rows.length / FILAS_POR_PAGINA));
+  if (paginaActual > totalPaginas) paginaActual = totalPaginas;
+  if (paginaActual < 1) paginaActual = 1;
+  const inicio = (paginaActual - 1) * FILAS_POR_PAGINA;
+  const rowsPagina = rows.slice(inicio, inicio + FILAS_POR_PAGINA);
+
   const tbody = document.getElementById("filas");
   tbody.innerHTML = "";
 
   const chkTodos = document.getElementById("chkTodos");
+  // "Seleccionar todos" opera sobre TODOS los filtrados (todas las páginas,
+  // no solo la visible) — así "Armar pedido"/"Descontinuar" masivo puede
+  // juntar más de 50 productos sin tener que tildar página por página.
   chkTodos.checked = rows.length > 0 && rows.every((p) => SELECTED.has(p.sku));
   chkTodos.onclick = (e) => e.stopPropagation();
   chkTodos.onchange = () => {
@@ -429,7 +559,7 @@ function render() {
     actualizarBotonesMasivos();
   };
 
-  for (const p of rows) {
+  for (const p of rowsPagina) {
     const tr = document.createElement("tr");
     tr.className = "fila-producto";
     const abierta = EXPANDIDAS.has(p.sku);
@@ -446,7 +576,7 @@ function render() {
       <td>${fmtNum(p.a_reponer_deposito)}</td>
       <td>${fmtNum(p.a_reponer_full_pret)}</td>
       <td><span class="badge" style="${alertaClass(alertaResumen)}">${alertaResumen || "—"}</span></td>
-      <td>${fmtDate(fechaQuiebreGeneral(p))}</td>
+      <td>${quiebreDestinoHTML(p, DESTINOS.deposito)}</td>
     `;
 
     const chkFila = tr.querySelector(".chk-fila");
@@ -511,6 +641,230 @@ function render() {
     tbody.appendChild(tr);
     if (abierta) tbody.appendChild(renderDetalle(p));
   }
+
+  renderPaginacion(rows.length, totalPaginas);
+  if (MODO_ESTRELLA) renderBarraEstrella(rows);
+}
+
+// ─── Productos estrella ─────────────────────────────────────────────────────
+// Un grupo = prefijo de SKU + nombre (ej. "PAH-FTR" → todas las variantes de la
+// funda de sillón). Se guarda en el servidor (/grupos-estrella) así que se ve
+// igual desde cualquier navegador.
+
+const GRUPO_ACTIVO_KEY = "repo_grupo_estrella_activo";
+let GRUPOS_ESTRELLA = [];
+let grupoActivo = ""; // prefijo del grupo seleccionado; "" = todos los grupos
+try { grupoActivo = localStorage.getItem(GRUPO_ACTIVO_KEY) || ""; } catch { /* sin storage: arranca en "todos" */ }
+
+function enGrupo(p, g) {
+  return p.sku.toUpperCase().startsWith(g.prefijo);
+}
+
+function recordarGrupoActivo() {
+  try { localStorage.setItem(GRUPO_ACTIVO_KEY, grupoActivo); } catch { /* conveniencia, no crítico */ }
+}
+
+function seleccionarGrupo(prefijo) {
+  grupoActivo = prefijo;
+  recordarGrupoActivo();
+  paginaActual = 1;
+  render();
+}
+
+function sumar(rows, fn) {
+  return rows.reduce((s, p) => s + (fn(p) || 0), 0);
+}
+
+function renderBarraEstrella(rows) {
+  // `rows` = filas ya filtradas (grupo activo + filtros de la barra). Las sumas
+  // van separadas por canal a propósito — nunca se mezclan depósito y Full.
+  const chips = document.getElementById("estrellaChips");
+  chips.innerHTML = "";
+  const crearChip = (texto, prefijo) => {
+    const b = document.createElement("button");
+    b.className = "estrella-chip" + (grupoActivo === prefijo ? " activo" : "");
+    b.textContent = texto;
+    b.addEventListener("click", () => seleccionarGrupo(prefijo));
+    chips.appendChild(b);
+  };
+  const totalVariantes = PRODUCTOS.filter((p) => GRUPOS_ESTRELLA.some((g) => enGrupo(p, g))).length;
+  if (GRUPOS_ESTRELLA.length) crearChip(`Todos los grupos (${totalVariantes})`, "");
+  for (const g of GRUPOS_ESTRELLA) {
+    crearChip(`${g.nombre} (${PRODUCTOS.filter((p) => enGrupo(p, g)).length})`, g.prefijo);
+  }
+  const btnAgregar = document.createElement("button");
+  btnAgregar.className = "secondary";
+  btnAgregar.textContent = "＋ Agregar grupo";
+  btnAgregar.addEventListener("click", abrirPanelEstrella);
+  chips.appendChild(btnAgregar);
+  if (grupoActivo) {
+    const btnQuitar = document.createElement("button");
+    btnQuitar.className = "secondary";
+    btnQuitar.textContent = "🗑 Quitar este grupo";
+    btnQuitar.addEventListener("click", quitarGrupoActivo);
+    chips.appendChild(btnQuitar);
+  }
+
+  const resumen = document.getElementById("estrellaResumen");
+  if (!GRUPOS_ESTRELLA.length) {
+    resumen.textContent = "Todavía no marcaste ningún grupo estrella — tocá “＋ Agregar grupo”.";
+    return;
+  }
+  const etq = etiquetaCobertura();
+  resumen.innerHTML = `
+    <span>Variantes<b>${rows.length}</b></span>
+    <span>Stock depósito<b>${fmtNum(sumar(rows, (p) => DESTINOS.deposito.stock(p)))}</b></span>
+    <span>Stock Full<b>${fmtNum(sumar(rows, (p) => DESTINOS.full_pret.stock(p)))}</b></span>
+    <span>Reponer Depósito${etq}<b>${fmtNum(sumar(rows, (p) => p.a_reponer_deposito))}</b></span>
+    <span>Reponer Full${etq}<b>${fmtNum(sumar(rows, (p) => p.a_reponer_full_pret))}</b></span>`;
+}
+
+async function guardarGrupos(lista) {
+  GRUPOS_ESTRELLA = await apiFetch("/grupos-estrella", {
+    method: "POST", body: JSON.stringify({ grupos: lista }),
+  });
+}
+
+async function quitarGrupoActivo() {
+  const g = GRUPOS_ESTRELLA.find((x) => x.prefijo === grupoActivo);
+  if (!g) return;
+  if (!confirm(`¿Quitar el grupo “${g.nombre}” de productos estrella? Los productos no se borran, solo dejan de estar en esta vista.`)) return;
+  await guardarGrupos(GRUPOS_ESTRELLA.filter((x) => x.prefijo !== g.prefijo));
+  seleccionarGrupo("");
+}
+
+function prefijoComun(skus) {
+  if (!skus.length) return "";
+  let pref = skus[0].toUpperCase();
+  for (const s of skus) {
+    const u = s.toUpperCase();
+    let i = 0;
+    while (i < pref.length && i < u.length && pref[i] === u[i]) i++;
+    pref = pref.slice(0, i);
+    if (!pref) break;
+  }
+  return pref;
+}
+
+function nombreComun(nombres) {
+  // Palabras iniciales que comparten todos los nombres ("Funda Tusor 100%
+  // Algodón para Sillón" de "…Sillón 1 Cuerpo" y "…Sillón de 2 Cuerpos"),
+  // sin conectores colgando al final.
+  const listas = nombres.filter(Boolean).map((n) => n.split(/\s+/));
+  if (!listas.length) return "";
+  let comunes = listas[0];
+  for (const l of listas) {
+    let i = 0;
+    while (i < comunes.length && i < l.length && comunes[i] === l[i]) i++;
+    comunes = comunes.slice(0, i);
+  }
+  while (comunes.length && /^(de|del|para|en|con|y|-|–)$/i.test(comunes[comunes.length - 1])) comunes.pop();
+  return comunes.join(" ");
+}
+
+const panelEstrella = { prefijoEditado: false, nombreEditado: false };
+
+function abrirPanelEstrella() {
+  panelEstrella.prefijoEditado = false;
+  panelEstrella.nombreEditado = false;
+  for (const id of ["estrellaBuscar", "estrellaPrefijo", "estrellaNombre"]) document.getElementById(id).value = "";
+  document.getElementById("estrellaPreview").textContent = "";
+  document.getElementById("panelAgregarEstrella").style.display = "block";
+  document.getElementById("estrellaBuscar").focus();
+}
+
+function cerrarPanelEstrella() {
+  document.getElementById("panelAgregarEstrella").style.display = "none";
+}
+
+function coincidenciasBusqueda(texto) {
+  const palabras = texto.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!palabras.length) return [];
+  return PRODUCTOS.filter((p) => {
+    const hay = `${p.sku} ${p.nombre || ""}`.toLowerCase();
+    return palabras.every((w) => hay.includes(w));
+  });
+}
+
+function actualizarPreviewEstrella() {
+  const prefijo = document.getElementById("estrellaPrefijo").value.trim().toUpperCase();
+  const preview = document.getElementById("estrellaPreview");
+  const btn = document.getElementById("btnGuardarEstrella");
+  btn.disabled = true;
+  preview.innerHTML = "";
+  const linea = (clase, texto) => {
+    const d = document.createElement("div");
+    d.className = clase;
+    d.textContent = texto;
+    preview.appendChild(d);
+  };
+  if (prefijo.length < 3) {
+    linea("warn", "Escribí un prefijo de al menos 3 caracteres (ej. PAH-FTR). Si buscaste varios productos distintos y no comparten código, afiná la búsqueda.");
+    return;
+  }
+  const matches = PRODUCTOS.filter((p) => p.sku.toUpperCase().startsWith(prefijo));
+  if (!matches.length) { linea("warn", `Ningún SKU empieza con “${prefijo}”.`); return; }
+  if (GRUPOS_ESTRELLA.some((g) => g.prefijo === prefijo)) { linea("warn", `Ya existe un grupo con el prefijo ${prefijo}.`); return; }
+  const nombres = Array.from(new Set(matches.map((p) => p.nombre).filter(Boolean)));
+  linea("ok", `✓ ${matches.length} variantes con SKU “${prefijo}…” — ${nombres.length} producto(s) distinto(s):`);
+  for (const n of nombres.slice(0, 5)) linea("", `• ${n}`);
+  if (nombres.length > 5) linea("", `… y ${nombres.length - 5} más`);
+  btn.disabled = false;
+}
+
+document.getElementById("estrellaBuscar").addEventListener("input", () => {
+  const matches = coincidenciasBusqueda(document.getElementById("estrellaBuscar").value);
+  if (!panelEstrella.prefijoEditado) {
+    document.getElementById("estrellaPrefijo").value = prefijoComun(matches.map((p) => p.sku));
+  }
+  if (!panelEstrella.nombreEditado) {
+    document.getElementById("estrellaNombre").value = nombreComun(matches.map((p) => p.nombre));
+  }
+  actualizarPreviewEstrella();
+});
+document.getElementById("estrellaPrefijo").addEventListener("input", () => {
+  panelEstrella.prefijoEditado = true;
+  actualizarPreviewEstrella();
+});
+document.getElementById("estrellaNombre").addEventListener("input", () => { panelEstrella.nombreEditado = true; });
+document.getElementById("btnCancelarEstrella").addEventListener("click", cerrarPanelEstrella);
+document.getElementById("btnGuardarEstrella").addEventListener("click", async () => {
+  const prefijo = document.getElementById("estrellaPrefijo").value.trim().toUpperCase();
+  const nombre = document.getElementById("estrellaNombre").value.trim() || prefijo;
+  const btn = document.getElementById("btnGuardarEstrella");
+  btn.disabled = true;
+  try {
+    await guardarGrupos([...GRUPOS_ESTRELLA, { prefijo, nombre }]);
+    cerrarPanelEstrella();
+    seleccionarGrupo(prefijo);
+  } catch (e) {
+    document.getElementById("estrellaPreview").textContent = `No se pudo guardar: ${e.message}`;
+    btn.disabled = false;
+  }
+});
+
+// Los encabezados dicen a cuántos días de cobertura está calculada la
+// sugerencia (repo_settings.coverage_days → coverage_days_usado en cada fila),
+// así el rótulo nunca miente si ese setting cambia.
+function etiquetaCobertura() {
+  const fila = PRODUCTOS.find((p) => p.coverage_days_usado);
+  return fila ? ` (${fila.coverage_days_usado} D)` : "";
+}
+
+function actualizarEtiquetasCobertura() {
+  const etq = etiquetaCobertura();
+  document.getElementById("thReponerDeposito").textContent = `Reponer Depósito${etq}`;
+  document.getElementById("thReponerFull").textContent = `Reponer Full${etq}`;
+}
+
+// Cambiar un filtro (búsqueda, proveedor, categoría, orden, alertas, etc.)
+// vuelve a la página 1 — de lo contrario, si el usuario está en la página 3
+// y busca algo, se puede quedar en una página vacía porque el nuevo
+// resultado tiene menos filas. Tildar checkboxes o expandir una fila NO pasa
+// por acá, así que no mueve al usuario de página.
+function filtrar() {
+  paginaActual = 1;
+  render();
 }
 
 function actualizarUltimaActualizacion() {
@@ -528,12 +882,20 @@ function actualizarUltimaActualizacion() {
 }
 
 async function cargar() {
+  paginaActual = 1;
   document.getElementById("status").textContent = "Cargando…";
   document.getElementById("tabla").style.display = "none";
   try {
-    const vista = document.getElementById("filtroVista").value;
+    const vista = MODO_ESTRELLA ? "necesita" : document.getElementById("filtroVista").value;
     const qs = vista === "descontinuados" ? "?descontinuados=true" : "";
     PRODUCTOS = await apiFetch(`/productos${qs}`);
+    // En serie (no en paralelo con /productos): si todavía no hay login, dos
+    // apiFetch simultáneos abrirían dos veces el formulario y uno se perdería.
+    if (MODO_ESTRELLA) {
+      GRUPOS_ESTRELLA = await apiFetch("/grupos-estrella");
+      if (grupoActivo && !GRUPOS_ESTRELLA.some((g) => g.prefijo === grupoActivo)) grupoActivo = "";
+    }
+    actualizarEtiquetasCobertura();
     renderProveedores();
     renderProveedorMasivoSelect();
     renderCategorias();
@@ -587,13 +949,22 @@ function actualizarBarraCarrito() {
   document.getElementById("carritoTexto").textContent = `🛒 ${carrito.length} líneas · ${totalUnidades} unidades`;
 }
 
+if (MODO_ESTRELLA) {
+  document.title = "Reposición — Productos estrella";
+  document.getElementById("titulo").textContent = "⭐ Reposición — Productos estrella";
+  document.getElementById("barraEstrella").style.display = "block";
+  document.getElementById("filtroVista").style.display = "none";
+  // Acá lo que importa es ver el grupo completo, incluso lo ya pedido.
+  document.getElementById("ocultarSolicitados").checked = false;
+}
+
 document.getElementById("filtroVista").addEventListener("change", cargar);
-document.getElementById("filtroProveedor").addEventListener("change", render);
-document.getElementById("filtroCategoria").addEventListener("change", render);
-document.getElementById("ordenarPor").addEventListener("change", render);
-document.getElementById("ocultarSolicitados").addEventListener("change", render);
-document.getElementById("buscador").addEventListener("input", render);
-document.querySelectorAll(".filtro-alerta").forEach((chk) => { chk.addEventListener("change", render); });
+document.getElementById("filtroProveedor").addEventListener("change", filtrar);
+document.getElementById("filtroCategoria").addEventListener("change", filtrar);
+document.getElementById("ordenarPor").addEventListener("change", filtrar);
+document.getElementById("ocultarSolicitados").addEventListener("change", filtrar);
+document.getElementById("buscador").addEventListener("input", filtrar);
+document.querySelectorAll(".filtro-alerta").forEach((chk) => { chk.addEventListener("change", filtrar); });
 document.getElementById("btnRefrescar").addEventListener("click", cargar);
 document.getElementById("btnVerCarrito").addEventListener("click", () => { window.location.href = "pedido.html"; });
 document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
@@ -602,11 +973,12 @@ document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
   document.getElementById("filtroCategoria").value = "";
   document.getElementById("ordenarPor").value = "sugerido";
   document.querySelectorAll(".filtro-alerta").forEach((chk) => { chk.checked = true; });
+  if (MODO_ESTRELLA) document.getElementById("ocultarSolicitados").checked = false;
   const vistaCambio = document.getElementById("filtroVista").value !== "necesita";
   document.getElementById("filtroVista").value = "necesita";
   // "Descontinuados" trae un dataset distinto del servidor (no es un filtro
   // client-side) — si veníamos de ahí hace falta recargar, no solo re-renderizar.
-  vistaCambio ? cargar() : render();
+  vistaCambio ? cargar() : filtrar();
 });
 
 // Selección masiva (checkbox por fila + "tildar todos los filtrados", ver
