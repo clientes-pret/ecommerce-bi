@@ -58,6 +58,7 @@
   .estrella-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .estrella-chip { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 6px 14px; }
   .estrella-chip.activo { background: var(--accent); border-color: var(--accent); }
+  #btnExcluirEstrella[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .estrella-resumen { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
   .estrella-resumen b { color: var(--text); font-size: 15px; margin-left: 4px; }
   #panelAgregarEstrella { display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-top: 12px; max-width: 760px; }
@@ -105,6 +106,7 @@
       <option value="revenue">Ordenar: mayor revenue 60d</option>
     </select>
     <label class="chk"><input type="checkbox" id="ocultarSolicitados" checked> Ocultar ya solicitados</label>
+    <button class="secondary" id="btnExcluirEstrella" aria-pressed="false" title="Oculta del tablero los productos de los grupos estrella (los definidos en ⭐ Productos estrella)">⭐ Excluir productos estrella</button>
     <button class="secondary" id="btnLimpiarFiltros" title="Vuelve buscador, proveedor, categoría, orden y vista a sus valores por defecto">✕ Limpiar filtros</button>
     <div class="toolbar-right">
       <button class="secondary" id="btnArmarPedido" disabled>🧾 Armar pedido (0)</button>
@@ -204,6 +206,7 @@ const SELECTED = new Set();
 // esté en el tbody.
 const FILAS_POR_PAGINA = 50;
 let paginaActual = 1;
+let excluirEstrella = false; // botón "Excluir productos estrella": arranca apagado en cada carga, a propósito
 
 // Proveedores conocidos que deben aparecer como opción aunque todavía no
 // tengan ningún SKU asignado (ej. un proveedor nuevo del que se va a cargar
@@ -414,6 +417,7 @@ function filasVisibles() {
   } else if (!busqueda && vista === "necesita") {
     rows = rows.filter(necesitaReposicion);
   }
+  if (excluirEstrella && !MODO_ESTRELLA) rows = rows.filter((p) => !esEstrella(p));
   rows = rows.filter((p) => alertas.has(estadoGeneral(p)));
   if (proveedor) rows = rows.filter((p) => p.proveedor === proveedor);
   if (categoria) rows = rows.filter((p) => (p.categoria || "Bazar") === categoria);
@@ -658,6 +662,57 @@ try { grupoActivo = localStorage.getItem(GRUPO_ACTIVO_KEY) || ""; } catch { /* s
 
 function enGrupo(p, g) {
   return p.sku.toUpperCase().startsWith(g.prefijo);
+}
+
+function esEstrella(p) {
+  return GRUPOS_ESTRELLA.some((g) => enGrupo(p, g));
+}
+
+// Botón "Excluir productos estrella" del tablero normal. Los grupos se piden al
+// servidor recién cuando se enciende el botón por primera vez (no en cada carga
+// del tablero): así un problema con ese dato opcional no puede romper la vista
+// principal.
+let gruposEstrellaCargados = false;
+
+function actualizarBotonExcluirEstrella() {
+  const btn = document.getElementById("btnExcluirEstrella");
+  btn.setAttribute("aria-pressed", excluirEstrella ? "true" : "false");
+  btn.textContent = excluirEstrella
+    ? `⭐ Excluyendo estrella (${PRODUCTOS.filter(esEstrella).length})`
+    : "⭐ Excluir productos estrella";
+}
+
+function apagarExcluirEstrella() {
+  excluirEstrella = false;
+  actualizarBotonExcluirEstrella();
+}
+
+async function alternarExcluirEstrella() {
+  if (excluirEstrella) {
+    apagarExcluirEstrella();
+    filtrar();
+    return;
+  }
+  try {
+    if (!gruposEstrellaCargados) {
+      GRUPOS_ESTRELLA = await apiFetch("/grupos-estrella");
+      gruposEstrellaCargados = true;
+    }
+  } catch (e) {
+    alert(`No pude traer los grupos estrella: ${e.message}`);
+    return;
+  }
+  if (!GRUPOS_ESTRELLA.length) {
+    alert("Todavía no marcaste ningún grupo estrella — creá uno en ⭐ Productos estrella y volvé.");
+    return;
+  }
+  excluirEstrella = true;
+  // Lo que queda oculto no debe seguir tildado: si no, "Armar pedido" lo
+  // incluiría sin que se vea en pantalla.
+  for (const p of PRODUCTOS) if (esEstrella(p)) SELECTED.delete(p.sku);
+  actualizarBotonExcluirEstrella();
+  actualizarBotonesMasivos();
+  filtrar();
 }
 
 function recordarGrupoActivo() {
@@ -907,6 +962,7 @@ async function cargar() {
     renderProveedorMasivoSelect();
     renderCategorias();
     render();
+    if (excluirEstrella) actualizarBotonExcluirEstrella(); // recuenta con el catálogo recién cargado
     actualizarUltimaActualizacion();
     actualizarBarraCarrito();
     actualizarBotonesMasivos();
@@ -961,6 +1017,7 @@ if (MODO_ESTRELLA) {
   document.getElementById("titulo").textContent = "⭐ Reposición — Productos estrella";
   document.getElementById("barraEstrella").style.display = "block";
   document.getElementById("filtroVista").style.display = "none";
+  document.getElementById("btnExcluirEstrella").style.display = "none"; // acá justamente se ven solo las estrella
   // Acá lo que importa es ver el grupo completo, incluso lo ya pedido.
   document.getElementById("ocultarSolicitados").checked = false;
 }
@@ -970,6 +1027,7 @@ document.getElementById("filtroProveedor").addEventListener("change", filtrar);
 document.getElementById("filtroCategoria").addEventListener("change", filtrar);
 document.getElementById("ordenarPor").addEventListener("change", filtrar);
 document.getElementById("ocultarSolicitados").addEventListener("change", filtrar);
+document.getElementById("btnExcluirEstrella").addEventListener("click", alternarExcluirEstrella);
 document.getElementById("buscador").addEventListener("input", filtrar);
 document.querySelectorAll(".filtro-alerta").forEach((chk) => { chk.addEventListener("change", filtrar); });
 document.getElementById("btnRefrescar").addEventListener("click", cargar);
@@ -981,6 +1039,7 @@ document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
   document.getElementById("ordenarPor").value = "sugerido";
   document.querySelectorAll(".filtro-alerta").forEach((chk) => { chk.checked = true; });
   if (MODO_ESTRELLA) document.getElementById("ocultarSolicitados").checked = false;
+  apagarExcluirEstrella();
   const vistaCambio = document.getElementById("filtroVista").value !== "necesita";
   document.getElementById("filtroVista").value = "necesita";
   // "Descontinuados" trae un dataset distinto del servidor (no es un filtro

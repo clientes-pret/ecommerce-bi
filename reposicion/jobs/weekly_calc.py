@@ -103,10 +103,16 @@ def _fake_ml_orders_from_rows(rows):
 
 
 def _ventas_rows(config, canal, date_from_str):
+    # order=id.asc es obligatorio: db.select pagina de a 1000 filas y, sin un
+    # orden fijo, Postgres puede repetir unas filas y saltear otras entre
+    # página y página (medido 2026-10-03: una lectura sin orden de 4.537 filas
+    # devolvió solo 3.558 órdenes distintas en vez de 4.537) — ventas
+    # duplicadas o perdidas en silencio dentro de la velocidad de venta.
     return db.select(config, "repo_ventas_items", params={
         "canal": f"eq.{canal}",
         "fecha": f"gte.{date_from_str}",
         "estado": "eq.activa",
+        "order": "id.asc",
     })
 
 
@@ -126,6 +132,7 @@ def _resolver_items_cerrados(config, canal, cfg, rows, item_details):
 
     cache_rows = db.select(config, "repo_items_ml_cache", params={
         "item_id": f"in.({','.join(faltantes)})",
+        "order": "item_id.asc",  # orden fijo: ver nota en _ventas_rows
     })
     cache_by_id = {r["item_id"]: r for r in cache_rows}
     aun_faltantes = [iid for iid in faltantes if iid not in cache_by_id]
@@ -281,6 +288,65 @@ def row_to_calculo(row, semana, coverage_days):
     }
 
 
+DESTINOS_QUIEBRE = {
+    # destino: (columna de stock, de velocidad diaria, de fecha de quiebre) en repo_calculo_semanal.
+    # Los nombres de stock coinciden con las columnas de repo_stock_snapshot.
+    "deposito":   ("stock_deposito",   "vel_diaria_deposito",   "fecha_quiebre_deposito"),
+    "full_pret":  ("stock_full_pret",  "vel_diaria_full_pret",  "fecha_quiebre_full_pret"),
+    "full_lavan": ("stock_full_lavan", "vel_diaria_full_lavan", "fecha_quiebre_full_lavan"),
+}
+
+
+def _inicio_racha_cero(config, skus, col):
+    """{sku: fecha ISO del primer día de la racha de stock 0 vigente, o None si
+    en todo el historial de snapshots nunca tuvo stock}. Un sku cuyo último
+    snapshot ya no está en 0 no aparece en el resultado."""
+    out = {}
+    skus = sorted(skus)
+    for i in range(0, len(skus), 80):
+        chunk = skus[i:i + 80]
+        rows = db.select(config, "repo_stock_snapshot", params={
+            "sku": "in.(" + ",".join(f'"{s}"' for s in chunk) + ")",
+            "select": f"sku,fecha,{col}",
+            "order": "sku.asc,fecha.desc",
+        })
+        por_sku = defaultdict(list)
+        for r in rows:
+            por_sku[r["sku"]].append(r)
+        for sku, hist in por_sku.items():
+            inicio, hubo_stock = None, False
+            for r in hist:  # más reciente primero
+                if (r[col] or 0) == 0:
+                    inicio = r["fecha"]
+                else:
+                    hubo_stock = True
+                    break
+            if not hubo_stock:
+                out[sku] = None      # en 0 durante todo el historial: no se sabe cuándo quebró
+            elif inicio is not None:
+                out[sku] = inicio
+    return out
+
+
+def aplicar_fecha_quiebre_real(config, calculos):
+    """Para un destino que YA está en 0 con ventas, core.py devuelve como "fecha
+    de quiebre" hoy (stock/velocidad = 0 días) — o sea siempre la fecha de la
+    última corrida, que no dice nada. Se reemplaza por el primer día del
+    historial de snapshots en que quedó en 0; si estuvo en 0 desde que existen
+    snapshots, queda en None (el tablero lo muestra como "antes del <primer
+    snapshot>"). Los destinos que todavía tienen stock no se tocan: ahí la fecha
+    sigue siendo la estimada por core.py (stock / velocidad)."""
+    for destino, (c_stock, c_vel, c_fecha) in DESTINOS_QUIEBRE.items():
+        candidatos = {c["sku"] for c in calculos if (c.get(c_stock) or 0) == 0 and (c.get(c_vel) or 0) > 0}
+        if not candidatos:
+            continue
+        inicios = _inicio_racha_cero(config, candidatos, c_stock)
+        for c in calculos:
+            if c["sku"] in inicios:
+                c[c_fecha] = inicios[c["sku"]]
+        core.tnlog(f"  {destino}: fecha real de quiebre para {len(inicios)} SKUs ya quebrados con ventas")
+
+
 def _dedupe_by_sku(rows):
     """El catálogo real de Tiendanube tiene SKUs repetidos entre productos
     distintos (error de carga de datos, no de este script) — Postgres/PostgREST
@@ -337,6 +403,7 @@ def main():
     db.upsert(config, "repo_productos", productos, on_conflict="sku")
 
     calculos = [row_to_calculo(r, semana, coverage_days) for r in rows]
+    aplicar_fecha_quiebre_real(config, calculos)
     db.upsert(config, "repo_calculo_semanal", calculos, on_conflict="semana_iso,sku")
 
     core.tnlog(f"✓ {len(calculos)} filas escritas en repo_calculo_semanal ({semana})")
