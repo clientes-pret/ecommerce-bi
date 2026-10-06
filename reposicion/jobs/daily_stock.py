@@ -31,6 +31,31 @@ DESTINO_A_COLUMNA = {
 }
 
 
+def _stock_deposito_por_sku(products, label):
+    """Stock de depósito por SKU, contando cada SKU UNA sola vez.
+
+    Un mismo SKU puede estar en varios productos de Tiendanube (p. ej. durante la
+    unificación de productos por tamaño, el producto viejo y el unificado conviven
+    con los mismos SKUs). Es el mismo stock físico — Ecomapp sincroniza por SKU —
+    así que nunca se suma: se toma un único valor. Si las copias no coinciden
+    (sync pendiente), se usa el mayor y se avisa en el log."""
+    por_sku, distintos = {}, {}
+    for prod in products:
+        for variant in prod.get("variants", []):
+            sku = str(variant.get("sku") or variant.get("id") or "")
+            if not sku:
+                continue
+            qty = variant.get("stock", 0) or 0
+            if sku in por_sku and por_sku[sku] != qty:
+                distintos.setdefault(sku, {por_sku[sku]}).add(qty)
+            por_sku[sku] = max(qty, por_sku.get(sku, qty))
+    if distintos:
+        ej = ", ".join(f"{s} {sorted(v)}" for s, v in sorted(distintos.items())[:10])
+        core.tnlog(f"  ⚠ {label}: {len(distintos)} SKUs repetidos con stock distinto entre productos "
+                   f"(se usó el mayor): {ej}{' ...' if len(distintos) > 10 else ''}")
+    return por_sku
+
+
 def fetch_stock(config):
     """Devuelve ({sku: {'deposito': int, 'full_pret': int, 'full_lavan': int}},
     {'ml_pret': item_details, 'ml_lavan': item_details}) — el segundo valor se
@@ -46,13 +71,9 @@ def fetch_stock(config):
     if tn_pret_cfg and tn_pret_cfg.get("enabled", True):
         core.tnlog("→ TN Pret: bajando stock de depósito...")
         products = core.tn_get_products(tn_pret_cfg)
-        for prod in products:
-            for variant in prod.get("variants", []):
-                sku = str(variant.get("sku") or variant.get("id") or "")
-                if not sku:
-                    continue
-                stock[sku]["deposito"] += variant.get("stock", 0) or 0
-                skus_tn_pret.add(sku)
+        for sku, qty in _stock_deposito_por_sku(products, "TN Pret").items():
+            stock[sku]["deposito"] = qty
+            skus_tn_pret.add(sku)
         core.tnlog(f"  ✓ {len(products)} productos TN Pret procesados")
 
     # SKUs que solo existen en el catálogo de TN Lavan (no están en TN Pret)
@@ -66,13 +87,11 @@ def fetch_stock(config):
         core.tnlog("→ TN Lavan: bajando stock de depósito para SKUs exclusivos...")
         products = core.tn_get_products(tn_lavan_cfg)
         nuevos = 0
-        for prod in products:
-            for variant in prod.get("variants", []):
-                sku = str(variant.get("sku") or variant.get("id") or "")
-                if not sku or sku in skus_tn_pret:
-                    continue
-                stock[sku]["deposito"] += variant.get("stock", 0) or 0
-                nuevos += 1
+        for sku, qty in _stock_deposito_por_sku(products, "TN Lavan").items():
+            if sku in skus_tn_pret:
+                continue
+            stock[sku]["deposito"] = qty
+            nuevos += 1
         core.tnlog(f"  ✓ {nuevos} SKUs exclusivos de TN Lavan sumados al depósito")
 
     # ── Full: ML Pret y ML Lavan, separados ──
