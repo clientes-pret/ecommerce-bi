@@ -104,6 +104,7 @@
       <option value="sugerido" selected>Ordenar: sugerido a reponer</option>
       <option value="ganancia">Ordenar: mayor ganancia 60d</option>
       <option value="revenue">Ordenar: mayor revenue 60d</option>
+      <option value="stock">Ordenar: mayor stock (depósito + Full)</option>
     </select>
     <label class="chk"><input type="checkbox" id="ocultarSolicitados" checked> Ocultar ya solicitados</label>
     <button class="secondary" id="btnExcluirEstrella" aria-pressed="false" title="Oculta del tablero los productos de los grupos estrella (los definidos en ⭐ Productos estrella)">⭐ Excluir productos estrella</button>
@@ -374,7 +375,15 @@ const ORDENADORES = {
   },
   ganancia: (a, b) => (b.ganancia_60d || 0) - (a.ganancia_60d || 0),
   revenue: (a, b) => (b.revenue_60d || 0) - (a.revenue_60d || 0),
+  // Pedido del usuario (2026-10-07): ver primero lo que más mercadería tiene
+  // parada. La suma depósito + Full es solo la CLAVE DE ORDEN — las columnas
+  // y las sugerencias siguen separadas por canal (ver "Decisiones de diseño").
+  stock: (a, b) => stockTotal(b) - stockTotal(a),
 };
+
+function stockTotal(p) {
+  return Object.values(DESTINOS).reduce((s, d) => s + (d.stock(p) || 0), 0);
+}
 
 function renderCategorias() {
   const sel = document.getElementById("filtroCategoria");
