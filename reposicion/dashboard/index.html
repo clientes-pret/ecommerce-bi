@@ -59,6 +59,12 @@
   .estrella-chip { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 6px 14px; }
   .estrella-chip.activo { background: var(--accent); border-color: var(--accent); }
   #btnExcluirEstrella[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .centro-comando { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 14px; }
+  .cc-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+  .cc-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .cc-valor { font-size: 38px; font-weight: 700; line-height: 1.15; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .cc-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .cc-nota { font-size: 12px; color: var(--muted); margin-top: 8px; }
   .estrella-resumen { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
   .estrella-resumen b { color: var(--text); font-size: 15px; margin-left: 4px; }
   #panelAgregarEstrella { display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-top: 12px; max-width: 760px; }
@@ -75,6 +81,8 @@
   <div id="ultimaActualizacion" class="muted" style="margin:2px 0 8px;"></div>
   <div id="barraEstrella">
     <div class="estrella-chips" id="estrellaChips"></div>
+    <div class="centro-comando" id="centroComando"></div>
+    <div class="cc-nota" id="centroComandoNota"></div>
     <div class="estrella-resumen" id="estrellaResumen"></div>
     <div id="panelAgregarEstrella">
       <strong>⭐ Nuevo grupo estrella</strong>
@@ -769,24 +777,90 @@ function renderBarraEstrella(rows) {
     chips.appendChild(btnQuitar);
   }
 
+  renderCentroComando();
+
   const resumen = document.getElementById("estrellaResumen");
   if (!GRUPOS_ESTRELLA.length) {
     resumen.textContent = "Todavía no marcaste ningún grupo estrella — tocá “＋ Agregar grupo”.";
     return;
   }
+  // El stock vive arriba, en el centro de comando (del grupo completo); acá
+  // quedan solo los números que sí dependen de los filtros de la tabla.
   const etq = etiquetaCobertura();
   resumen.innerHTML = `
-    <span>Variantes<b>${rows.length}</b></span>
-    <span>Stock depósito<b>${fmtNum(sumar(rows, (p) => DESTINOS.deposito.stock(p)))}</b></span>
-    <span>Stock Full<b>${fmtNum(sumar(rows, (p) => DESTINOS.full_pret.stock(p)))}</b></span>
+    <span>Variantes en la tabla<b>${rows.length}</b></span>
     <span>Reponer Depósito${etq}<b>${fmtNum(sumar(rows, (p) => p.a_reponer_deposito))}</b></span>
     <span>Reponer Full${etq}<b>${fmtNum(sumar(rows, (p) => p.a_reponer_full_pret))}</b></span>`;
+}
+
+// ─── Centro de comando ──────────────────────────────────────────────────────
+// 4 métricas del grupo seleccionado (o de todos los grupos): ventas 7 y 30 días
+// y stock restante de depósito y de Full. Siempre del grupo COMPLETO — no
+// cambian con los filtros de alerta/proveedor/búsqueda de la tabla de abajo.
+// Las ventas salen de /ventas-estrella (suma por prefijo en el servidor, así
+// que un grupo nuevo entra solo); el stock, de los productos ya cargados.
+
+let VENTAS_ESTRELLA = null; // null = cargando · {error} = falló · {total, grupos, ...} = ok
+
+async function cargarVentasEstrella() {
+  try {
+    VENTAS_ESTRELLA = await apiFetch("/ventas-estrella");
+  } catch (e) {
+    VENTAS_ESTRELLA = { error: e.message };
+  }
+  renderCentroComando();
+}
+
+function renderCentroComando() {
+  const cont = document.getElementById("centroComando");
+  const nota = document.getElementById("centroComandoNota");
+  if (!MODO_ESTRELLA) return;
+  if (!GRUPOS_ESTRELLA.length) { cont.innerHTML = ""; nota.textContent = ""; return; }
+
+  const grupo = GRUPOS_ESTRELLA.find((g) => g.prefijo === grupoActivo);
+  const grupos = grupo ? [grupo] : GRUPOS_ESTRELLA;
+  const delGrupo = PRODUCTOS.filter((p) => grupos.some((g) => enGrupo(p, g)));
+  // Un SKU que no aparece en el relevamiento de stock más reciente (ej. se
+  // pausó la publicación Full) conserva en la API el número de la última vez
+  // que sí apareció — días o semanas atrás. Para no sumar stock que ya no
+  // existe, el centro de comando cuenta solo los del relevamiento más nuevo.
+  const dia = (p) => (p.stock_actualizado_at || "").slice(0, 10);
+  const ultimoDia = PRODUCTOS.reduce((m, p) => (dia(p) > m ? dia(p) : m), "");
+  const variantes = delGrupo.filter((p) => dia(p) === ultimoDia);
+  const sinRelevamiento = delGrupo.length - variantes.length;
+  const ambito = grupo ? grupo.nombre : `Todos los grupos`;
+
+  const v = VENTAS_ESTRELLA;
+  const ok = v && !v.error;
+  const fuente = ok ? (grupo ? v.grupos.find((x) => x.prefijo === grupo.prefijo) : v.total) : null;
+  const ventas = (campo) => (fuente ? fmtNum(fuente[campo] || 0) : (v && v.error ? "—" : "…"));
+
+  const stockDep = sumar(variantes, (p) => DESTINOS.deposito.stock(p));
+  const stockFull = sumar(variantes, (p) => DESTINOS.full_pret.stock(p));
+  const enCero = (d) => variantes.filter((p) => (d.stock(p) || 0) === 0).length;
+  const dd = (iso) => (iso ? fmtDate(iso).slice(0, 5) : "");
+  const rango = (desde) => (ok && desde ? `${dd(desde)} al ${dd(v.hasta)}` : "");
+
+  const card = (label, valor, sub) =>
+    `<div class="cc-card"><div class="cc-label">${label}</div><div class="cc-valor">${valor}</div><div class="cc-sub">${sub}</div></div>`;
+  cont.innerHTML =
+    card("Ventas · últimos 7 días", ventas("u7"), `unidades · ${rango(v && v.desde7) || "los 4 canales"}`) +
+    card("Ventas · últimos 30 días", ventas("u30"), `unidades · ${rango(v && v.desde30) || "los 4 canales"}`) +
+    card("Stock restante · depósito", fmtNum(stockDep), `unidades · ${enCero(DESTINOS.deposito)} de ${variantes.length} variantes en 0`) +
+    card("Stock restante · Full", fmtNum(stockFull), `unidades (Full Pret) · ${enCero(DESTINOS.full_pret)} de ${variantes.length} variantes en 0`);
+
+  let texto = `${ambito} · ${delGrupo.length} variantes.`;
+  if (sinRelevamiento) texto += ` ${sinRelevamiento} no figuran en el último relevamiento de stock y no se suman.`;
+  if (v && v.error) texto += " No se pudieron cargar las ventas.";
+  else if (ok && v.datos_hasta) texto += ` Ventas cargadas hasta el ${fmtDate(v.datos_hasta)} (sin canceladas).`;
+  nota.textContent = texto;
 }
 
 async function guardarGrupos(lista) {
   GRUPOS_ESTRELLA = await apiFetch("/grupos-estrella", {
     method: "POST", body: JSON.stringify({ grupos: lista }),
   });
+  cargarVentasEstrella(); // grupo nuevo o quitado: recalcula las ventas (sin esperar)
 }
 
 async function quitarGrupoActivo() {
@@ -971,6 +1045,7 @@ async function cargar() {
     renderProveedorMasivoSelect();
     renderCategorias();
     render();
+    if (MODO_ESTRELLA) cargarVentasEstrella(); // sin esperar: la tabla no depende de esto
     if (excluirEstrella) actualizarBotonExcluirEstrella(); // recuenta con el catálogo recién cargado
     actualizarUltimaActualizacion();
     actualizarBarraCarrito();

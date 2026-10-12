@@ -390,6 +390,71 @@ async function putGruposEstrella(req: Request) {
   return json(grupos);
 }
 
+// Ventas (unidades, los 4 canales, sin canceladas) de los últimos 7 y 30 días de
+// cada grupo estrella y del total. Un SKU que cae en más de un grupo suma una
+// sola vez en el total. La ventana cuenta "hoy" (hora Argentina) como día 1.
+async function getVentasEstrella() {
+  const { data: cfg, error: errCfg } = await supabase.from("repo_settings")
+    .select("valor").eq("clave", CLAVE_GRUPOS_ESTRELLA).maybeSingle();
+  if (errCfg) throw errCfg;
+  const grupos: { prefijo: string; nombre: string }[] = Array.isArray(cfg?.valor) ? cfg.valor : [];
+
+  const hoyAR = new Date(Date.now() - 3 * 3600 * 1000);
+  const diaISO = (atras: number) => new Date(hoyAR.getTime() - atras * 86400000).toISOString().slice(0, 10);
+  const desde7 = diaISO(6);
+  const desde30 = diaISO(29);
+
+  const porGrupo = new Map<string, { u7: number; u30: number }>(grupos.map((g) => [g.prefijo, { u7: 0, u30: 0 }]));
+  const total = { u7: 0, u30: 0 };
+  let datosHasta: string | null = null;
+
+  // Un pedido por grupo (LIKE 'PREFIJO%'), paginado con orden fijo por id — sin
+  // orden Postgres puede repetir/saltear filas entre páginas. Las filas se
+  // juntan por id, así que una fila que matchea dos grupos no se duplica.
+  const filas = new Map<number, { sku: string; cantidad: number; fecha: string }>();
+  await Promise.all(grupos.map(async (g) => {
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase.from("repo_ventas_items")
+        .select("id, sku, cantidad, fecha")
+        .eq("estado", "activa")
+        .gte("fecha", desde30)
+        .like("sku", `${g.prefijo}%`)
+        .order("id", { ascending: true })
+        .range(from, from + 999);
+      if (error) throw error;
+      for (const r of data ?? []) filas.set(r.id as number, r as { sku: string; cantidad: number; fecha: string });
+      if (!data || data.length < 1000) break;
+      from += 1000;
+    }
+  }));
+
+  for (const r of filas.values()) {
+    const sku = String(r.sku).toUpperCase();
+    const q = Number(r.cantidad) || 0;
+    const en7 = r.fecha >= desde7;
+    let enAlguno = false;
+    for (const g of grupos) {
+      // LIKE trata "_" y "%" como comodines: acá se confirma el prefijo exacto.
+      if (!sku.startsWith(g.prefijo)) continue;
+      enAlguno = true;
+      const acc = porGrupo.get(g.prefijo)!;
+      acc.u30 += q;
+      if (en7) acc.u7 += q;
+    }
+    if (!enAlguno) continue;
+    total.u30 += q;
+    if (en7) total.u7 += q;
+    if (!datosHasta || r.fecha > datosHasta) datosHasta = r.fecha;
+  }
+
+  return json({
+    desde7, desde30, hasta: diaISO(0), datos_hasta: datosHasta,
+    total,
+    grupos: grupos.map((g) => ({ prefijo: g.prefijo, nombre: g.nombre, ...porGrupo.get(g.prefijo)! })),
+  });
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -410,6 +475,7 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && path === "/stock-historial") return await getStockHistorial(url);
     if (req.method === "GET" && path === "/grupos-estrella") return await getGruposEstrella();
     if (req.method === "POST" && path === "/grupos-estrella") return await putGruposEstrella(req);
+    if (req.method === "GET" && path === "/ventas-estrella") return await getVentasEstrella();
 
     if (req.method === "POST" && parts[0] === "productos" && parts[2] === "proveedor") {
       return await postProveedor(decodeURIComponent(parts[1]), req);
