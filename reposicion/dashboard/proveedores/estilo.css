@@ -72,3 +72,7 @@ td.r, th.r { text-align: right; } tr.click { cursor: pointer; } tr.click:hover t
 tr.diff td { background: var(--warn-bg); } tr.bad-row td { background: var(--bad-bg); }
 .diff { background: var(--warn-bg); } .bad-row { background: var(--bad-bg); }
 @media (max-width: 600px) { .wrap { padding: 12px; } .cc-valor, .kpi .v { font-size: 26px; } }
+
+.chart rect.hit { fill: transparent; cursor: pointer; } .chart rect.hit:hover { fill: rgba(255,255,255,.07); }
+#tip { position: fixed; display: none; z-index: 50; pointer-events: none; background: #0b0d11; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.5); white-space: nowrap; }
+#tip b { display: block; margin-bottom: 2px; text-transform: capitalize; } #tip div { font-variant-numeric: tabular-nums; }

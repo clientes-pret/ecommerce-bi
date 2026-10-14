@@ -12,12 +12,12 @@
 <div class="wrap" id="app"></div>
 <script type="module">
 import { sb, $, $$, esc, guard, nav, qs, peso, peso0, fecha, fechaHora, chipEstado, hoy } from './app.js';
-import { analizar, lecturas, graficoBarras, graficoSaldo, barraAging, semaforo, diasEntre } from './analisis.js';
+import { analizar, activarTooltips, mesesAtras, lecturas, graficoBarras, graficoSaldo, barraAging, semaforo, diasEntre } from './analisis.js';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'prov');
 const id = qs('id'), H = hoy(), PAG = 100;
 const TIPO = { comprobante: 'Comprobante', nota_credito: 'Nota de crédito', nota_debito: 'Nota de débito', pago: 'Pago', ajuste: 'Ajuste', saldo_inicial: 'Saldo inicial', otro: 'Otro' };
-let prov, movs = [], recs = [], items = [], a, tab = 'resumen', solo = 'todo', mostrar = PAG;
+let anio = 'ult', prov, movs = [], recs = [], items = [], a, tab = 'resumen', solo = 'todo', mostrar = PAG;
 
 async function cargarMovs() {
   let todo = [], desde = 0;
@@ -39,7 +39,18 @@ if (!prov) { $('#app').innerHTML = '<p>Proveedor no encontrado.</p>'; throw new 
 function kpi(l, v, sub, cls = '', md = true) { return `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor ${md ? 'md' : ''} num ${cls}">${v}</div><div class="cc-sub">${sub || '&nbsp;'}</div></div>`; }
 const hace = (d) => (d === 0 ? 'hoy' : d === 1 ? 'ayer' : `hace ${d} días`);
 
+function periodo() {
+  if (anio === 'ult') return a.mensual;
+  const hasta = anio === H.slice(0, 4) ? H.slice(5, 7) : '12';
+  return analizar(movs, H, Array.from({ length: Number(hasta) }, (_, i) => `${anio}-${String(i + 1).padStart(2, '0')}`)).mensual;
+}
+function selAnio() {
+  const y0 = Number((movs[0]?.fecha || H).slice(0, 4)), y1 = Number(H.slice(0, 4)), op = [['ult', 'Últimos 18 meses']];
+  for (let y = y1; y >= y0; y--) op.push([String(y), String(y)]);
+  return `<select id="anio" style="width:auto;min-height:30px;padding:2px 8px;float:right">${op.map(([v, t]) => `<option value="${v}" ${anio === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+}
 function resumen() {
+  const per = periodo();
   const up = a.ultimoPago, ui = a.ultimoIngreso, pr = a.cheques[0];
   const rc = recs.filter((r) => r.estado !== 'anulada'), conDif = rc.filter((r) => r.estado === 'con_diferencia').length;
   const top = Object.values(items.reduce((o, i) => { const k = i.sku || i.descripcion || '?'; (o[k] ||= { k, n: 0 }).n += i.cant_contada; return o; }, {})).sort((x, y) => y.n - x.n).slice(0, 8);
@@ -59,8 +70,8 @@ function resumen() {
     <div class="card"><h2 style="margin-top:0">Antigüedad de la deuda</h2>${barraAging(a)}
       <div class="cc-nota">Se asume que cada pago cancela las facturas más viejas primero.${a.desde ? ` Cuenta abierta desde ${fecha(a.desde)}.` : ''}</div></div>
   </div>
-  <div class="card chart"><h2 style="margin-top:0">Facturado vs. pagado por mes</h2><div class="leyenda"><span><i style="background:#4f8cff"></i>Facturado</span><span><i style="background:#6fcf97"></i>Pagado</span></div>${graficoBarras(a.mensual)}</div>
-  <div class="card chart"><h2 style="margin-top:0">Evolución del saldo</h2>${graficoSaldo(a.mensual)}</div>
+  <div class="card chart">${selAnio()}<h2 style="margin-top:0">Facturado vs. pagado por mes</h2><div class="leyenda"><span><i style="background:#4f8cff"></i>Facturado</span><span><i style="background:#6fcf97"></i>Pagado</span></div>${graficoBarras(per)}</div>
+  <div class="card chart"><h2 style="margin-top:0">Evolución del saldo</h2>${graficoSaldo(per)}</div>
   <div class="grid dos">
     <div class="card"><h2 style="margin-top:0">Mercadería recibida en depósito</h2>${rc.length ? `<div class="row wrapRow" style="gap:24px;margin-bottom:8px"><div><div class="cc-label">Última</div><b>${fecha(rc[0].fecha)}</b></div><div><div class="cc-label">Recepciones</div><b>${rc.length}</b></div><div><div class="cc-label">Con diferencia</div><b class="${conDif ? 'bad-t' : ''}">${conDif}</b></div></div>
       <a href="#" data-tab="rec">Ver todas →</a>` : '<p class="muted">Todavía no hay recepciones cargadas desde el depósito.</p>'}</div>
@@ -97,11 +108,13 @@ function pintar() {
   <div class="tabs">${[['resumen', 'Centro de comando'], ['cc', 'Cuenta corriente'], ['rec', 'Mercadería recibida']].map(([k, t]) => `<button class="btn sm ${tab === k ? 'primary' : ''}" data-tab="${k}">${t}</button>`).join('')}</div>
   ${tab === 'resumen' ? resumen() : tab === 'cc' ? cuenta() : mercaderia()}`;
   $$('[data-tab]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); tab = b.dataset.tab; pintar(); scrollTo(0, 0); }));
+  const an = $('#anio'); if (an) an.onchange = () => { anio = an.value; pintar(); };
   const sel = $('#solo'); if (sel) sel.onchange = () => { solo = sel.value; mostrar = PAG; pintar(); };
   const mas = $('#mas'); if (mas) mas.onclick = () => { mostrar += PAG; pintar(); };
   $('#activo').onclick = async () => { await sb.from('cc_proveedores').update({ activo: !prov.activo }).eq('id', id); prov.activo = !prov.activo; pintar(); };
   $$('[data-cobrado]').forEach((b) => (b.onclick = async () => { await sb.from('cc_movimientos').update({ cheque_cobrado: true }).eq('id', b.dataset.cobrado); await cargarMovs(); pintar(); }));
 }
+activarTooltips();
 pintar();
 </script>
 </body>
