@@ -6,13 +6,13 @@
   <title>Proveedor · Proveedores</title>
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#0f1115">
-  <link rel="stylesheet" href="estilo.css">
+  <link rel="stylesheet" href="estilo.css?v=3">
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
 import { sb, $, $$, esc, guard, nav, qs, peso, peso0, fecha, fechaHora, chipEstado, hoy } from './app.js';
-import { analizar, activarTooltips, mesesAtras, lecturas, graficoBarras, graficoSaldo, barraAging, semaforo, diasEntre } from './analisis.js';
+import { analizar, activarTooltips, mesesAtras, lecturas, graficoBarras, graficoSaldo, barraAging, semaforo, diasEntre } from './analisis.js?v=3';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'prov');
 const id = qs('id'), H = hoy(), PAG = 100;
