@@ -5,32 +5,49 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Proveedores · Proveedores</title>
   <link rel="icon" href="icon-192.png">
-  <meta name="theme-color" content="#1f4d4a">
+  <meta name="theme-color" content="#0f1115">
   <link rel="stylesheet" href="estilo.css">
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, esc, guard, nav, peso0, fecha } from './app.js';
+import { sb, $, esc, guard, nav, peso0, fecha, hoy } from './app.js';
+import { diasEntre, semaforo } from './analisis.js';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'prov');
+const H = hoy();
 const { data } = await sb.from('cc_saldos').select('*');
-const rows = data || [];
-$('#app').innerHTML = `<h1>Proveedores</h1>
-<div class="row wrapRow" style="margin:12px 0"><input id="q" style="max-width:320px" placeholder="Buscar proveedor…">
-<label style="margin:0"><input type="checkbox" id="conSaldo" checked style="width:auto;min-height:0"> Solo con saldo</label>
-<label style="margin:0"><input type="checkbox" id="inact" style="width:auto;min-height:0"> Incluir inactivos</label></div>
-<div class="card tablewrap"><table><thead><tr><th>Proveedor</th><th class="r">Saldo</th><th class="r">Cheques no cobrados</th><th>Último pago</th><th>Último comprobante</th></tr></thead><tbody id="tb"></tbody></table></div>`;
+const rows = (data || []).map((r) => ({ ...r, saldo: Number(r.saldo), chq: Number(r.cheques_no_cobrados),
+  dPago: r.ultimo_pago ? diasEntre(r.ultimo_pago, H) : null, dIng: r.ultimo_comprobante ? diasEntre(r.ultimo_comprobante, H) : null }));
+let orden = 'saldo', dir = -1;
+const conSaldo = rows.filter((r) => r.saldo > 1);
+$('#app').innerHTML = `<h1>Proveedores</h1><div class="muted">Elegí un proveedor para ver su centro de comando.</div>
+<div class="centro-comando">
+  <div class="cc-card"><div class="cc-label">Proveedores con deuda</div><div class="cc-valor">${conSaldo.length}</div><div class="cc-sub">de ${rows.filter((r) => r.activo).length} activos</div></div>
+  <div class="cc-card"><div class="cc-label">Saldo total</div><div class="cc-valor md num">${peso0(conSaldo.reduce((a, r) => a + r.saldo, 0))}</div><div class="cc-sub">solo cuentas con deuda</div></div>
+  <div class="cc-card"><div class="cc-label">Sin pagar hace +60 días</div><div class="cc-valor ${conSaldo.filter((r) => (r.dPago ?? 999) > 60).length ? 'warn-t' : ''}">${conSaldo.filter((r) => (r.dPago ?? 999) > 60).length}</div><div class="cc-sub">con deuda pendiente</div></div>
+  <div class="cc-card"><div class="cc-label">Cheques no cobrados</div><div class="cc-valor md num">${peso0(rows.reduce((a, r) => a + r.chq, 0))}</div></div>
+</div>
+<div class="row wrapRow" style="margin:12px 0"><input id="q" style="max-width:340px" placeholder="Buscar proveedor… (Enter abre el primero)" autofocus>
+<label style="margin:0"><input type="checkbox" id="conSaldo" checked> Solo con saldo</label>
+<label style="margin:0"><input type="checkbox" id="inact"> Incluir inactivos</label></div>
+<div class="card tablewrap"><table><thead><tr><th class="ord" data-o="nombre">Proveedor</th><th class="r ord" data-o="saldo">Saldo</th><th>Estado</th><th class="ord" data-o="dPago">Último pago</th><th class="ord" data-o="dIng">Último ingreso</th><th class="r ord" data-o="chq">Cheques s/cobrar</th></tr></thead><tbody id="tb"></tbody></table></div>`;
+let vista = [];
 function pintar() {
   const q = $('#q').value.toLowerCase(), cs = $('#conSaldo').checked, ia = $('#inact').checked;
-  const f = rows.filter((r) => r.nombre.toLowerCase().includes(q) && (!cs || Math.abs(Number(r.saldo)) >= 1 || Number(r.cheques_no_cobrados) > 0) && (ia || r.activo))
-    .sort((a, b) => Number(b.saldo) - Number(a.saldo));
-  const total = f.reduce((a, r) => a + Number(r.saldo), 0);
-  $('#tb').innerHTML = f.map((r) => `<tr class="click" onclick="location.href='proveedor.html?id=${r.proveedor_id}'"><td><b>${esc(r.nombre)}</b></td>
-    <td class="r num" style="${Number(r.saldo) < -1 ? 'color:var(--ok)' : ''}">${peso0(r.saldo)}</td><td class="r num">${Number(r.cheques_no_cobrados) ? peso0(r.cheques_no_cobrados) : ''}</td>
-    <td>${fecha(r.ultimo_pago)}</td><td>${fecha(r.ultimo_comprobante)}</td></tr>`).join('') + `<tr><td><b>Total</b></td><td class="r num"><b>${peso0(total)}</b></td><td colspan="3"></td></tr>`;
+  vista = rows.filter((r) => r.nombre.toLowerCase().includes(q) && (!cs || Math.abs(r.saldo) >= 1 || r.chq > 0) && (ia || r.activo));
+  const k = (r) => (orden === 'nombre' ? r.nombre.toLowerCase() : r[orden] ?? (dir > 0 ? Infinity : -Infinity));
+  vista.sort((a, b) => (k(a) < k(b) ? -1 : k(a) > k(b) ? 1 : 0) * dir);
+  const ago = (d) => (d == null ? '' : d === 0 ? 'hoy' : `hace ${d} d`);
+  $('#tb').innerHTML = vista.map((r) => { const [t, c] = semaforo(r.saldo, r.dPago);
+    return `<tr class="click" onclick="location.href='proveedor.html?id=${r.proveedor_id}'"><td><b>${esc(r.nombre)}</b>${r.activo ? '' : ' <span class="chip">inactivo</span>'}</td>
+    <td class="r num" style="${r.saldo < -1 ? 'color:var(--ok)' : ''}">${peso0(r.saldo)}</td><td><span class="chip ${c}">${t}</span></td>
+    <td>${fecha(r.ultimo_pago)} <span class="muted small">${ago(r.dPago)}</span></td><td>${fecha(r.ultimo_comprobante)} <span class="muted small">${ago(r.dIng)}</span></td>
+    <td class="r num">${r.chq ? peso0(r.chq) : ''}</td></tr>`; }).join('') || '<tr><td colspan="6" class="muted">Sin resultados.</td></tr>';
 }
 ['q', 'conSaldo', 'inact'].forEach((id) => ($('#' + id).oninput = pintar));
+$('#q').onkeydown = (e) => { if (e.key === 'Enter' && vista[0]) location.href = 'proveedor.html?id=' + vista[0].proveedor_id; };
+document.querySelectorAll('th.ord').forEach((th) => (th.onclick = () => { const o = th.dataset.o; dir = orden === o ? -dir : (o === 'nombre' ? 1 : o === 'dPago' || o === 'dIng' ? -1 : -1); orden = o; pintar(); }));
 pintar();
 </script>
 </body>

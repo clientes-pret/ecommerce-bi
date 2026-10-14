@@ -5,32 +5,41 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Inicio · Proveedores</title>
   <link rel="icon" href="icon-192.png">
-  <meta name="theme-color" content="#1f4d4a">
+  <meta name="theme-color" content="#0f1115">
   <link rel="stylesheet" href="estilo.css">
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, esc, guard, nav, peso0, fecha, fechaHora } from './app.js';
+import { sb, $, esc, guard, nav, peso0, fecha, fechaHora, hoy } from './app.js';
+import { diasEntre, semaforo } from './analisis.js';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'inicio');
 
 const [{ data: s }, { data: pend }, { data: chq }, { data: ult }] = await Promise.all([
-  sb.from('cc_saldos').select('saldo,cheques_no_cobrados'),
+  sb.from('cc_saldos').select('proveedor_id,nombre,saldo,cheques_no_cobrados,ultimo_pago'),
   sb.from('cc_recepciones_resumen').select('id,proveedor,fecha,nro_remito,unidades_contadas,recibido_completo').eq('estado', 'pendiente_control').order('fecha'),
   sb.from('cc_movimientos').select('id,proveedor_id,pago,cheque_nro,cheque_fecha_cobro,cc_proveedores(nombre)').eq('medio_pago', 'cheque').eq('cheque_cobrado', false).order('cheque_fecha_cobro').limit(15),
   sb.from('cc_movimientos').select('id,fecha,detalle,ingreso,pago,proveedor_id,cc_proveedores(nombre)').order('id', { ascending: false }).limit(12),
 ]);
 const saldo = (s || []).reduce((a, x) => a + Number(x.saldo), 0);
 const cheques = (s || []).reduce((a, x) => a + Number(x.cheques_no_cobrados), 0);
+const H = hoy();
+const deudores = (s || []).filter((x) => Number(x.saldo) > 1).map((x) => ({ ...x, d: x.ultimo_pago ? diasEntre(x.ultimo_pago, H) : null }));
+const top = deudores.slice().sort((a, b) => Number(b.saldo) - Number(a.saldo)).slice(0, 8);
+const olvidados = deudores.filter((x) => (x.d ?? 999) > 60).sort((a, b) => Number(b.saldo) - Number(a.saldo)).slice(0, 8);
+const filaP = (x) => { const [t, c] = semaforo(Number(x.saldo), x.d); return `<tr class="click" onclick="location.href='proveedor.html?id=${x.proveedor_id}'"><td><b>${esc(x.nombre)}</b></td><td class="r num">${peso0(x.saldo)}</td><td><span class="chip ${c}">${t}</span></td></tr>`; };
 const link = (m) => `<a href="proveedor.html?id=${m.proveedor_id}">${esc(m.cc_proveedores?.nombre)}</a>`;
 
 $('#app').innerHTML = `<h1>Inicio</h1>
-<div class="grid kpis" style="margin:12px 0">
-  <div class="card kpi"><div class="l">Saldo total con proveedores</div><div class="v num">${peso0(saldo)}</div></div>
-  <div class="card kpi"><div class="l">Cheques emitidos no cobrados</div><div class="v num">${peso0(cheques)}</div></div>
-  <div class="card kpi"><div class="l">Recepciones esperando control</div><div class="v">${(pend || []).length}</div></div>
+<div class="centro-comando">
+  <div class="cc-card"><div class="cc-label">Saldo total con proveedores</div><div class="cc-valor md num">${peso0(saldo)}</div><div class="cc-sub">${deudores.length} proveedores con deuda</div></div>
+  <div class="cc-card"><div class="cc-label">Cheques emitidos no cobrados</div><div class="cc-valor md num">${peso0(cheques)}</div></div>
+  <div class="cc-card"><div class="cc-label">Recepciones esperando control</div><div class="cc-valor">${(pend || []).length}</div></div>
+  <div class="cc-card"><div class="cc-label">Deuda sin pagar hace +60 días</div><div class="cc-valor ${olvidados.length ? 'warn-t' : ''}">${olvidados.length}</div><div class="cc-sub">proveedores</div></div>
 </div>
+<div class="grid dos"><div><h2>Mayores deudas</h2><div class="card tablewrap"><table><tbody>${top.map(filaP).join('')}</tbody></table></div></div>
+<div><h2>Atención: hace tiempo sin pagar</h2><div class="card tablewrap">${olvidados.length ? `<table><tbody>${olvidados.map(filaP).join('')}</tbody></table>` : '<p class="muted" style="padding:8px">Ninguno 👌</p>'}</div></div></div>
 <h2>Mercadería recibida para controlar</h2>
 <div class="card tablewrap">${(pend || []).length ? `<table><thead><tr><th>Fecha</th><th>Proveedor</th><th>Remito</th><th class="r">Unidades</th><th>Mati dice</th></tr></thead><tbody>
 ${pend.map((r) => `<tr class="click" onclick="location.href='recepcion.html?id=${r.id}'"><td>${fechaHora(r.fecha)}</td><td><b>${esc(r.proveedor)}</b></td><td>${esc(r.nro_remito || 's/n')}</td><td class="r num">${r.unidades_contadas}</td><td>${r.recibido_completo ? '<span class="chip ok">Completo</span>' : '<span class="chip bad">Faltante</span>'}</td></tr>`).join('')}

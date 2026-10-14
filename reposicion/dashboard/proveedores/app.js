@@ -47,7 +47,7 @@ export function nav(perfil, activa) {
   const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}">${txt}</a>`;
   const el = document.createElement('nav');
   el.className = 'nav';
-  el.innerHTML = it('admin.html', 'Inicio', 'inicio') + it('proveedores.html', 'Proveedores', 'prov') + it('nuevo.html', '＋ Registrar', 'nuevo') +
+  el.innerHTML = '<img src="../assets/logo-white.png" alt="" onerror="this.remove()">' + it('admin.html', 'Inicio', 'inicio') + it('proveedores.html', 'Proveedores', 'prov') + it('nuevo.html', '＋ Registrar', 'nuevo') +
     `<a href="recibir.html">Recepción (celu)</a><span class="sp"></span><span class="muted small">${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a>`;
   document.body.prepend(el);
   $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
