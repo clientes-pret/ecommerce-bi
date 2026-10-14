@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registrar · Proveedores</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#1f4d4a">
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, esc, guard, nav, qs, hoy, parseMonto } from './app.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'nuevo');
+const { data: provs } = await sb.from('cc_proveedores').select('id,nombre').order('nombre');
+const tipo0 = qs('tipo') || 'pago';
+$('#app').innerHTML = `<form class="card" id="f" style="max-width:560px"><h1>Registrar movimiento</h1>
+<label>Proveedor</label><select id="prov" required><option value="">Elegir…</option>${(provs || []).map((p) => `<option value="${p.id}" ${qs('proveedor') == p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select>
+<label>Qué es</label><select id="tipo">${[['pago', 'Pago'], ['comprobante', 'Factura / comprobante'], ['nota_credito', 'Nota de crédito'], ['nota_debito', 'Nota de débito'], ['ajuste', 'Ajuste']].map(([v, t]) => `<option value="${v}" ${v === tipo0 ? 'selected' : ''}>${t}</option>`).join('')}</select>
+<div id="ajuste" hidden><label>El ajuste…</label><select id="suma"><option value="resta">Baja lo que debemos</option><option value="suma">Aumenta lo que debemos</option></select></div>
+<label>Fecha</label><input type="date" id="fecha" value="${hoy()}" required>
+<label id="lnum">Número de comprobante</label><input id="num">
+<label>Importe</label><input id="imp" inputmode="decimal" placeholder="1.250.000,00" required>
+<div id="pago" hidden><label>Medio de pago</label><select id="medio"><option value="transferencia">Transferencia</option><option value="cheque">Cheque</option><option value="efectivo">Efectivo</option><option value="otro">Otro</option></select>
+<div id="chq" hidden><label>N° de cheque</label><input id="chqnro"><label>Fecha de cobro</label><input type="date" id="chqfec"></div></div>
+<label>Nota (opcional)</label><input id="nota"><p class="err" id="err"></p><button class="btn primary big" id="ok" style="margin-top:16px">Guardar</button></form>`;
+const ajustar = () => {
+  const t = $('#tipo').value;
+  $('#ajuste').hidden = t !== 'ajuste'; $('#pago').hidden = t !== 'pago'; $('#chq').hidden = !(t === 'pago' && $('#medio').value === 'cheque');
+  $('#lnum').textContent = t === 'pago' ? 'Referencia (opcional)' : 'Número de comprobante';
+};
+$('#tipo').onchange = $('#medio').onchange = ajustar; ajustar();
+$('#f').onsubmit = async (e) => {
+  e.preventDefault(); $('#err').textContent = ''; $('#ok').disabled = true;
+  const tipo = $('#tipo').value, monto = parseMonto($('#imp').value), prov = $('#prov').value;
+  if (!prov || !(monto > 0)) { $('#err').textContent = 'Elegí proveedor e ingresá un importe mayor a 0.'; $('#ok').disabled = false; return; }
+  const baja = tipo === 'pago' || tipo === 'nota_credito' || (tipo === 'ajuste' && $('#suma').value === 'resta');
+  const etiqueta = { pago: 'PAGO', comprobante: 'FC', nota_credito: 'NC', nota_debito: 'ND', ajuste: 'AJUSTE' }[tipo];
+  const num = $('#num').value.trim();
+  const row = { proveedor_id: +prov, fecha: $('#fecha').value, tipo, detalle: [etiqueta, num].filter(Boolean).join(' '), numero: num || null, ingreso: baja ? 0 : monto, pago: baja ? monto : 0, nota: $('#nota').value.trim() || null, origen: 'app' };
+  if (tipo === 'pago') {
+    row.medio_pago = $('#medio').value;
+    if (row.medio_pago === 'cheque') { row.cheque_nro = $('#chqnro').value.trim() || null; row.cheque_fecha_cobro = $('#chqfec').value || null; row.cheque_cobrado = false; }
+  }
+  const { error } = await sb.from('cc_movimientos').insert(row);
+  if (error) { $('#err').textContent = error.message; $('#ok').disabled = false; return; }
+  $('#ok').textContent = 'Guardado ✓'; setTimeout(() => (location.href = `proveedor.html?id=${prov}`), 600);
+};
+</script>
+</body>
+</html>

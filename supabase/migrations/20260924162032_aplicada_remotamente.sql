@@ -1,0 +1,2 @@
+-- Migración ya aplicada en la base remota (sin archivo local original).
+-- Este archivo vacío solo mantiene alineado el historial para que `supabase db push` funcione.

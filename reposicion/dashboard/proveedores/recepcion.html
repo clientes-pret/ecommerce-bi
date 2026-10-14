@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recepción · Proveedores</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#1f4d4a">
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, esc, guard, nav, qs, peso, fecha, fechaHora, hoy, parseMonto } from './app.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'inicio');
+const id = qs('id');
+let r, items, fotos = [], vinculados = [], candidatos = [], sel = new Set(), err = '', guardando = false;
+
+async function cargar() {
+  ({ data: r } = await sb.from('cc_recepciones_resumen').select('*').eq('id', id).maybeSingle());
+  if (!r) { $('#app').innerHTML = '<p>Recepción no encontrada.</p>'; throw new Error('404'); }
+  ({ data: items } = await sb.from('cc_recepcion_items').select('*, cc_productos(producto,color,medida)').eq('recepcion_id', id).order('id'));
+  fotos = [];
+  if (r.remito_paths?.length) { const { data } = await sb.storage.from('remitos').createSignedUrls(r.remito_paths, 3600); fotos = (data || []).map((u) => u.signedUrl).filter(Boolean); }
+  ({ data: vinculados } = await sb.from('cc_movimientos').select('*').eq('recepcion_id', id));
+  const desde = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  ({ data: candidatos } = await sb.from('cc_movimientos').select('id,fecha,detalle,ingreso').eq('proveedor_id', r.proveedor_id).is('recepcion_id', null).gt('ingreso', 0).gte('fecha', desde).order('fecha', { ascending: false }).limit(40));
+  vinculados ||= []; candidatos ||= []; items ||= [];
+}
+
+function pintar() {
+  const dif = items.filter((i) => i.cant_remito != null && i.cant_remito !== i.cant_contada).length, sinSku = items.filter((i) => !i.sku).length;
+  const cerrada = r.estado === 'controlada' || r.estado === 'con_diferencia';
+  $('#app').innerHTML = `<p class="small"><a href="admin.html">← Inicio</a></p>
+  <div class="row between wrapRow"><div><h1>${esc(r.proveedor)}</h1><div class="muted">Remito ${esc(r.nro_remito || 's/n')} · recibido ${fechaHora(r.fecha)} · ${r.bultos ?? '?'} bultos</div></div>
+    <span class="chip ${r.estado === 'controlada' ? 'ok' : r.estado === 'con_diferencia' ? 'bad' : 'warn'}">${esc(r.estado.replace('_', ' '))}</span></div>
+  ${!r.recibido_completo ? `<div class="card" style="background:var(--bad-bg);margin-top:12px"><b>Mati marcó que NO llegó todo.</b>${r.notas ? `<div>${esc(r.notas)}</div>` : ''}</div>` : ''}
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:12px">
+    <div><h2>Remito</h2><div class="card">${fotos.length ? `<div class="thumbs">${fotos.map((u, i) => `<a href="${esc(u)}" target="_blank"><img src="${esc(u)}" alt="Remito ${i + 1}" style="width:180px;height:240px"></a>`).join('')}</div>` : '<p class="muted">Sin fotos.</p>'}</div></div>
+    <div><h2>Lo que contó el depósito</h2><div class="card tablewrap"><table><thead><tr><th>SKU / ítem</th><th class="r">Remito</th><th class="r">Contado</th></tr></thead><tbody>
+      ${items.map((i) => `<tr class="${i.cant_remito != null && i.cant_remito !== i.cant_contada ? 'diff' : !i.sku ? 'bad-row' : ''}"><td><b>${esc(i.sku || 'SIN SKU')}</b>
+        <div class="small muted">${i.sku ? esc([i.cc_productos?.producto, i.cc_productos?.color, i.cc_productos?.medida].filter(Boolean).join(' · ')) : esc(i.descripcion)}${i.codigo_proveedor && i.codigo_proveedor !== i.sku ? ` (cód. prov. ${esc(i.codigo_proveedor)})` : ''}</div></td>
+        <td class="r num">${i.cant_remito ?? '—'}</td><td class="r num"><b>${i.cant_contada}</b></td></tr>`).join('')}
+      <tr><td><b>Total</b></td><td class="r num">${items.reduce((a, i) => a + (i.cant_remito || 0), 0)}</td><td class="r num"><b>${r.unidades_contadas}</b></td></tr></tbody></table>
+      ${dif || sinSku ? `<p class="small" style="margin-top:8px">${dif ? `<span class="chip warn">${dif} línea(s) difieren del remito</span> ` : ''}${sinSku ? `<span class="chip bad">${sinSku} sin SKU</span>` : ''}</p>` : ''}</div></div></div>
+  <h2>Factura y control</h2><div class="card">
+    ${vinculados.length ? `<b>Facturas vinculadas</b>${vinculados.map((v) => `<div class="row between" style="padding:6px 0"><span>${fecha(v.fecha)} · ${esc(v.detalle)}</span><b class="num">${peso(v.ingreso)}</b></div>`).join('')}` : ''}
+    ${!cerrada ? `${candidatos.length ? `<label>Vincular facturas ya cargadas en la cuenta (últimos 90 días)</label>${candidatos.map((c) => `<label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin:6px 0"><input type="checkbox" data-c="${c.id}" style="width:auto;min-height:0" ${sel.has(c.id) ? 'checked' : ''}> ${fecha(c.fecha)} · ${esc(c.detalle)} · <b class="num">${peso(c.ingreso)}</b></label>`).join('')}` : ''}
+      <label>…o cargar la factura que llegó ahora</label>
+      <div class="row wrapRow"><input id="fnum" style="max-width:220px" placeholder="N° factura (0070-00008008)"><input id="fimp" style="max-width:180px" inputmode="decimal" placeholder="Importe"><input id="ffec" style="max-width:170px" type="date" value="${hoy()}"></div>
+      <label>Nota de control</label><textarea id="nota" rows="2" placeholder="Ej.: factura dice 120 u., llegaron 118; reclamar 2.">${esc(r.notas || '')}</textarea>
+      <p class="err">${esc(err)}</p>
+      <div class="row wrapRow" style="margin-top:12px"><button class="btn primary" id="ok" ${guardando ? 'disabled' : ''}>✓ Coincide con la factura</button><button class="btn" id="dif" ${guardando ? 'disabled' : ''}>⚠ Hay diferencia</button><button class="btn danger" id="anular">Anular</button></div>`
+      : (r.notas ? `<p class="muted">Nota: ${esc(r.notas)}</p>` : '')}</div>`;
+  document.querySelectorAll('[data-c]').forEach((c) => (c.onchange = () => (c.checked ? sel.add(+c.dataset.c) : sel.delete(+c.dataset.c))));
+  if ($('#ok')) { $('#ok').onclick = () => cerrar('ok'); $('#dif').onclick = () => cerrar('con_diferencia'); $('#anular').onclick = anular; }
+}
+
+async function cerrar(resultado) {
+  err = ''; const notaVal = $('#nota').value.trim(), num = $('#fnum').value.trim(), imp = $('#fimp').value, fec = $('#ffec').value;
+  guardando = true; pintar();
+  try {
+    const uid = (await sb.auth.getSession()).data.session.user.id;
+    const ids = [...sel];
+    if (num && imp) {
+      const monto = parseMonto(imp);
+      if (!(monto > 0)) throw new Error('El importe de la factura no es válido');
+      const { data, error } = await sb.from('cc_movimientos').insert({ proveedor_id: r.proveedor_id, fecha: fec, tipo: 'comprobante', detalle: `FC ${num}`, numero: num, ingreso: monto, origen: 'app' }).select('id').single();
+      if (error) throw error; ids.push(data.id);
+    }
+    if (ids.length) { const { error } = await sb.from('cc_movimientos').update({ recepcion_id: id, control_estado: resultado }).in('id', ids); if (error) throw error; }
+    if (vinculados.length) await sb.from('cc_movimientos').update({ control_estado: resultado }).eq('recepcion_id', id);
+    const { error } = await sb.from('cc_recepciones').update({ estado: resultado === 'ok' ? 'controlada' : 'con_diferencia', controlado_por: uid, controlado_at: new Date().toISOString(), notas: notaVal || null }).eq('id', id);
+    if (error) throw error;
+    sel = new Set(); await cargar();
+  } catch (e) { err = e.message || 'Error al guardar'; }
+  guardando = false; pintar();
+}
+async function anular() {
+  if (!confirm('¿Anular esta recepción? Queda registrada pero no cuenta.')) return;
+  await sb.from('cc_recepciones').update({ estado: 'anulada' }).eq('id', id);
+  location.href = 'admin.html';
+}
+await cargar(); pintar();
+</script>
+</body>
+</html>

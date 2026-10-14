@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proveedor · Proveedores</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#1f4d4a">
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, esc, guard, nav, qs, peso, fecha, fechaHora, chipEstado } from './app.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'prov');
+const id = qs('id'), PAG = 100;
+const TIPO = { comprobante: 'Comprobante', nota_credito: 'Nota de crédito', nota_debito: 'Nota de débito', pago: 'Pago', ajuste: 'Ajuste', saldo_inicial: 'Saldo inicial', otro: 'Otro' };
+let s, movs = [], hayMas = false, solo = 'todo', tab = 'cc', recs = [];
+
+async function cargarSaldo() { ({ data: s } = await sb.from('cc_saldos').select('*').eq('proveedor_id', id).maybeSingle()); }
+async function cargarMovs(desde = 0) {
+  let q = sb.from('cc_cuenta_corriente').select('*').eq('proveedor_id', id).order('fecha', { ascending: false }).order('id', { ascending: false }).range(desde, desde + PAG - 1);
+  if (solo === 'pagos') q = q.eq('tipo', 'pago'); if (solo === 'comprobantes') q = q.neq('tipo', 'pago');
+  const { data } = await q;
+  movs = desde ? movs.concat(data || []) : data || []; hayMas = (data || []).length === PAG;
+}
+await Promise.all([cargarSaldo(), cargarMovs(0), sb.from('cc_recepciones_resumen').select('id,fecha,nro_remito,estado,bultos,unidades_contadas').eq('proveedor_id', id).order('fecha', { ascending: false }).limit(60).then(({ data }) => (recs = data || []))]);
+if (!s) { $('#app').innerHTML = '<p>Proveedor no encontrado.</p>'; throw new Error('404'); }
+
+function pintar() {
+  const filaMov = (m) => `<tr><td class="num">${fecha(m.fecha)}</td>
+    <td>${esc(m.detalle)}${m.tipo !== 'comprobante' && m.tipo !== 'pago' ? `<span class="chip" style="margin-left:6px">${TIPO[m.tipo]}</span>` : ''}
+    ${m.medio_pago === 'cheque' ? `<div class="small muted">Cheque ${esc(m.cheque_nro || '')} ${m.cheque_fecha_cobro ? '· cobro ' + fecha(m.cheque_fecha_cobro) : ''} ${m.cheque_cobrado === false ? `<button class="btn sm" data-cobrado="${m.id}" style="margin-left:6px">Marcar cobrado</button>` : m.cheque_cobrado ? '· cobrado' : ''}</div>` : ''}
+    ${m.nota ? `<div class="small muted">${esc(m.nota)}</div>` : ''}</td>
+    <td class="r num">${Number(m.ingreso) ? peso(m.ingreso) : ''}</td><td class="r num">${Number(m.pago) ? peso(m.pago) : ''}</td><td class="r num"><b>${solo === 'todo' ? peso(m.saldo) : ''}</b></td>
+    <td>${m.recepcion_id ? `<a href="recepcion.html?id=${m.recepcion_id}" class="chip ${m.control_estado === 'ok' ? 'ok' : m.control_estado === 'con_diferencia' ? 'bad' : ''}">${m.control_estado === 'ok' ? 'Controlada ✓' : m.control_estado === 'con_diferencia' ? 'Diferencia' : 'Vinculada'}</a>` : ''}</td></tr>`;
+  $('#app').innerHTML = `<p class="small"><a href="proveedores.html">← Proveedores</a></p>
+  <div class="row between wrapRow"><h1>${esc(s.nombre)}</h1><div class="row wrapRow">
+    <a class="btn primary sm" href="nuevo.html?proveedor=${id}&tipo=comprobante">＋ Factura</a><a class="btn primary sm" href="nuevo.html?proveedor=${id}&tipo=pago">＋ Pago</a>
+    <button class="btn sm" id="activo">${s.activo ? 'Marcar inactivo' : 'Reactivar'}</button></div></div>
+  <div class="grid kpis" style="margin:12px 0">
+    <div class="card kpi"><div class="l">Saldo (le debemos)</div><div class="v num">${peso(s.saldo)}</div></div>
+    <div class="card kpi"><div class="l">Cheques emitidos no cobrados</div><div class="v num">${peso(s.cheques_no_cobrados)}</div></div>
+    <div class="card kpi"><div class="l">Último pago</div><div class="v">${fecha(s.ultimo_pago)}</div></div>
+    <div class="card kpi"><div class="l">Último comprobante</div><div class="v">${fecha(s.ultimo_comprobante)}</div></div></div>
+  <div class="row" style="margin-bottom:12px"><button class="btn sm ${tab === 'cc' ? 'primary' : ''}" data-tab="cc">Cuenta corriente</button><button class="btn sm ${tab === 'rec' ? 'primary' : ''}" data-tab="rec">Mercadería recibida</button>
+    ${tab === 'cc' ? `<select id="solo" style="width:auto;min-height:36px;padding:4px 10px"><option value="todo" ${solo === 'todo' ? 'selected' : ''}>Todo</option><option value="pagos" ${solo === 'pagos' ? 'selected' : ''}>Solo pagos</option><option value="comprobantes" ${solo === 'comprobantes' ? 'selected' : ''}>Solo comprobantes</option></select>` : ''}</div>
+  ${tab === 'cc' ? `<div class="card tablewrap"><table><thead><tr><th>Fecha</th><th>Detalle</th><th class="r">Ingreso</th><th class="r">Pago</th><th class="r">Saldo</th><th>Control</th></tr></thead><tbody>${movs.map(filaMov).join('')}</tbody></table>
+    ${hayMas ? '<button class="btn" id="mas" style="margin-top:12px">Ver más antiguos</button>' : ''}</div>`
+  : `<div class="card tablewrap">${recs.length ? `<table><thead><tr><th>Fecha</th><th>Remito</th><th class="r">Bultos</th><th class="r">Unidades</th><th>Estado</th></tr></thead><tbody>
+    ${recs.map((r) => `<tr class="click" onclick="location.href='recepcion.html?id=${r.id}'"><td>${fechaHora(r.fecha)}</td><td>${esc(r.nro_remito || 's/n')}</td><td class="r">${r.bultos ?? ''}</td><td class="r num">${r.unidades_contadas}</td><td>${chipEstado(r.estado)}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="muted">Todavía no hay recepciones cargadas desde el depósito para este proveedor.</p>'}</div>`}`;
+  document.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { tab = b.dataset.tab; pintar(); }));
+  const sel = $('#solo'); if (sel) sel.onchange = async () => { solo = sel.value; await cargarMovs(0); pintar(); };
+  const mas = $('#mas'); if (mas) mas.onclick = async () => { await cargarMovs(movs.length); pintar(); };
+  $('#activo').onclick = async () => { await sb.from('cc_proveedores').update({ activo: !s.activo }).eq('id', id); s.activo = !s.activo; pintar(); };
+  document.querySelectorAll('[data-cobrado]').forEach((b) => (b.onclick = async () => { await sb.from('cc_movimientos').update({ cheque_cobrado: true }).eq('id', b.dataset.cobrado); await Promise.all([cargarSaldo(), cargarMovs(0)]); pintar(); }));
+}
+pintar();
+</script>
+</body>
+</html>

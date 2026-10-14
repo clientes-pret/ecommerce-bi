@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proveedores · Pret a Home</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="theme-color" content="#1f4d4a">
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="narrow" style="padding-top:64px">
+  <h1>Proveedores</h1>
+  <p class="muted">Pret a Home · Casa Lavan</p>
+  <form class="card" id="f">
+    <label>Email</label><input type="email" id="email" autocomplete="username" required>
+    <label>Contraseña</label><input type="password" id="pass" autocomplete="current-password" required>
+    <p class="err" id="err"></p>
+    <button class="btn primary big" id="ok" style="margin-top:16px">Entrar</button>
+  </form>
+</div>
+<script type="module">
+import { sb, $, rutaPara, SUPABASE_ANON_KEY } from './app.js';
+
+if (SUPABASE_ANON_KEY.startsWith('PEGAR')) $('#err').textContent = 'Falta configurar la anon key en config.js';
+
+async function entrar(uid) {
+  const { data: p } = await sb.from('cc_perfiles').select('rol').eq('id', uid).maybeSingle();
+  if (!p) { await sb.auth.signOut(); $('#err').textContent = 'Tu usuario todavía no tiene un rol asignado. Avisale a Matías.'; $('#ok').disabled = false; return; }
+  location.replace(rutaPara(p.rol));
+}
+const { data } = await sb.auth.getSession();
+if (data.session) entrar(data.session.user.id);
+
+$('#f').onsubmit = async (e) => {
+  e.preventDefault();
+  $('#err').textContent = ''; $('#ok').disabled = true;
+  const { data, error } = await sb.auth.signInWithPassword({ email: $('#email').value.trim(), password: $('#pass').value });
+  if (error || !data.user) { $('#err').textContent = 'Email o contraseña incorrectos.'; $('#ok').disabled = false; return; }
+  entrar(data.user.id);
+};
+</script>
+</body>
+</html>

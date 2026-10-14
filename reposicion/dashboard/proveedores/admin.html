@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inicio · Proveedores</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#1f4d4a">
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, esc, guard, nav, peso0, fecha, fechaHora } from './app.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'inicio');
+
+const [{ data: s }, { data: pend }, { data: chq }, { data: ult }] = await Promise.all([
+  sb.from('cc_saldos').select('saldo,cheques_no_cobrados'),
+  sb.from('cc_recepciones_resumen').select('id,proveedor,fecha,nro_remito,unidades_contadas,recibido_completo').eq('estado', 'pendiente_control').order('fecha'),
+  sb.from('cc_movimientos').select('id,proveedor_id,pago,cheque_nro,cheque_fecha_cobro,cc_proveedores(nombre)').eq('medio_pago', 'cheque').eq('cheque_cobrado', false).order('cheque_fecha_cobro').limit(15),
+  sb.from('cc_movimientos').select('id,fecha,detalle,ingreso,pago,proveedor_id,cc_proveedores(nombre)').order('id', { ascending: false }).limit(12),
+]);
+const saldo = (s || []).reduce((a, x) => a + Number(x.saldo), 0);
+const cheques = (s || []).reduce((a, x) => a + Number(x.cheques_no_cobrados), 0);
+const link = (m) => `<a href="proveedor.html?id=${m.proveedor_id}">${esc(m.cc_proveedores?.nombre)}</a>`;
+
+$('#app').innerHTML = `<h1>Inicio</h1>
+<div class="grid kpis" style="margin:12px 0">
+  <div class="card kpi"><div class="l">Saldo total con proveedores</div><div class="v num">${peso0(saldo)}</div></div>
+  <div class="card kpi"><div class="l">Cheques emitidos no cobrados</div><div class="v num">${peso0(cheques)}</div></div>
+  <div class="card kpi"><div class="l">Recepciones esperando control</div><div class="v">${(pend || []).length}</div></div>
+</div>
+<h2>Mercadería recibida para controlar</h2>
+<div class="card tablewrap">${(pend || []).length ? `<table><thead><tr><th>Fecha</th><th>Proveedor</th><th>Remito</th><th class="r">Unidades</th><th>Mati dice</th></tr></thead><tbody>
+${pend.map((r) => `<tr class="click" onclick="location.href='recepcion.html?id=${r.id}'"><td>${fechaHora(r.fecha)}</td><td><b>${esc(r.proveedor)}</b></td><td>${esc(r.nro_remito || 's/n')}</td><td class="r num">${r.unidades_contadas}</td><td>${r.recibido_completo ? '<span class="chip ok">Completo</span>' : '<span class="chip bad">Faltante</span>'}</td></tr>`).join('')}
+</tbody></table>` : '<p class="muted">No hay recepciones pendientes. 🎉</p>'}</div>
+${(chq || []).length ? `<h2>Cheques por cobrar</h2><div class="card tablewrap"><table><thead><tr><th>Proveedor</th><th>Cheque</th><th>Cobro</th><th class="r">Importe</th></tr></thead><tbody>
+${chq.map((c) => `<tr><td>${link(c)}</td><td>${esc(c.cheque_nro || '—')}</td><td>${fecha(c.cheque_fecha_cobro)}</td><td class="r num">${peso0(c.pago)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+<h2>Últimos movimientos</h2>
+<div class="card tablewrap"><table><thead><tr><th>Fecha</th><th>Proveedor</th><th>Detalle</th><th class="r">Ingreso</th><th class="r">Pago</th></tr></thead><tbody>
+${(ult || []).map((m) => `<tr><td>${fecha(m.fecha)}</td><td>${link(m)}</td><td>${esc(m.detalle)}</td><td class="r num">${Number(m.ingreso) ? peso0(m.ingreso) : ''}</td><td class="r num">${Number(m.pago) ? peso0(m.pago) : ''}</td></tr>`).join('')}</tbody></table></div>`;
+</script>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recepción · Proveedores</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="theme-color" content="#1f4d4a">
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="narrow" id="app"></div>
+<script type="module">
+import { sb, SUPABASE_URL, SUPABASE_ANON_KEY, LECTURA_IA, $, $$, esc, guard, salir, fechaHora, chipEstado, pickSku, etiquetaProducto, achicar, aBase64 } from './app.js';
+
+const perfil = await guard(['deposito', 'admin', 'dueno']);
+const app = $('#app');
+const key = () => Math.random().toString(36).slice(2);
+
+const S = { paso: 'inicio', provs: [], prov: null, busq: '', recId: null, paths: [], previews: [], ocr: null, items: [], nro: '', bultos: '', completo: null, notas: '', leyendo: false, errLectura: '', enviando: false, err: '', recientes: [] };
+
+const { data: provs } = await sb.from('cc_proveedores').select('id,nombre').eq('activo', true).order('nombre');
+S.provs = provs || [];
+await cargarRecientes();
+render();
+
+async function cargarRecientes() {
+  const { data } = await sb.from('cc_recepciones_resumen').select('id,proveedor,fecha,nro_remito,estado,unidades_contadas').order('fecha', { ascending: false }).limit(15);
+  S.recientes = data || [];
+}
+
+function empezar() {
+  Object.assign(S, { prov: null, recId: crypto.randomUUID(), paths: [], previews: [], ocr: null, items: [], nro: '', bultos: '', completo: null, notas: '', err: '', errLectura: '', busq: '', paso: 'proveedor' });
+  render();
+}
+
+const faltan = () => S.items.filter((i) => i.contada == null || (!i.sku && !i.sinSku)).length;
+const diferencias = () => S.items.filter((i) => i.cantRemito != null && i.contada != null && i.cantRemito !== i.contada);
+
+function cabecera() {
+  return `<div class="row between" style="margin-bottom:8px"><div><b>Hola ${esc(perfil.nombre)}</b><div class="muted small">Recepción de mercadería</div></div>
+    <div class="row">${perfil.rol !== 'deposito' ? '<a class="btn sm" href="admin.html">Panel</a>' : ''}<button class="btn sm" id="salir">Salir</button></div></div>`;
+}
+function barra() {
+  const n = { proveedor: 1, remito: 2, items: 3, confirmar: 4 }[S.paso];
+  return n ? `<div class="steps">${[1, 2, 3, 4].map((k) => `<i class="${k <= n ? 'on' : ''}"></i>`).join('')}</div>` : '';
+}
+
+function render() {
+  const vistas = { inicio: vInicio, proveedor: vProveedor, remito: vRemito, items: vItems, confirmar: vConfirmar, listo: vListo };
+  app.innerHTML = cabecera() + barra() + vistas[S.paso]();
+  $('#salir').onclick = salir;
+  ({ inicio: bInicio, proveedor: bProveedor, remito: bRemito, items: bItems, confirmar: bConfirmar, listo: bListo })[S.paso]();
+}
+
+// ---------- Inicio ----------
+function vInicio() {
+  return `<button class="btn primary big" id="nueva">＋ Nueva recepción</button><h2>Últimas cargas</h2>` +
+    (S.recientes.length ? S.recientes.map((r) => `<div class="card"><div class="row between"><b>${esc(r.proveedor)}</b>${chipEstado(r.estado)}</div>
+      <div class="muted small">${fechaHora(r.fecha)} · Remito ${esc(r.nro_remito || 's/n')} · ${r.unidades_contadas} u.</div></div>`).join('') : '<p class="muted">Todavía no cargaste nada.</p>');
+}
+function bInicio() { $('#nueva').onclick = empezar; }
+
+// ---------- Proveedor ----------
+function listaProv() {
+  const f = S.provs.filter((p) => p.nombre.toLowerCase().includes(S.busq.toLowerCase()));
+  return f.map((p) => `<button class="pick" data-id="${p.id}">${esc(p.nombre)}</button>`).join('') || '<p class="muted">No hay proveedores con ese nombre.</p>';
+}
+function vProveedor() {
+  return `<h1>¿De qué proveedor es?</h1><input id="busq" placeholder="Buscar proveedor…" value="${esc(S.busq)}" style="margin-bottom:12px"><div id="lista">${listaProv()}</div><button class="btn" id="cancelar">Cancelar</button>`;
+}
+function bProveedor() {
+  $('#busq').oninput = (e) => { S.busq = e.target.value; $('#lista').innerHTML = listaProv(); };
+  $('#lista').onclick = (e) => { const b = e.target.closest('[data-id]'); if (!b) return; S.prov = S.provs.find((p) => p.id == b.dataset.id); S.paso = 'remito'; render(); };
+  $('#cancelar').onclick = () => { S.paso = 'inicio'; render(); };
+}
+
+// ---------- Remito (foto + lectura IA) ----------
+function vRemito() {
+  return `<h1>${esc(S.prov.nombre)}</h1>
+    <p class="muted">${LECTURA_IA ? 'Sacale foto al remito (todas las hojas). La IA lee los datos y vos los confirmás.' : 'Sacale foto al remito (todas las hojas) para que administración lo vea. Después cargás lo que contaste.'}</p>
+    <label class="btn primary big" style="cursor:pointer">📷 ${S.paths.length ? 'Agregar otra hoja' : 'Sacar foto al remito'}
+      <input type="file" id="foto" accept="image/*" capture="environment" multiple hidden></label>
+    <div class="thumbs" style="margin:12px 0">${S.previews.map((p) => `<img src="${p}" alt="">`).join('')}</div>
+    <div id="estado">${estadoLectura()}</div>
+    <div class="row" style="margin-top:16px"><button class="btn" id="atras">Atrás</button>
+      <button class="btn primary grow" id="sig" ${S.leyendo ? 'disabled' : ''}>${S.ocr ? 'Revisar ítems' : S.paths.length ? (LECTURA_IA ? 'Seguir sin lectura' : 'Cargar ítems') : 'Cargar a mano'}</button></div>`;
+}
+function estadoLectura() {
+  if (S.leyendo) return '<p><span class="spin"></span> &nbsp;Subiendo y leyendo el remito…</p>';
+  if (S.errLectura) return `<p class="err">${esc(S.errLectura)}</p>`;
+  if (S.ocr) return `<p class="chip ok">Leí ${S.items.length} líneas</p>`;
+  if (!LECTURA_IA && S.paths.length) return `<p class="chip ok">Foto guardada ✓ (${S.paths.length})</p>`;
+  return '';
+}
+function bRemito() {
+  $('#atras').onclick = () => { S.paso = 'proveedor'; render(); };
+  $('#sig').onclick = () => { S.paso = 'items'; render(); };
+  $('#foto').onchange = async (e) => { const files = [...e.target.files]; e.target.value = ''; await subirFotos(files); };
+}
+async function subirFotos(files) {
+  if (!files.length) return;
+  S.errLectura = ''; S.leyendo = true; render();
+  try {
+    const ses = (await sb.auth.getSession()).data.session;
+    const blobs = await Promise.all(files.map((f) => achicar(f)));
+    for (let i = 0; i < blobs.length; i++) {
+      const path = `${ses.user.id}/${S.recId}/${S.paths.length + 1}.jpg`;
+      const { error } = await sb.storage.from('remitos').upload(path, blobs[i], { contentType: 'image/jpeg', upsert: true });
+      if (error) throw new Error('No pude subir la foto: ' + error.message);
+      S.paths.push(path); S.previews.push(URL.createObjectURL(blobs[i]));
+    }
+    if (!LECTURA_IA) return; // sin IA: la foto queda guardada y los ítems se cargan a mano
+    const images = await Promise.all(blobs.map(aBase64));
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/leer-remito`, {
+      method: 'POST', headers: { 'content-type': 'application/json', apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${ses.access_token}` },
+      body: JSON.stringify({ images, proveedor: S.prov.nombre }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'No pude leer el remito');
+    S.ocr = j;
+    if (j.nro_remito) S.nro = j.nro_remito;
+    if (j.bultos) S.bultos = String(j.bultos);
+    await armarItems(j.items || []);
+  } catch (e) {
+    S.errLectura = (e.message || 'Error') + ' — podés cargar los ítems a mano.';
+  } finally { S.leyendo = false; render(); }
+}
+// Resuelve códigos del proveedor contra alias aprendidos o SKU propios exactos
+async function armarItems(lineas) {
+  const codigos = lineas.map((l) => l.codigo).filter(Boolean);
+  const mapa = {};
+  if (codigos.length) {
+    const { data: al } = await sb.from('cc_alias_sku').select('codigo_proveedor,sku').eq('proveedor_id', S.prov.id).in('codigo_proveedor', codigos);
+    (al || []).forEach((a) => (mapa[a.codigo_proveedor] = a.sku));
+    const { data: ex } = await sb.from('cc_productos').select('sku').in('sku', codigos);
+    (ex || []).forEach((p) => (mapa[p.sku] = p.sku));
+  }
+  const skus = [...new Set(Object.values(mapa))], info = {};
+  if (skus.length) {
+    const { data } = await sb.from('cc_productos').select('sku,producto,color,medida').in('sku', skus);
+    (data || []).forEach((p) => (info[p.sku] = etiquetaProducto(p)));
+  }
+  S.items = lineas.map((l) => {
+    const sku = l.codigo ? mapa[l.codigo] || null : null;
+    return { key: key(), codigo: l.codigo || null, descripcion: l.descripcion || null, cantRemito: l.cantidad != null ? Math.round(l.cantidad) : null, sku, skuLabel: sku ? info[sku] || '' : '', contada: null, sinSku: false };
+  });
+}
+
+// ---------- Ítems ----------
+function cardItem(i) {
+  const remito = (i.codigo || i.descripcion) ? `<div class="small muted" style="margin-bottom:6px">Remito: ${esc([i.codigo, i.descripcion].filter(Boolean).join(' · '))}${i.cantRemito != null ? ` — <b>${i.cantRemito} u.</b>` : ''}</div>` : '';
+  const sku = i.sku ? `<button class="pick" style="margin-bottom:8px" data-act="sku"><b>${esc(i.sku)}</b><br><span class="muted small">${esc(i.skuLabel)}</span></button>`
+    : i.sinSku ? '<p class="chip warn">Sin SKU (lo resuelve administración)</p>'
+    : `<div class="row" style="margin-bottom:8px"><button class="btn grow" data-act="sku">🔍 Elegir SKU</button><button class="btn sm" data-act="nosku">No lo encuentro</button></div>`;
+  return `<div class="card" data-key="${i.key}">${remito}${sku}
+    <div class="row wrapRow"><div class="stepper"><button data-act="menos">−</button><input class="qty" inputmode="numeric" placeholder="0" value="${i.contada ?? ''}"><button data-act="mas">＋</button></div>
+    ${i.cantRemito != null && i.contada !== i.cantRemito ? `<button class="btn sm" data-act="igual">= ${i.cantRemito}</button>` : ''}
+    <button class="btn sm danger" data-act="quitar">Quitar</button></div><div class="dif">${chipDif(i)}</div></div>`;
+}
+const chipDif = (i) => (i.cantRemito != null && i.contada != null && i.contada !== i.cantRemito ? `<p class="chip warn" style="margin-top:8px">Difiere del remito (${i.cantRemito})</p>` : '');
+function vItems() {
+  return `<h1>Lo que contaste</h1><p class="muted">Para cada línea: confirmá el SKU y poné la cantidad que realmente llegó.</p>
+    <div id="items">${S.items.map(cardItem).join('') || '<p class="muted">Todavía no cargaste ningún ítem. Tocá “Agregar ítem” y buscá el SKU por nombre o código.</p>'}</div>
+    <button class="btn big" id="agregar">＋ Agregar ítem</button>
+    <div class="row" style="margin-top:16px"><button class="btn" id="atras">Atrás</button><button class="btn primary grow" id="sig"></button></div>`;
+}
+function pie() {
+  const f = faltan(), b = $('#sig');
+  b.disabled = S.items.length === 0 || f > 0;
+  b.textContent = f > 0 ? `Faltan ${f} por completar` : 'Siguiente';
+}
+function bItems() {
+  pie();
+  const item = (el) => S.items.find((i) => i.key === el.closest('[data-key]').dataset.key);
+  $('#atras').onclick = () => { S.paso = 'remito'; render(); };
+  $('#sig').onclick = () => { S.paso = 'confirmar'; render(); };
+  $('#agregar').onclick = () => { const i = { key: key(), codigo: null, descripcion: null, cantRemito: null, sku: null, skuLabel: '', contada: null, sinSku: false }; S.items.push(i); render(); elegirSku(i); };
+  const cont = $('#items');
+  cont.addEventListener('input', (e) => {
+    if (!e.target.classList.contains('qty')) return;
+    const i = item(e.target), v = e.target.value.replace(/\D/g, '');
+    i.contada = v === '' ? null : parseInt(v);
+    e.target.closest('.card').querySelector('.dif').innerHTML = chipDif(i); pie();
+  });
+  cont.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const i = item(b), a = b.dataset.act;
+    if (a === 'menos') i.contada = Math.max(0, (i.contada ?? 0) - 1);
+    else if (a === 'mas') i.contada = (i.contada ?? 0) + 1;
+    else if (a === 'igual') i.contada = i.cantRemito;
+    else if (a === 'quitar') S.items = S.items.filter((x) => x !== i);
+    else if (a === 'nosku') i.sinSku = true;
+    else if (a === 'sku') return elegirSku(i);
+    render();
+  });
+}
+function elegirSku(i) {
+  pickSku({ inicial: i.codigo || '', onPick: (p) => { i.sku = p.sku; i.skuLabel = etiquetaProducto(p); i.sinSku = false; render(); } });
+}
+
+// ---------- Confirmar ----------
+function vConfirmar() {
+  const dif = diferencias();
+  return `<h1>Confirmar</h1>
+    <div class="card"><b>${esc(S.prov.nombre)}</b><div class="muted small">${S.items.length} líneas · ${S.items.reduce((a, i) => a + (i.contada || 0), 0)} unidades</div>
+      <label>Número de remito</label><input id="nro" value="${esc(S.nro)}" placeholder="0003-00012345">
+      <label>Bultos</label><input id="bultos" inputmode="numeric" value="${esc(S.bultos)}"></div>
+    ${dif.length ? `<div class="card" style="background:var(--warn-bg)"><b>Diferencias con el remito</b>${dif.map((d) => `<div class="small">${esc(d.sku || d.descripcion)}: remito ${d.cantRemito}, contaste ${d.contada}</div>`).join('')}</div>` : ''}
+    <div class="card"><b>¿Recibiste todo lo que dice el remito?</b>
+      <div class="row" style="margin-top:8px"><button class="btn grow ${S.completo === true ? 'primary' : ''}" id="si">Sí, completo</button><button class="btn grow ${S.completo === false ? 'primary' : ''}" id="no">No, falta algo</button></div>
+      <div id="aclar" ${S.completo === false || dif.length ? '' : 'hidden'}><label>Aclaración</label><textarea id="notas" rows="3" placeholder="Qué faltó, qué llegó roto, etc.">${esc(S.notas)}</textarea></div></div>
+    <p class="err">${esc(S.err)}</p>
+    <div class="row"><button class="btn" id="atras">Atrás</button><button class="btn primary grow" id="enviar"></button></div>`;
+}
+function bConfirmar() {
+  const pieEnv = () => {
+    const b = $('#enviar');
+    b.disabled = S.completo == null || S.enviando || (S.completo === false && !S.notas.trim());
+    b.textContent = S.enviando ? 'Enviando…' : 'Enviar a administración';
+  };
+  pieEnv();
+  $('#nro').oninput = (e) => (S.nro = e.target.value);
+  $('#bultos').oninput = (e) => { e.target.value = e.target.value.replace(/\D/g, ''); S.bultos = e.target.value; };
+  const nt = $('#notas'); if (nt) nt.oninput = (e) => { S.notas = e.target.value; pieEnv(); };
+  $('#si').onclick = () => { S.completo = true; render(); };
+  $('#no').onclick = () => { S.completo = false; render(); };
+  $('#atras').onclick = () => { S.paso = 'items'; render(); };
+  $('#enviar').onclick = enviar;
+}
+async function enviar() {
+  S.enviando = true; S.err = ''; render();
+  try {
+    const uid = (await sb.auth.getSession()).data.session.user.id;
+    const { error: e1 } = await sb.from('cc_recepciones').upsert({
+      id: S.recId, proveedor_id: S.prov.id, nro_remito: S.nro.trim() || null, bultos: S.bultos ? parseInt(S.bultos) : null, recibido_completo: S.completo,
+      notas: S.notas.trim() || null, estado: 'pendiente_control', remito_paths: S.paths, ocr_estado: S.ocr ? 'ok' : S.paths.length ? 'error' : 'sin_leer', ocr_json: S.ocr, cargado_por: uid,
+    });
+    if (e1) throw e1;
+    await sb.from('cc_recepcion_items').delete().eq('recepcion_id', S.recId);
+    const { error: e2 } = await sb.from('cc_recepcion_items').insert(S.items.map((i) => ({
+      recepcion_id: S.recId, sku: i.sku, descripcion: i.sku ? null : i.descripcion, codigo_proveedor: i.codigo, cant_remito: i.cantRemito, cant_contada: i.contada ?? 0,
+    })));
+    if (e2) throw e2;
+    const alias = S.items.filter((i) => i.sku && i.codigo && i.codigo !== i.sku).map((i) => ({ proveedor_id: S.prov.id, codigo_proveedor: i.codigo, sku: i.sku }));
+    if (alias.length) await sb.from('cc_alias_sku').upsert(alias);
+    await cargarRecientes(); S.paso = 'listo';
+  } catch (e) { S.err = 'No se pudo guardar: ' + (e.message || 'error') + '. Probá de nuevo.'; }
+  S.enviando = false; render();
+}
+
+// ---------- Listo ----------
+function vListo() {
+  return `<div style="text-align:center;padding-top:32px"><div style="font-size:4rem">✅</div><h1>Enviado</h1><p class="muted">Administración ya lo puede ver con el remito y las cantidades.</p>
+    <button class="btn primary big" id="otra">Cargar otra recepción</button><button class="btn big" style="margin-top:8px" id="inicio">Volver al inicio</button></div>`;
+}
+function bListo() { $('#otra').onclick = empezar; $('#inicio').onclick = () => { S.paso = 'inicio'; render(); }; }
+</script>
+</body>
+</html>

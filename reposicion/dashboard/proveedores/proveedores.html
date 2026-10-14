@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proveedores · Proveedores</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#1f4d4a">
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, esc, guard, nav, peso0, fecha } from './app.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'prov');
+const { data } = await sb.from('cc_saldos').select('*');
+const rows = data || [];
+$('#app').innerHTML = `<h1>Proveedores</h1>
+<div class="row wrapRow" style="margin:12px 0"><input id="q" style="max-width:320px" placeholder="Buscar proveedor…">
+<label style="margin:0"><input type="checkbox" id="conSaldo" checked style="width:auto;min-height:0"> Solo con saldo</label>
+<label style="margin:0"><input type="checkbox" id="inact" style="width:auto;min-height:0"> Incluir inactivos</label></div>
+<div class="card tablewrap"><table><thead><tr><th>Proveedor</th><th class="r">Saldo</th><th class="r">Cheques no cobrados</th><th>Último pago</th><th>Último comprobante</th></tr></thead><tbody id="tb"></tbody></table></div>`;
+function pintar() {
+  const q = $('#q').value.toLowerCase(), cs = $('#conSaldo').checked, ia = $('#inact').checked;
+  const f = rows.filter((r) => r.nombre.toLowerCase().includes(q) && (!cs || Math.abs(Number(r.saldo)) >= 1 || Number(r.cheques_no_cobrados) > 0) && (ia || r.activo))
+    .sort((a, b) => Number(b.saldo) - Number(a.saldo));
+  const total = f.reduce((a, r) => a + Number(r.saldo), 0);
+  $('#tb').innerHTML = f.map((r) => `<tr class="click" onclick="location.href='proveedor.html?id=${r.proveedor_id}'"><td><b>${esc(r.nombre)}</b></td>
+    <td class="r num" style="${Number(r.saldo) < -1 ? 'color:var(--ok)' : ''}">${peso0(r.saldo)}</td><td class="r num">${Number(r.cheques_no_cobrados) ? peso0(r.cheques_no_cobrados) : ''}</td>
+    <td>${fecha(r.ultimo_pago)}</td><td>${fecha(r.ultimo_comprobante)}</td></tr>`).join('') + `<tr><td><b>Total</b></td><td class="r num"><b>${peso0(total)}</b></td><td colspan="3"></td></tr>`;
+}
+['q', 'conSaldo', 'inact'].forEach((id) => ($('#' + id).oninput = pintar));
+pintar();
+</script>
+</body>
+</html>
