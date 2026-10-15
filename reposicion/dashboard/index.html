@@ -130,6 +130,7 @@
   <div class="filtros-alerta">
     <label><input type="checkbox" class="filtro-alerta" value="🔴 SIN STOCK" checked> 🔴 Sin stock</label>
     <label><input type="checkbox" class="filtro-alerta" value="🔴 CRÍTICO" checked> 🔴 Crítico</label>
+    <label><input type="checkbox" class="filtro-alerta" value="🔄 Mover stock a Full" checked> 🔄 Mover stock</label>
     <label><input type="checkbox" class="filtro-alerta" value="🟡 BAJO" checked> 🟡 Bajo</label>
     <label><input type="checkbox" class="filtro-alerta" value="🟢 OK" checked> 🟢 OK</label>
     <label><input type="checkbox" class="filtro-alerta" value="⚫ Sin ventas con stock" checked> ⚫ Sin ventas con stock</label>
@@ -228,6 +229,7 @@ function listaProveedores() {
 
 function alertaClass(alerta) {
   if (!alerta) return "";
+  if (alerta.includes("Mover stock")) return "background:#1f6fb2";
   if (alerta.includes("SIN STOCK")) return "background:var(--nostock)";
   if (alerta.includes("CRÍTICO")) return "background:var(--critico)";
   if (alerta.includes("BAJO")) return "background:var(--bajo)";
@@ -242,17 +244,28 @@ function velSemanalTotal(p) {
   return Object.values(DESTINOS).reduce((s, d) => s + (p[d.velSemanal] || 0), 0);
 }
 
-function otroDestinoConStock(p, actual) {
-  // "SIN STOCK" en un canal no es tan grave si otro canal activo todavía
-  // tiene unidades — se puede mover stock físicamente de depósito a Full (o
-  // viceversa) para tapar el hueco, cosa que "OK"/"BAJO" no necesitan.
-  // Pedido del usuario (2026-09-17): reservar "SIN STOCK" para cuando
-  // NINGÚN canal activo tiene nada, y bajar a "CRÍTICO" cuando sí hay de
-  // dónde mover. Esto es solo el label del canal en cuestión — no toca
-  // a_reponer_* ni mezcla los pools entre sí, sigue siendo responsabilidad
-  // manual del usuario decidir si mueve stock interno o pide al proveedor
-  // (ver "Decisiones de diseño no obvias" en CLAUDE.md).
-  return Object.values(DESTINOS).some((d) => d !== actual && (d.stock(p) || 0) > 0);
+const ETIQUETA_MOVER = "🔄 Mover stock a Full";
+
+// El stock físico se mueve SOLO de depósito a Full — nunca al revés (regla del
+// usuario, 2026-10-15). Un depósito en 0 no se puede reponer desde Full, así
+// que sigue siendo un SIN STOCK de verdad aunque Full tenga unidades.
+function excedenteDeposito(p) {
+  // Unidades de depósito que sobran después de dejarlo con su propia
+  // cobertura objetivo (la misma que usa units_to_order: vel_diaria × días).
+  // Es lo único que se puede mandar a Full sin que depósito quede corto.
+  const dep = DESTINOS.deposito;
+  const cobertura = p.coverage_days_usado || 30;
+  const necesario = (p[dep.velDiaria] || 0) * cobertura;
+  return Math.max(0, Math.floor((dep.stock(p) || 0) - necesario));
+}
+
+function puedeCubrirseDesdeDeposito(p, d) {
+  // True si lo que a_reponer_* le pide a este destino (Full) entra completo en
+  // el excedente de depósito: ahí no hace falta pedirle al proveedor, alcanza
+  // con mover stock interno. Si solo alcanza para una parte, no cuenta.
+  if (d.destino === "deposito") return false;
+  const necesidad = p[d.aReponer] || 0;
+  return necesidad > 0 && necesidad <= excedenteDeposito(p);
 }
 
 function nivelAlertaDestino(p, d) {
@@ -267,13 +280,32 @@ function nivelAlertaDestino(p, d) {
   const velSemanal = p[d.velSemanal] || 0;
   const diasQuiebre = p[d.diasQuiebre];
   if (ventas === 0) return null; // sin ventas en este destino: no participa del "peor"
-  if (stock === 0 && velSemanal >= 1) {
-    if (otroDestinoConStock(p, d)) return { nivel: 2, label: "🔴 CRÍTICO", destino: d.label };
-    return { nivel: 3, label: "🔴 SIN STOCK", destino: d.label };
+
+  let base;
+  if (stock === 0 && velSemanal >= 1) base = { nivel: 3, label: "🔴 SIN STOCK", destino: d.label };
+  else if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 14) base = { nivel: 2, label: "🔴 CRÍTICO", destino: d.label };
+  else if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 30) return { nivel: 1, label: "🟡 BAJO", destino: d.label };
+  else return { nivel: 0, label: "🟢 OK", destino: d.label };
+
+  // Full en CRÍTICO / SIN STOCK pero con depósito sobrado (pedido del usuario,
+  // 2026-10-15): no es una emergencia de compra sino una tarea interna —
+  // mover stock de depósito a Full. Va entre BAJO y CRÍTICO en severidad.
+  // Solo cambia el rótulo de este canal; a_reponer_* y las columnas por canal
+  // no se tocan (nunca se mezclan los pools).
+  if (puedeCubrirseDesdeDeposito(p, d)) {
+    const necesidad = p[d.aReponer] || 0;
+    return {
+      nivel: 1.5, label: ETIQUETA_MOVER, destino: d.label,
+      detalle: `${d.label} necesita ${fmtNum(necesidad)} u. y depósito tiene ${fmtNum(excedenteDeposito(p))} u. de excedente: mover stock de depósito a Full`,
+    };
   }
-  if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 14) return { nivel: 2, label: "🔴 CRÍTICO", destino: d.label };
-  if (velDiaria > 0 && diasQuiebre != null && diasQuiebre < 30) return { nivel: 1, label: "🟡 BAJO", destino: d.label };
-  return { nivel: 0, label: "🟢 OK", destino: d.label };
+  // Full sin stock pero depósito con algo: hay de dónde mover, aunque no
+  // alcance para cubrirlo todo → CRÍTICO en vez de SIN STOCK (pedido del
+  // usuario, 2026-09-17). El depósito en 0 NO se baja: no se repone desde Full.
+  if (base.nivel === 3 && d.destino !== "deposito" && (DESTINOS.deposito.stock(p) || 0) > 0) {
+    return { nivel: 2, label: "🔴 CRÍTICO", destino: d.label };
+  }
+  return base;
 }
 
 function peorEvaluacion(p) {
@@ -596,7 +628,7 @@ function render() {
       <td>${fmtNum(velSemanalTotal(p))}</td>
       <td>${fmtNum(p.a_reponer_deposito)}</td>
       <td>${fmtNum(p.a_reponer_full_pret)}</td>
-      <td><span class="badge" style="${alertaClass(alertaResumen)}">${alertaResumen || "—"}</span></td>
+      <td><span class="badge" style="${alertaClass(alertaResumen)}" title="${((peorEvaluacion(p) || {}).detalle || "").replace(/"/g, "&quot;")}">${alertaResumen || "—"}</span></td>
       <td>${quiebreDestinoHTML(p, DESTINOS.deposito)}</td>
     `;
 
