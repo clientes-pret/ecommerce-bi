@@ -136,7 +136,19 @@ function partirSinEspacios(doc, texto, ancho) {
   return lineas.length ? lineas : [""];
 }
 
-function generarPDF(proveedor, lineas) {
+const UNIDAD_LABEL = { unidades: "Unidades", bultos: "Bultos" };
+
+/** Selector "Cantidades en: Unidades / Bultos" — es un dato del pedido
+ * entero (no de cada línea). Lo usan pedido.html y historial_pedidos.html. */
+function selectorUnidad(valor = "unidades", disabled = false) {
+  return `<label class="unidad-medida">Cantidades en:
+    <select class="sel-unidad"${disabled ? " disabled" : ""}>
+      ${Object.entries(UNIDAD_LABEL).map(([v, l]) =>
+        `<option value="${v}"${v === valor ? " selected" : ""}>${l}</option>`).join("")}
+    </select></label>`;
+}
+
+function generarPDF(proveedor, lineas, unidad = "unidades") {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const hoy = new Date().toLocaleDateString("es-AR");
@@ -147,6 +159,10 @@ function generarPDF(proveedor, lineas) {
   doc.text(`Orden de pedido — ${proveedor}`, 14, 32);
   doc.setFontSize(10);
   doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 39);
+  const unidadTxt = (UNIDAD_LABEL[unidad] || UNIDAD_LABEL.unidades).toUpperCase();
+  doc.setFont(undefined, "bold");
+  doc.text(`Cantidades expresadas en: ${unidadTxt}`, 14, 45);
+  doc.setFont(undefined, "normal");
 
   // Cada texto se acomoda dentro del ancho de SU columna: un SKU largo (hay
   // de más de 30 caracteres, ej. MAN-RECT-3D150X200TRIANGULOSGRISOSCURO) se
@@ -158,14 +174,22 @@ function generarPDF(proveedor, lineas) {
   const anchoProducto = colDeposito - 16 - colProducto;
   const lineHeight = 4.2;
 
+  // Pedido "todo a depósito" (ninguna línea a Full): una sola columna
+  // Cantidad en vez de Depósito/Full/Total en cero.
+  const soloDeposito = grupos.every((g) => g.full === 0);
+
   const encabezado = (yy) => {
     doc.setFontSize(10);
     doc.setFont(undefined, "bold");
     doc.text("SKU", colSku, yy);
     doc.text("Producto", colProducto, yy);
-    doc.text("Depósito", colDeposito, yy, { align: "right" });
-    doc.text("Full", colFull, yy, { align: "right" });
-    doc.text("Total", colTotal, yy, { align: "right" });
+    if (soloDeposito) {
+      doc.text("Cantidad", colTotal, yy, { align: "right" });
+    } else {
+      doc.text("Depósito", colDeposito, yy, { align: "right" });
+      doc.text("Full", colFull, yy, { align: "right" });
+      doc.text("Total", colTotal, yy, { align: "right" });
+    }
     doc.setFont(undefined, "normal");
     doc.line(14, yy + 3, 196, yy + 3);
     doc.setFontSize(9);
@@ -189,8 +213,10 @@ function generarPDF(proveedor, lineas) {
     doc.text(skuLineas, colSku, y);
     doc.setFontSize(9);
     doc.text(nombreLineas, colProducto, y);
-    doc.text(String(g.deposito), colDeposito, y, { align: "right" });
-    doc.text(String(g.full), colFull, y, { align: "right" });
+    if (!soloDeposito) {
+      doc.text(String(g.deposito), colDeposito, y, { align: "right" });
+      doc.text(String(g.full), colFull, y, { align: "right" });
+    }
     doc.text(String(g.deposito + g.full), colTotal, y, { align: "right" });
     totalDeposito += g.deposito;
     totalFull += g.full;
@@ -200,7 +226,9 @@ function generarPDF(proveedor, lineas) {
   y += 4;
   doc.setFontSize(11);
   doc.text(
-    `Total: ${grupos.length} productos — Depósito: ${totalDeposito}, Full: ${totalFull}, General: ${totalDeposito + totalFull}`,
+    soloDeposito
+      ? `Total: ${grupos.length} productos — ${totalDeposito} ${unidadTxt.toLowerCase()} (todo a depósito)`
+      : `Total: ${grupos.length} productos — Depósito: ${totalDeposito}, Full: ${totalFull}, General: ${totalDeposito + totalFull} ${unidadTxt.toLowerCase()}`,
     14, y
   );
 

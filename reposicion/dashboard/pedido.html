@@ -25,6 +25,9 @@
   button:disabled { opacity: 0.5; cursor: default; }
   .grupo-acciones { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
   .ok-msg { color: #6fcf97; font-size: 13px; }
+  .grupo-opciones { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
+  .grupo-opciones select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
+  .solo-deposito .col-full, .solo-deposito .col-total { display: none; }
   #vacio { padding: 40px; text-align: center; color: var(--muted); }
 </style>
 </head>
@@ -41,7 +44,7 @@
 <script src="config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="assets/logo-black-base64.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=20261015"></script>
 <script>
 renderNav("pedido");
 
@@ -102,7 +105,10 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
   try {
     const res = await apiFetch("/pedidos", {
       method: "POST",
-      body: JSON.stringify({ proveedor, creado_por: getUser(), items: lineas }),
+      body: JSON.stringify({
+        proveedor, creado_por: getUser(), items: lineas,
+        unidad_medida: grupoEl.querySelector(".sel-unidad").value,
+      }),
     });
     // El pedido ya quedó registrado en el servidor — sacamos del carrito
     // local las líneas de este proveedor que se acaban de confirmar.
@@ -112,7 +118,7 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
       "beforeend", `<span class="ok-msg">✓ Pedido #${res.pedido_id} guardado</span>`
     );
     btn.textContent = "Guardado";
-    grupoEl.querySelectorAll("input, button.link").forEach((el) => el.disabled = true);
+    grupoEl.querySelectorAll("input, select, button.link").forEach((el) => el.disabled = true);
   } catch (e) {
     btn.disabled = false;
     btn.textContent = "Confirmar pedido";
@@ -143,20 +149,28 @@ function renderGrupo(proveedor, lineas) {
                data-sugerida="${g.deposito?.cantidad_sugerida || 0}">
         <div class="hint">stock: ${fmtNum(g.deposito?.stock_hoy)}</div>
       </td>
-      <td>
+      <td class="col-full">
         <input type="number" class="qty-full" value="${g.full ? g.full.cantidad : 0}" min="0"
                data-destino="${g.full?.destino || "full_pret"}" data-sugerida="${g.full?.cantidad_sugerida || 0}">
         <div class="hint">stock: ${fmtNum(g.full?.stock_hoy)}</div>
       </td>
-      <td class="total-cell">${totalInicial}</td>
+      <td class="total-cell col-total">${totalInicial}</td>
       <td><button class="link btn-quitar">✕ Quitar</button></td>
     </tr>`;
   }).join("");
 
   el.innerHTML = `
     <h2>📦 ${proveedor} — ${grupos.length} producto${grupos.length === 1 ? "" : "s"}</h2>
+    <div class="grupo-opciones">
+      <label>Destino:
+        <select class="sel-destino">
+          <option value="separar">Separar depósito y Full</option>
+          <option value="deposito">Todo a depósito (suma depósito + Full)</option>
+        </select></label>
+      ${selectorUnidad()}
+    </div>
     <table>
-      <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th>Full</th><th>Total</th><th></th></tr></thead>
+      <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th class="col-full">Full</th><th class="col-total">Total</th><th></th></tr></thead>
       <tbody>${filas}</tbody>
     </table>
     <div class="grupo-acciones">
@@ -179,10 +193,36 @@ function renderGrupo(proveedor, lineas) {
       tr.querySelector(".total-cell").textContent = qDep + qFull;
     });
   });
+  // "Todo a depósito": la cantidad de Full se suma a la de depósito (la
+  // sugerencia de ambos destinos va junta, como si el depósito después
+  // repartiera a Full) y la columna Full se oculta. Al volver a "Separar" se
+  // restauran las cantidades que había antes de juntar.
+  el.querySelector(".sel-destino").addEventListener("change", (e) => {
+    const solo = e.target.value === "deposito";
+    el.classList.toggle("solo-deposito", solo);
+    el.querySelectorAll("tbody tr[data-sku]").forEach((tr) => {
+      const inpDep = tr.querySelector(".qty-deposito");
+      const inpFull = tr.querySelector(".qty-full");
+      if (solo) {
+        tr.dataset.depAntes = inpDep.value;
+        tr.dataset.fullAntes = inpFull.value;
+        inpDep.value = (Number(inpDep.value) || 0) + (Number(inpFull.value) || 0);
+        inpDep.dataset.sugeridaAntes = inpDep.dataset.sugerida;
+        inpDep.dataset.sugerida = (Number(inpDep.dataset.sugerida) || 0) + (Number(inpFull.dataset.sugerida) || 0);
+        inpFull.value = 0;
+      } else if (tr.dataset.depAntes !== undefined) {
+        inpDep.value = tr.dataset.depAntes;
+        inpFull.value = tr.dataset.fullAntes;
+        inpDep.dataset.sugerida = inpDep.dataset.sugeridaAntes;
+      }
+      tr.querySelector(".total-cell").textContent =
+        (Number(inpDep.value) || 0) + (Number(inpFull.value) || 0);
+    });
+  });
   el.querySelector(".btn-pdf").addEventListener("click", () => {
     const lineas = lineasDelGrupo(el);
     if (!lineas.length) return alert("No hay líneas con cantidad > 0.");
-    generarPDF(proveedor, lineas);
+    generarPDF(proveedor, lineas, el.querySelector(".sel-unidad").value);
   });
   el.querySelector(".btn-confirmar").addEventListener("click", () => {
     const lineas = lineasDelGrupo(el);

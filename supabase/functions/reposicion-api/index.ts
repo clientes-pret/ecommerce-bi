@@ -254,21 +254,28 @@ async function postDescontinuar(sku: string, req: Request) {
   return json({ ok: true });
 }
 
+// En qué están expresadas las cantidades de TODO el pedido (no por línea).
+const UNIDADES_MEDIDA = ["unidades", "bultos"];
+
 async function postPedido(req: Request) {
   const body = await req.json();
-  const { proveedor, creado_por, notas, items } = body as {
+  const { proveedor, creado_por, notas, items, unidad_medida } = body as {
     proveedor: string;
     creado_por: string;
     notas?: string;
+    unidad_medida?: string;
     items: { sku: string; destino: string; cantidad_pedida: number; cantidad_sugerida?: number }[];
   };
   if (!proveedor || !creado_por || !items?.length) {
     return json({ error: "Faltan proveedor, creado_por o items" }, 400);
   }
+  if (unidad_medida !== undefined && !UNIDADES_MEDIDA.includes(unidad_medida)) {
+    return json({ error: "unidad_medida debe ser 'unidades' o 'bultos'" }, 400);
+  }
 
   const { data: pedido, error: pedidoError } = await supabase
     .from("repo_pedidos")
-    .insert({ proveedor, creado_por, notas: notas ?? null })
+    .insert({ proveedor, creado_por, notas: notas ?? null, unidad_medida: unidad_medida ?? "unidades" })
     .select()
     .single();
   if (pedidoError) throw pedidoError;
@@ -320,10 +327,14 @@ async function postCancelarPedido(id: string, req: Request) {
 }
 
 async function patchPedidoItems(id: string, req: Request) {
-  const { items } = await req.json() as {
+  const { items, unidad_medida } = await req.json() as {
     items: { id: number; cantidad_pedida: number; destino?: string }[];
+    unidad_medida?: string;
   };
-  if (!items?.length) return json({ error: "Falta items" }, 400);
+  if (!items?.length && unidad_medida === undefined) return json({ error: "Falta items" }, 400);
+  if (unidad_medida !== undefined && !UNIDADES_MEDIDA.includes(unidad_medida)) {
+    return json({ error: "unidad_medida debe ser 'unidades' o 'bultos'" }, 400);
+  }
 
   const { data: pedido, error: getError } = await supabase
     .from("repo_pedidos").select("estado").eq("id", id).maybeSingle();
@@ -333,7 +344,12 @@ async function patchPedidoItems(id: string, req: Request) {
     return json({ error: "Solo se pueden editar cantidades de un pedido en estado 'enviado'" }, 400);
   }
 
-  for (const it of items) {
+  if (unidad_medida !== undefined) {
+    const { error } = await supabase.from("repo_pedidos").update({ unidad_medida }).eq("id", id);
+    if (error) throw error;
+  }
+
+  for (const it of items ?? []) {
     if (!(it.cantidad_pedida > 0)) continue;
     // El destino solo se puede corregir entre depósito y Full Pret a Home
     // (Casa Lavan no maneja stock Full hoy — ver core.py) — cualquier otro

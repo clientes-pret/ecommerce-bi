@@ -13,6 +13,8 @@
   h1 { font-size: 18px; }
   .pedido { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
   .pedido-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
+  .unidad-medida { color: var(--muted); font-size: 13px; margin-right: 8px; }
+  .unidad-medida select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
   .pedido-header:hover { background: rgba(255,255,255,0.03); }
   .badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; }
   .badge.enviado { background: var(--enviado); }
@@ -52,7 +54,7 @@
 <script src="config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="assets/logo-black-base64.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=20261015"></script>
 <script>
 renderNav("pedidos");
 
@@ -97,7 +99,7 @@ function renderPedido(p) {
   el.innerHTML = `
     <div class="pedido-header">
       <span class="proveedor">📦 ${p.proveedor}</span>
-      <span class="muted">${new Date(p.creado_at).toLocaleDateString("es-AR")} · ${p.creado_por}</span>
+      <span class="muted">${new Date(p.creado_at).toLocaleDateString("es-AR")} · ${p.creado_por}${p.unidad_medida === "bultos" ? " · en bultos" : ""}</span>
       <span class="muted">${p.items_recibidos}/${p.total_items} líneas recibidas (${pct}%)</span>
       <span class="badge ${p.estado}">${ESTADO_LABEL[p.estado] || p.estado}</span>
     </div>
@@ -127,6 +129,7 @@ function renderPedido(p) {
       </table>
       ${p.notas ? `<p class="muted">Notas: ${p.notas}</p>` : ""}
       <div class="pedido-acciones">
+        ${selectorUnidad(p.unidad_medida || "unidades", !editable)}
         <button class="secondary btn-descargar-pdf">⬇️ Descargar PDF</button>
         ${editable ? `<button class="secondary btn-guardar-cantidades">💾 Guardar cambios</button>` : ""}
         ${cancelable ? `<button class="secondary btn-cancelar-pedido">🗑️ Cancelar pedido</button>` : ""}
@@ -140,7 +143,7 @@ function renderPedido(p) {
 
   el.querySelector(".btn-descargar-pdf").addEventListener("click", (e) => {
     e.stopPropagation();
-    generarPDF(p.proveedor, p.items || []);
+    generarPDF(p.proveedor, p.items || [], el.querySelector(".sel-unidad").value);
   });
 
   const btnGuardar = el.querySelector(".btn-guardar-cantidades");
@@ -152,10 +155,11 @@ function renderPedido(p) {
         cantidad_pedida: Number(inp.value),
         destino: inp.dataset.destino,
       })).filter((it) => it.cantidad_pedida > 0);
-      if (!items.length) return;
+      const unidad_medida = el.querySelector(".sel-unidad").value;
+      if (!items.length && unidad_medida === (p.unidad_medida || "unidades")) return;
       btnGuardar.disabled = true;
       try {
-        await apiFetch(`/pedidos/${p.id}/items`, { method: "PATCH", body: JSON.stringify({ items }) });
+        await apiFetch(`/pedidos/${p.id}/items`, { method: "PATCH", body: JSON.stringify({ items, unidad_medida }) });
         cargar();
       } catch (err) {
         alert(`No se pudo guardar: ${err.message}`);
