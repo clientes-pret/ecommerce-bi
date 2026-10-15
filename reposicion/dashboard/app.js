@@ -118,6 +118,24 @@ function agruparLineasPorSku(lineas) {
   );
 }
 
+/** Parte un texto sin espacios (un SKU) en líneas que entren en `ancho` —
+ * splitTextToSize solo corta en espacios, así que un SKU largo quedaba en
+ * una sola línea pisando la columna de al lado. */
+function partirSinEspacios(doc, texto, ancho) {
+  const lineas = [];
+  let actual = "";
+  for (const ch of texto) {
+    if (actual && doc.getTextWidth(actual + ch) > ancho) {
+      lineas.push(actual);
+      actual = ch;
+    } else {
+      actual += ch;
+    }
+  }
+  if (actual) lineas.push(actual);
+  return lineas.length ? lineas : [""];
+}
+
 function generarPDF(proveedor, lineas) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
@@ -130,36 +148,50 @@ function generarPDF(proveedor, lineas) {
   doc.setFontSize(10);
   doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 39);
 
-  // Columnas: SKU tiene prioridad — nunca se corta, así que necesita ancho
-  // de sobra (algunos SKU pasan los 20 caracteres). Producto se banca hasta
-  // 2 líneas si no entra en una sola; la altura de cada fila de la tabla se
-  // ajusta según cuántas líneas terminó ocupando el producto.
-  const colSku = 14, colProducto = 60, colDeposito = 140, colFull = 162, colTotal = 184;
-  const anchoProducto = colDeposito - colProducto - 4;
+  // Cada texto se acomoda dentro del ancho de SU columna: un SKU largo (hay
+  // de más de 30 caracteres, ej. MAN-RECT-3D150X200TRIANGULOSGRISOSCURO) se
+  // parte en varias líneas en vez de pisar el nombre del producto, y el
+  // producto se banca hasta 3 líneas. La altura de cada fila se ajusta a la
+  // columna que más líneas ocupó. Las cantidades van alineadas a la derecha.
+  const colSku = 14, colProducto = 78, colDeposito = 162, colFull = 180, colTotal = 196;
+  const anchoSku = colProducto - colSku - 4;
+  const anchoProducto = colDeposito - 16 - colProducto;
   const lineHeight = 4.2;
 
-  let y = 52;
-  doc.setFontSize(11);
-  doc.text("SKU", colSku, y);
-  doc.text("Producto", colProducto, y);
-  doc.text("Depósito", colDeposito, y);
-  doc.text("Full", colFull, y);
-  doc.text("Total", colTotal, y);
-  y += 4;
-  doc.line(14, y, 196, y);
-  y += 6;
+  const encabezado = (yy) => {
+    doc.setFontSize(10);
+    doc.setFont(undefined, "bold");
+    doc.text("SKU", colSku, yy);
+    doc.text("Producto", colProducto, yy);
+    doc.text("Depósito", colDeposito, yy, { align: "right" });
+    doc.text("Full", colFull, yy, { align: "right" });
+    doc.text("Total", colTotal, yy, { align: "right" });
+    doc.setFont(undefined, "normal");
+    doc.line(14, yy + 3, 196, yy + 3);
+    doc.setFontSize(9);
+    return yy + 9;
+  };
 
-  doc.setFontSize(9);
+  let y = encabezado(52);
   let totalDeposito = 0, totalFull = 0;
   for (const g of grupos) {
-    const nombreLineas = doc.splitTextToSize(String(g.nombre || ""), anchoProducto).slice(0, 2);
-    const filaAlto = Math.max(1, nombreLineas.length) * lineHeight;
-    if (y + filaAlto > 280) { doc.addPage(); y = 20; }
-    doc.text(String(g.sku), colSku, y);
+    // El SKU primero se achica (hasta 7 pt) para entrar entero en una línea;
+    // solo si ni así entra se parte en dos.
+    let skuSize = 9;
+    doc.setFontSize(skuSize);
+    while (skuSize > 7 && doc.getTextWidth(String(g.sku)) > anchoSku) doc.setFontSize(skuSize -= 0.5);
+    const skuLineas = partirSinEspacios(doc, String(g.sku), anchoSku);
+    doc.setFontSize(9);
+    const nombreLineas = doc.splitTextToSize(String(g.nombre || ""), anchoProducto).slice(0, 3);
+    const filaAlto = Math.max(skuLineas.length, nombreLineas.length, 1) * lineHeight;
+    if (y + filaAlto > 280) { doc.addPage(); y = encabezado(20); }
+    doc.setFontSize(skuSize);
+    doc.text(skuLineas, colSku, y);
+    doc.setFontSize(9);
     doc.text(nombreLineas, colProducto, y);
-    doc.text(String(g.deposito), colDeposito, y);
-    doc.text(String(g.full), colFull, y);
-    doc.text(String(g.deposito + g.full), colTotal, y);
+    doc.text(String(g.deposito), colDeposito, y, { align: "right" });
+    doc.text(String(g.full), colFull, y, { align: "right" });
+    doc.text(String(g.deposito + g.full), colTotal, y, { align: "right" });
     totalDeposito += g.deposito;
     totalFull += g.full;
     y += filaAlto + 3;
