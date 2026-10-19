@@ -254,6 +254,18 @@ async function postDescontinuar(sku: string, req: Request) {
   return json({ ok: true });
 }
 
+// "Fuera de temporada": oculta el producto del tablero (el filtro "Fuera de
+// temporada" lo muestra). No toca el cálculo de reposición ni lo descontinúa.
+async function postTemporada(sku: string, req: Request) {
+  const { fuera_de_temporada, por } = await req.json();
+  const body = fuera_de_temporada
+    ? { fuera_de_temporada: true, fuera_de_temporada_at: new Date().toISOString(), fuera_de_temporada_por: por ?? null }
+    : { fuera_de_temporada: false, fuera_de_temporada_at: null, fuera_de_temporada_por: null };
+  const { error } = await supabase.from("repo_productos").update(body).eq("sku", sku);
+  if (error) throw error;
+  return json({ ok: true });
+}
+
 // En qué están expresadas las cantidades de TODO el pedido (no por línea).
 const UNIDADES_MEDIDA = ["unidades", "bultos"];
 
@@ -501,6 +513,9 @@ Deno.serve(async (req) => {
     }
     if (req.method === "POST" && parts[0] === "productos" && parts[2] === "descontinuar") {
       return await postDescontinuar(decodeURIComponent(parts[1]), req);
+    }
+    if (req.method === "POST" && parts[0] === "productos" && parts[2] === "temporada") {
+      return await postTemporada(decodeURIComponent(parts[1]), req);
     }
     if (req.method === "POST" && path === "/pedidos") return await postPedido(req);
     if (req.method === "POST" && parts[0] === "pedidos" && parts[2] === "cancelar") {

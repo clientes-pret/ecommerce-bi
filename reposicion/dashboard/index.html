@@ -104,6 +104,7 @@
     <select id="filtroVista">
       <option value="necesita" selected>Necesita reposición</option>
       <option value="todos">Todos los productos</option>
+      <option value="fuera_temporada">🍂 Fuera de temporada</option>
       <option value="descontinuados">Descontinuados</option>
     </select>
     <select id="filtroProveedor"><option value="">Todos los proveedores</option></select>
@@ -119,6 +120,7 @@
     <button class="secondary" id="btnLimpiarFiltros" title="Vuelve buscador, proveedor, categoría, orden y vista a sus valores por defecto">✕ Limpiar filtros</button>
     <div class="toolbar-right">
       <button class="secondary" id="btnArmarPedido" disabled>🧾 Armar pedido (0)</button>
+      <button class="secondary" id="btnTemporadaMasivo" disabled title="Oculta los productos tildados del tablero hasta que elijas verlos en el filtro “Fuera de temporada”">🍂 Fuera de temporada (0)</button>
       <button class="secondary" id="btnDescontinuarMasivo" disabled>🚫 Descontinuar (0)</button>
       <select id="selectProveedorMasivo" disabled style="max-width:150px"><option value="">Asignar proveedor…</option></select>
       <input type="text" id="inputProveedorMasivoOtro" placeholder="Nombre del proveedor…" style="display:none;width:130px">
@@ -468,8 +470,16 @@ function filasVisibles() {
     // reposición) — el objetivo es ver el grupo completo de un vistazo.
     const grupos = grupoActivo ? GRUPOS_ESTRELLA.filter((g) => g.prefijo === grupoActivo) : GRUPOS_ESTRELLA;
     rows = rows.filter((p) => grupos.some((g) => enGrupo(p, g)));
-  } else if (!busqueda && vista === "necesita") {
-    rows = rows.filter(necesitaReposicion);
+  } else if (vista === "fuera_temporada") {
+    // Solo lo marcado como fuera de temporada (cualquier estado de stock).
+    rows = rows.filter((p) => p.fuera_de_temporada);
+  } else {
+    if (!busqueda && vista === "necesita") rows = rows.filter(necesitaReposicion);
+    // Lo fuera de temporada queda oculto salvo en su propio filtro. Con una
+    // búsqueda sí aparece (con 🍂 en el nombre): igual que arriba, buscar un
+    // SKU a propósito no debe devolver "no existe". La vista Descontinuados no
+    // lo oculta: ahí se mira otro conjunto de productos.
+    if (!busqueda && vista !== "descontinuados") rows = rows.filter((p) => !p.fuera_de_temporada);
   }
   if (excluirEstrella && !MODO_ESTRELLA) rows = rows.filter((p) => !esEstrella(p));
   rows = rows.filter((p) => alertas.has(estadoGeneral(p)));
@@ -578,6 +588,13 @@ function renderDetalle(p) {
     });
     cargar();
   });
+  const btnTemporada = document.createElement("button");
+  btnTemporada.className = "secondary";
+  btnTemporada.textContent = p.fuera_de_temporada ? "↩ Volver a temporada" : "🍂 Fuera de temporada";
+  btnTemporada.addEventListener("click", async () => {
+    await marcarTemporada([p.sku], !p.fuera_de_temporada);
+  });
+  acciones.appendChild(btnTemporada);
   acciones.appendChild(btnDescontinuar);
 
   td.appendChild(destinos);
@@ -636,7 +653,7 @@ function render() {
       <td><input type="checkbox" class="chk-fila" ${SELECTED.has(p.sku) ? "checked" : ""}></td>
       <td><span class="flecha ${abierta ? "abierta" : ""}">▸</span></td>
       <td>${p.sku}</td>
-      <td class="col-producto" title="${(p.nombre || "").replace(/"/g, "&quot;")}">${p.nombre || "<span class=muted>(sin nombre)</span>"}</td>
+      <td class="col-producto" title="${(p.nombre || "").replace(/"/g, "&quot;")}">${p.fuera_de_temporada ? '<span title="Fuera de temporada">🍂 </span>' : ""}${p.nombre || "<span class=muted>(sin nombre)</span>"}</td>
       <td></td>
       <td>${fmtNum(DESTINOS.deposito.stock(p))}</td>
       <td>${fmtNum(DESTINOS.full_pret.stock(p))}</td>
@@ -1119,9 +1136,34 @@ function renderProveedorMasivoSelect() {
   sel.value = valorActual || "";
 }
 
+// Marca (fuera=true) o desmarca (fuera=false) productos como "fuera de
+// temporada". Se usa desde el botón masivo y desde el de cada producto.
+async function marcarTemporada(skus, fuera) {
+  if (!skus.length) return;
+  if (fuera) {
+    const cuantos = skus.length === 1 ? skus[0] : `${skus.length} productos`;
+    if (!confirm(`¿Marcar ${cuantos} como fuera de temporada? Dejan de aparecer en el tablero; los ves de nuevo eligiendo “Fuera de temporada” en el filtro.`)) return;
+  }
+  const resultados = await Promise.allSettled(skus.map((sku) =>
+    apiFetch(`/productos/${encodeURIComponent(sku)}/temporada`, {
+      method: "POST", body: JSON.stringify({ fuera_de_temporada: fuera, por: getUser() }),
+    })
+  ));
+  const fallidos = resultados.filter((r) => r.status === "rejected");
+  if (fallidos.length) {
+    alert(`${fallidos.length} de ${skus.length} no se pudieron actualizar: ${fallidos[0].reason?.message || "error desconocido"}`);
+  }
+  for (const sku of skus) SELECTED.delete(sku);
+  cargar();
+}
+
 function actualizarBotonesMasivos() {
   const n = SELECTED.size;
   const btnPedido = document.getElementById("btnArmarPedido");
+  const btnTemporada = document.getElementById("btnTemporadaMasivo");
+  const enFuera = document.getElementById("filtroVista").value === "fuera_temporada";
+  btnTemporada.textContent = `${enFuera ? "↩ Volver a temporada" : "🍂 Fuera de temporada"} (${n})`;
+  btnTemporada.disabled = n === 0;
   const btnDescontinuar = document.getElementById("btnDescontinuarMasivo");
   const selectProveedor = document.getElementById("selectProveedorMasivo");
   const btnAsignarProveedor = document.getElementById("btnAsignarProveedorMasivo");
@@ -1149,6 +1191,9 @@ if (MODO_ESTRELLA) {
   document.getElementById("barraEstrella").style.display = "block";
   document.getElementById("filtroVista").style.display = "none";
   document.getElementById("btnExcluirEstrella").style.display = "none"; // acá justamente se ven solo las estrella
+  // La vista estrella muestra el grupo completo sin ocultar nada, así que marcar
+  // "fuera de temporada" desde acá no tendría efecto visible.
+  document.getElementById("btnTemporadaMasivo").style.display = "none";
   // Acá lo que importa es ver el grupo completo, incluso lo ya pedido.
   document.getElementById("ocultarSolicitados").checked = false;
 }
@@ -1202,6 +1247,10 @@ document.getElementById("btnArmarPedido").addEventListener("click", () => {
     }
   }
   window.location.href = "pedido.html";
+});
+document.getElementById("btnTemporadaMasivo").addEventListener("click", () => {
+  const enFuera = document.getElementById("filtroVista").value === "fuera_temporada";
+  marcarTemporada(Array.from(SELECTED), !enFuera);
 });
 document.getElementById("btnDescontinuarMasivo").addEventListener("click", async () => {
   const skus = Array.from(SELECTED);
