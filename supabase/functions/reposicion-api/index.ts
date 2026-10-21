@@ -102,22 +102,34 @@ async function latestSnapshotPorSku() {
   return bySku;
 }
 
+type PedidoAbierto = { destino: string; fecha: string | null; pedido_id: number };
+
 async function pedidosAbiertosPorSku() {
   // Un pedido cancelado no debe contar como "ya solicitado" — sus items
   // quedan con recibido_completo=false para siempre (nunca se recibieron,
   // se canceló), así que sin este filtro un producto con el único pedido
   // cancelado quedaba escondido detrás de "Ocultar ya solicitados" como si
   // todavía tuviera un pedido en curso.
-  const cancelados = await selectAll("repo_pedidos", (q) => q.eq("estado", "cancelado").select("id"));
-  const idsCancelados = new Set(cancelados.map((p) => p.id));
+  // Además del destino se devuelve cuándo se hizo el pedido (repo_pedidos.creado_at):
+  // el tablero lo muestra al pasar el mouse por el punto rojo de "ya solicitado".
+  const pedidos = await selectAll("repo_pedidos", (q) => q.select("id,estado,creado_at").order("id", { ascending: true }));
+  const idsCancelados = new Set(pedidos.filter((p) => p.estado === "cancelado").map((p) => p.id));
+  const fechaDelPedido = new Map(pedidos.map((p) => [p.id, (p.creado_at as string) ?? null]));
 
-  const data = await selectAll("repo_pedido_items", (q) => q.eq("recibido_completo", false));
-  const bySku = new Map<string, Set<string>>();
+  const data = await selectAll("repo_pedido_items", (q) => q.eq("recibido_completo", false).order("id", { ascending: true }));
+  const bySku = new Map<string, PedidoAbierto[]>();
   for (const row of data) {
     if (idsCancelados.has(row.pedido_id)) continue;
-    const set = bySku.get(row.sku as string) ?? new Set<string>();
-    set.add(row.destino as string);
-    bySku.set(row.sku as string, set);
+    const lista = bySku.get(row.sku as string) ?? [];
+    // Un pedido con varias líneas del mismo SKU/destino cuenta una sola vez.
+    if (!lista.some((x) => x.pedido_id === row.pedido_id && x.destino === row.destino)) {
+      lista.push({
+        destino: row.destino as string,
+        fecha: fechaDelPedido.get(row.pedido_id) ?? null,
+        pedido_id: row.pedido_id as number,
+      });
+    }
+    bySku.set(row.sku as string, lista);
   }
   return bySku;
 }
@@ -154,7 +166,8 @@ async function getProductos(url: URL) {
       stock_full_pret_hoy: snap.stock_full_pret ?? null,
       stock_full_lavan_hoy: snap.stock_full_lavan ?? null,
       stock_actualizado_at: snap.captured_at ?? null,
-      destinos_ya_solicitados: Array.from(abiertos.get(p.sku as string) ?? []),
+      destinos_ya_solicitados: Array.from(new Set((abiertos.get(p.sku as string) ?? []).map((x) => x.destino))),
+      pedidos_abiertos: abiertos.get(p.sku as string) ?? [],
     };
   });
 
@@ -378,6 +391,49 @@ async function patchPedidoItems(id: string, req: Request) {
   return json({ ok: true });
 }
 
+// Cierre manual de líneas ("✓ Recibido" en Pedidos). Es opcional: la detección
+// automática (reposicion/recepciones.py) es la vía principal, esto sirve para
+// cerrar a mano una línea que el sistema todavía no detectó.
+async function postRecibirItems(id: string, req: Request) {
+  const { item_ids } = await req.json() as { item_ids: number[] };
+  if (!Array.isArray(item_ids) || !item_ids.length) return json({ error: "Falta item_ids" }, 400);
+
+  const { data: pedido, error: getError } = await supabase
+    .from("repo_pedidos").select("estado").eq("id", id).maybeSingle();
+  if (getError) throw getError;
+  if (!pedido) return json({ error: "Pedido no encontrado" }, 404);
+  if (pedido.estado === "cancelado") return json({ error: "El pedido está cancelado" }, 400);
+
+  const { data: items, error: itemsError } = await supabase
+    .from("repo_pedido_items").select("id,cantidad_pedida,recibido_completo")
+    .eq("pedido_id", id).in("id", item_ids);
+  if (itemsError) throw itemsError;
+
+  const ahora = new Date().toISOString();
+  for (const it of items ?? []) {
+    if (it.recibido_completo) continue;
+    const { error } = await supabase.from("repo_pedido_items")
+      .update({ cantidad_recibida: it.cantidad_pedida, recibido_completo: true, recibido_at: ahora })
+      .eq("id", it.id).eq("pedido_id", id);
+    if (error) throw error;
+  }
+
+  // Mismo criterio de estado que la reconciliación automática (daily_stock).
+  const { data: todos, error: todosError } = await supabase
+    .from("repo_pedido_items").select("recibido_completo,cantidad_recibida").eq("pedido_id", id);
+  if (todosError) throw todosError;
+  const nuevoEstado = (todos ?? []).every((i) => i.recibido_completo)
+    ? "recibido_completo"
+    : (todos ?? []).some((i) => i.recibido_completo || (i.cantidad_recibida ?? 0) > 0)
+    ? "recibido_parcial"
+    : pedido.estado;
+  if (nuevoEstado !== pedido.estado) {
+    const { error } = await supabase.from("repo_pedidos").update({ estado: nuevoEstado }).eq("id", id);
+    if (error) throw error;
+  }
+  return json({ ok: true, estado: nuevoEstado });
+}
+
 // ─── Productos estrella ─────────────────────────────────────────────────────
 // Grupos de productos que el dueño marca como prioritarios para reposición.
 // Cada grupo = un prefijo de SKU (ej. "PAH-FTR" → todas las variantes de la
@@ -520,6 +576,9 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && path === "/pedidos") return await postPedido(req);
     if (req.method === "POST" && parts[0] === "pedidos" && parts[2] === "cancelar") {
       return await postCancelarPedido(decodeURIComponent(parts[1]), req);
+    }
+    if (req.method === "POST" && parts[0] === "pedidos" && parts[2] === "recibir") {
+      return await postRecibirItems(decodeURIComponent(parts[1]), req);
     }
     if (req.method === "PATCH" && parts[0] === "pedidos" && parts[2] === "items") {
       return await patchPedidoItems(decodeURIComponent(parts[1]), req);

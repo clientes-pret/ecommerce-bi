@@ -54,6 +54,9 @@
     padding: 10px 20px; display: none; align-items: center; gap: 12px; z-index: 500; }
   #carritoBar.visible { display: flex; }
   #paginacion { display: none; align-items: center; justify-content: center; gap: 14px; padding: 16px 0; }
+  /* 15px de área de pasada con el punto (9px) en el centro: es difícil apuntarle a 9px */
+  .punto-pedido { display: inline-block; width: 15px; height: 15px; padding: 3px; border-radius: 50%; background: #e5484d; background-clip: content-box; margin-right: 3px; vertical-align: middle; cursor: help; }
+  .leyenda-pedido { font-size: 12px; color: var(--muted); }
   #barraEstrella { display: none; padding: 4px 0 12px; }
   .estrella-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .estrella-chip { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 6px 14px; }
@@ -116,6 +119,7 @@
       <option value="stock">Ordenar: mayor stock (depósito + Full)</option>
     </select>
     <label class="chk"><input type="checkbox" id="ocultarSolicitados" checked> Ocultar ya solicitados</label>
+    <span class="leyenda-pedido"><span class="punto-pedido" style="cursor:default"></span>= ya solicitado (pasá el mouse para ver la fecha)</span>
     <button class="secondary" id="btnExcluirEstrella" aria-pressed="false" title="Oculta del tablero los productos de los grupos estrella (los definidos en ⭐ Productos estrella)">⭐ Excluir productos estrella</button>
     <button class="secondary" id="btnLimpiarFiltros" title="Vuelve buscador, proveedor, categoría, orden y vista a sus valores por defecto">✕ Limpiar filtros</button>
     <div class="toolbar-right">
@@ -496,6 +500,30 @@ function filasVisibles() {
   return rows.sort(ORDENADORES[ordenarPor] || ORDENADORES.sugerido);
 }
 
+function fechaPedidoCorta(iso) {
+  if (!iso) return null;
+  // Hora de Argentina: un pedido hecho a las 22:00 no debe figurar con la fecha de mañana.
+  return new Date(iso).toLocaleDateString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function puntoPedidoHTML(p) {
+  // Punto rojo en los productos con un pedido abierto (línea sin recibir
+  // completa en un pedido no cancelado) — así, con "Ocultar ya solicitados"
+  // apagado, se ve de un vistazo cuáles ya tienen algo en camino y no se
+  // vuelven a pedir por error. Al pasar el mouse muestra, por destino, cuándo
+  // se hizo el pedido (pedidos_abiertos, de la API); si un destino tiene más de
+  // un pedido abierto, aparecen todas las fechas.
+  const destinos = p.destinos_ya_solicitados || [];
+  if (!destinos.length) return "";
+  const abiertos = p.pedidos_abiertos || [];
+  const lineas = destinos.map((d) => {
+    const fechas = [...new Set(abiertos.filter((x) => x.destino === d).map((x) => fechaPedidoCorta(x.fecha)).filter(Boolean))];
+    const cuando = fechas.length ? `solicitado el ${fechas.join(" y el ")}` : "solicitado";
+    return `${DESTINO_LABEL[d] || d}: ${cuando}`;
+  });
+  return `<span class="punto-pedido" title="Pedido abierto&#10;${lineas.join("&#10;")}"></span>`;
+}
+
 function alertaDestinoTexto(p, d) {
   // La alerta por canal que guarda el backend (alerta_*) exige vel/sem >= 1
   // para decir SIN STOCK; si no, un agotado que vende poco figura como
@@ -652,7 +680,7 @@ function render() {
     tr.innerHTML = `
       <td><input type="checkbox" class="chk-fila" ${SELECTED.has(p.sku) ? "checked" : ""}></td>
       <td><span class="flecha ${abierta ? "abierta" : ""}">▸</span></td>
-      <td>${p.sku}</td>
+      <td>${puntoPedidoHTML(p)}${p.sku}</td>
       <td class="col-producto" title="${(p.nombre || "").replace(/"/g, "&quot;")}">${p.fuera_de_temporada ? '<span title="Fuera de temporada">🍂 </span>' : ""}${p.nombre || "<span class=muted>(sin nombre)</span>"}</td>
       <td></td>
       <td>${fmtNum(DESTINOS.deposito.stock(p))}</td>

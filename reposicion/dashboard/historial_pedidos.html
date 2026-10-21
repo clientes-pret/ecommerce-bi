@@ -105,7 +105,7 @@ function renderPedido(p) {
     </div>
     <div class="detalle">
       <table>
-        <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th>Full</th><th>Total</th><th>Recibido</th><th>Estado</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th>Full</th><th>Total</th><th>Recibido</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${grupos.map((g) => {
             const totalPedido = (g.deposito?.cantidad_pedida || 0) + (g.full?.cantidad_pedida || 0);
@@ -123,6 +123,9 @@ function renderPedido(p) {
               <td class="total-cell">${totalPedido}</td>
               <td>${totalRecibido}</td>
               <td>${estadoAgregado(g)}</td>
+              <td>${p.estado !== "cancelado" && estadoAgregado(g) !== "✓ Completo"
+                ? `<button class="secondary btn-recibido" data-item-ids="${[g.deposito, g.full].filter((i) => i && !i.recibido_completo).map((i) => i.id).join(",")}" title="Cerrar esta línea a mano como recibida (opcional — el sistema también las detecta solo)">✓ Recibido</button>`
+                : ""}</td>
             </tr>`;
           }).join("")}
         </tbody>
@@ -144,6 +147,23 @@ function renderPedido(p) {
   el.querySelector(".btn-descargar-pdf").addEventListener("click", (e) => {
     e.stopPropagation();
     generarPDF(p.proveedor, p.items || [], el.querySelector(".sel-unidad").value);
+  });
+
+  el.querySelectorAll(".btn-recibido").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const sku = btn.closest("tr").dataset.sku;
+      if (!confirm(`¿Marcar ${sku} como recibido completo? Deja de contar como pedido abierto.`)) return;
+      btn.disabled = true;
+      try {
+        const item_ids = btn.dataset.itemIds.split(",").map(Number);
+        await apiFetch(`/pedidos/${p.id}/recibir`, { method: "POST", body: JSON.stringify({ item_ids }) });
+        cargar();
+      } catch (err) {
+        alert(`No se pudo marcar como recibido: ${err.message}`);
+        btn.disabled = false;
+      }
+    });
   });
 
   const btnGuardar = el.querySelector(".btn-guardar-cantidades");

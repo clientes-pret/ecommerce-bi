@@ -17,7 +17,7 @@ const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'prov');
 const id = qs('id'), H = hoy(), PAG = 100;
 const TIPO = { comprobante: 'Comprobante', nota_credito: 'Nota de crédito', nota_debito: 'Nota de débito', pago: 'Pago', ajuste: 'Ajuste', saldo_inicial: 'Saldo inicial', otro: 'Otro' };
-let anio = 'ult', prov, movs = [], recs = [], items = [], a, tab = 'resumen', solo = 'todo', mostrar = PAG;
+let pedidos = [], skuInfo = {}, nombresRepo = [], anio = 'ult', prov, movs = [], recs = [], items = [], a, tab = 'resumen', solo = 'todo', mostrar = PAG;
 
 async function cargarMovs() {
   let todo = [], desde = 0;
@@ -34,6 +34,15 @@ const [{ data: p }] = await Promise.all([
   sb.from('cc_recepcion_items').select('sku,descripcion,cant_contada,cc_recepciones!inner(proveedor_id,estado)').eq('cc_recepciones.proveedor_id', id).neq('cc_recepciones.estado', 'anulada').limit(2000).then(({ data }) => (items = data || [])),
 ]);
 prov = p;
+async function cargarPedidos() {
+  const rn = prov?.repo_nombres || [];
+  if (!rn.length) { const { data } = await sb.from('repo_pedidos').select('proveedor'); nombresRepo = [...new Set((data || []).map((x) => x.proveedor))].sort(); pedidos = []; return; }
+  const { data } = await sb.from('repo_pedidos').select('id,creado_at,creado_por,estado,notas,unidad_medida,repo_pedido_items(sku,destino,cantidad_pedida,cantidad_recibida,recibido_completo)').in('proveedor', rn).order('creado_at', { ascending: false }).limit(100);
+  pedidos = data || [];
+  const skus = [...new Set(pedidos.flatMap((x) => x.repo_pedido_items.map((i) => i.sku)))];
+  for (let i = 0; i < skus.length; i += 100) { const { data: pr } = await sb.from('cc_productos').select('sku,producto,color,medida').in('sku', skus.slice(i, i + 100)); (pr || []).forEach((x) => (skuInfo[x.sku] = x)); }
+}
+if (prov) await cargarPedidos();
 if (!prov) { $('#app').innerHTML = '<p>Proveedor no encontrado.</p>'; throw new Error('404'); }
 
 function kpi(l, v, sub, cls = '', md = true) { return `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor ${md ? 'md' : ''} num ${cls}">${v}</div><div class="cc-sub">${sub || '&nbsp;'}</div></div>`; }
@@ -49,6 +58,13 @@ function selAnio() {
   for (let y = y1; y >= y0; y--) op.push([String(y), String(y)]);
   return `<select id="anio" style="width:auto;min-height:30px;padding:2px 8px;float:right">${op.map(([v, t]) => `<option value="${v}" ${anio === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
 }
+const ABIERTO = ['enviado', 'recibido_parcial'];
+const ptotal = (x) => x.repo_pedido_items.reduce((s, i) => s + i.cantidad_pedida, 0), prec = (x) => x.repo_pedido_items.reduce((s, i) => s + Math.min(i.cantidad_recibida, i.cantidad_pedida), 0);
+function pedidosKpi() {
+  if (!(prov.repo_nombres || []).length) return kpi('Pedidos de reposición', '—', '<a href="#" data-tab="ped">Vincular con reposición →</a>');
+  const ab = pedidos.filter((x) => ABIERTO.includes(x.estado)), pend = ab.reduce((s, x) => s + ptotal(x) - prec(x), 0), u = pedidos.find((x) => x.estado !== 'cancelado');
+  return kpi('Pedidos abiertos', ab.length, ab.length ? `${pend} u. pendientes de recibir · <a href="#" data-tab="ped">ver</a>` : (u ? `Último pedido ${fecha(u.creado_at)} · ${hace(diasEntre(u.creado_at, H))}` : 'Sin pedidos'));
+}
 function resumen() {
   const per = periodo();
   const up = a.ultimoPago, ui = a.ultimoIngreso, pr = a.cheques[0];
@@ -62,6 +78,7 @@ function resumen() {
     ${kpi('Cheques sin cobrar', peso0(a.chequesTotal), a.cheques.length ? `${a.cheques.length} cheque${a.cheques.length > 1 ? 's' : ''}${pr?.cheque_fecha_cobro ? ' · próximo ' + fecha(pr.cheque_fecha_cobro) : ''}` : 'Ninguno')}
     ${kpi('Plazo medio de pago', a.plazoMedio != null ? a.plazoMedio + ' días' : '—', 'desde la factura, últimos 12 meses')}
     ${kpi('Facturado 12 meses', peso0(a.compras12), a.tendencia != null ? `${a.tendencia >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(a.tendencia))}% vs 12 meses anteriores` : 'sin año anterior para comparar')}
+    ${pedidosKpi()}
     ${kpi('Pagado 12 meses', peso0(a.pagos12), `${a.pagos12n} pagos`)}
     ${kpi('Factura promedio', a.ticket != null ? peso0(a.ticket) : '—', a.facturas12 ? `${a.facturas12} facturas · una cada ${a.cadenciaDias ?? '—'} días` : 'sin facturas en 12 meses')}
   </div>
@@ -93,6 +110,25 @@ function cuenta() {
   ${f.length > mostrar ? '<button class="btn" id="mas" style="margin:12px">Ver más antiguos</button>' : ''}</div>`;
 }
 
+const EST = { enviado: ['Enviado', 'warn'], recibido_parcial: ['Recibido parcial', 'warn'], recibido_completo: ['Recibido completo', 'ok'], cancelado: ['Cancelado', ''] };
+function tabPedidos() {
+  const rn = prov.repo_nombres || [];
+  const vinc = `<div class="card"><b>Vinculado con reposición como:</b> ${rn.length ? rn.map((n) => `<span class="chip">${esc(n)} <a href="#" data-quitar="${esc(n)}" title="Quitar">✕</a></span>`).join(' ') : '<span class="muted">todavía nada</span>'}
+    <div class="row wrapRow" style="margin-top:10px"><select id="nrepo" style="max-width:320px"><option value="">Elegí el nombre que usás en reposición…</option>${nombresRepoOpc().map((n) => `<option>${esc(n)}</option>`).join('')}</select><button class="btn sm primary" id="vincular">Vincular</button></div>
+    ${!nombresRepoOpc().length ? '<div class="cc-nota">Todavía no hay pedidos en reposición con otro nombre para vincular.</div>' : ''}</div>`;
+  if (!rn.length) return vinc;
+  return vinc + (pedidos.length ? pedidos.map((x) => { const [t, c] = EST[x.estado] || [x.estado, '']; const T = ptotal(x), R = prec(x), u = x.unidad_medida === 'bultos' ? 'bultos' : 'u.';
+    return `<details class="card"><summary style="cursor:pointer"><b>Pedido #${x.id}</b> · ${fecha(x.creado_at)} <span class="muted small">por ${esc(x.creado_por)}</span> <span class="chip ${c}">${t}</span> <span class="num" style="float:right">${R} de ${T} ${u} recibidas</span></summary>
+      ${x.notas ? `<p class="small muted">${esc(x.notas)}</p>` : ''}<div class="tablewrap"><table><thead><tr><th>SKU</th><th>Destino</th><th class="r">Pedido</th><th class="r">Recibido</th><th class="r">Pendiente</th></tr></thead><tbody>
+      ${x.repo_pedido_items.map((i) => `<tr><td><b>${esc(i.sku)}</b><div class="small muted">${esc([skuInfo[i.sku]?.producto, skuInfo[i.sku]?.color, skuInfo[i.sku]?.medida].filter(Boolean).join(' · '))}</div></td><td>${esc(i.destino.replace('_', ' '))}</td><td class="r num">${i.cantidad_pedida}</td><td class="r num">${i.cantidad_recibida}</td><td class="r num ${!i.recibido_completo && x.estado !== 'cancelado' ? 'warn-t' : ''}">${x.estado === 'cancelado' ? '' : Math.max(0, i.cantidad_pedida - i.cantidad_recibida)}</td></tr>`).join('')}</tbody></table></div>
+      ${x.unidad_medida === 'bultos' ? '<div class="cc-nota">Pedido en bultos: la recepción automática no cuenta bultos, el recibido hay que confirmarlo a mano.</div>' : ''}</details>`; }).join('')
+    : '<p class="muted">No hay pedidos de reposición con ese nombre todavía.</p>');
+}
+function nombresRepoOpc() {
+  const w = (prov.nombre.toLowerCase().match(/[a-záéíóúñ]{4,}/g) || []), ya = prov.repo_nombres || [];
+  return nombresRepo.filter((n) => !ya.includes(n)).sort((a, b) => w.filter((x) => b.toLowerCase().includes(x)).length - w.filter((x) => a.toLowerCase().includes(x)).length);
+}
+async function guardarVinculo(lista) { await sb.from('cc_proveedores').update({ repo_nombres: lista }).eq('id', id); prov.repo_nombres = lista; await cargarPedidos(); pintar(); }
 function mercaderia() {
   return `<div class="card tablewrap">${recs.length ? `<table><thead><tr><th>Fecha</th><th>Remito</th><th class="r">Bultos</th><th class="r">Unidades</th><th>Mati dice</th><th>Estado</th></tr></thead><tbody>
     ${recs.map((r) => `<tr class="click" onclick="location.href='recepcion.html?id=${r.id}'"><td>${fechaHora(r.fecha)}</td><td>${esc(r.nro_remito || 's/n')}</td><td class="r">${r.bultos ?? ''}</td><td class="r num">${r.unidades_contadas}</td><td>${r.recibido_completo ? '<span class="chip ok">Completo</span>' : '<span class="chip bad">Faltante</span>'}</td><td>${chipEstado(r.estado)}</td></tr>`).join('')}</tbody></table>`
@@ -105,9 +141,11 @@ function pintar() {
   <div class="row between wrapRow"><div><h1>${esc(prov.nombre)} ${prov.activo ? '' : '<span class="chip">inactivo</span>'}</h1><div class="muted small">${prov.grupo ? 'Grupo: ' + esc(prov.grupo) + ' · ' : ''}${a.n} movimientos${a.desde ? ' desde ' + fecha(a.desde) : ''}</div></div>
     <div class="row wrapRow"><a class="btn primary sm" href="nuevo.html?proveedor=${id}&tipo=comprobante">＋ Factura</a><a class="btn primary sm" href="nuevo.html?proveedor=${id}&tipo=pago">＋ Pago</a>
     <button class="btn sm" id="activo">${prov.activo ? 'Marcar inactivo' : 'Reactivar'}</button></div></div>
-  <div class="tabs">${[['resumen', 'Centro de comando'], ['cc', 'Cuenta corriente'], ['rec', 'Mercadería recibida']].map(([k, t]) => `<button class="btn sm ${tab === k ? 'primary' : ''}" data-tab="${k}">${t}</button>`).join('')}</div>
-  ${tab === 'resumen' ? resumen() : tab === 'cc' ? cuenta() : mercaderia()}`;
+  <div class="tabs">${[['resumen', 'Centro de comando'], ['cc', 'Cuenta corriente'], ['ped', 'Pedidos'], ['rec', 'Mercadería recibida']].map(([k, t]) => `<button class="btn sm ${tab === k ? 'primary' : ''}" data-tab="${k}">${t}</button>`).join('')}</div>
+  ${tab === 'resumen' ? resumen() : tab === 'cc' ? cuenta() : tab === 'ped' ? tabPedidos() : mercaderia()}`;
   $$('[data-tab]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); tab = b.dataset.tab; pintar(); scrollTo(0, 0); }));
+  const vb = $('#vincular'); if (vb) vb.onclick = () => { const v = $('#nrepo').value; if (v) guardarVinculo([...(prov.repo_nombres || []), v]); };
+  $$('[data-quitar]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); guardarVinculo((prov.repo_nombres || []).filter((n) => n !== b.dataset.quitar)); }));
   const an = $('#anio'); if (an) an.onchange = () => { anio = an.value; pintar(); };
   const sel = $('#solo'); if (sel) sel.onchange = () => { solo = sel.value; mostrar = PAG; pintar(); };
   const mas = $('#mas'); if (mas) mas.onclick = () => { mostrar += PAG; pintar(); };

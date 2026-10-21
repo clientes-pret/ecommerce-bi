@@ -8,8 +8,9 @@ reposicion/jobs/daily_stock.py — corre 1 vez por día (GitHub Actions cron).
 2) Upsertea repo_stock_snapshot para la fecha de hoy.
 3) Compara contra el snapshot anterior: abre/cierra filas en
    repo_quiebre_historial cuando un SKU/destino pasa a 0 o vuelve a tener stock.
-4) Reconcilia pedidos abiertos (repo_pedido_items con recibido_completo=false)
-   contra el stock de hoy — marca recepción completa/parcial.
+4) Sincroniza ventas de los 4 canales y, al final, reconcilia los pedidos
+   abiertos (repo_pedido_items con recibido_completo=false) — marca recepción
+   completa/parcial. La lógica vive en reposicion/recepciones.py.
 
 Uso local: python3 -m reposicion.jobs.daily_stock
 """
@@ -21,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from reposicion import core, db, ventas_sync
+from reposicion import core, db, recepciones, ventas_sync
 
 DESTINOS = ("deposito", "full_pret", "full_lavan")
 DESTINO_A_COLUMNA = {
@@ -182,59 +183,6 @@ def detect_quiebres(config, hoy_rows, prev_by_sku, fecha_hoy):
     core.tnlog(f"  {len(nuevas_aperturas)} quiebres nuevos detectados")
 
 
-def reconciliar_pedidos(config, hoy_by_sku, fecha_hoy):
-    pendientes = db.select(config, "repo_pedido_items", params={
-        "select": "id,pedido_id,sku,destino,cantidad_pedida,stock_al_pedir,cantidad_recibida",
-        "recibido_completo": "eq.false",
-    })
-    if not pendientes:
-        return
-
-    # Un pedido cancelado no debe seguir "recibiendo" stock por esta
-    # reconciliación automática — si no, un pedido cancelado con líneas aún
-    # sin cerrar quedaría marcado como recibido_parcial/completo apenas
-    # entrara stock nuevo de ese SKU por cualquier otro motivo.
-    cancelados = db.select(config, "repo_pedidos", params={
-        "select": "id", "estado": "eq.cancelado",
-    })
-    ids_cancelados = {p["id"] for p in cancelados}
-    pendientes = [i for i in pendientes if i["pedido_id"] not in ids_cancelados]
-    if not pendientes:
-        return
-
-    pedidos_tocados = set()
-    for item in pendientes:
-        sku, destino = item["sku"], item["destino"]
-        stock_hoy = hoy_by_sku.get(sku, {}).get(destino)
-        if stock_hoy is None or item.get("stock_al_pedir") is None:
-            continue
-        delta = stock_hoy - item["stock_al_pedir"]
-        recibido = min(item["cantidad_pedida"], max(0, delta))
-        if recibido == item.get("cantidad_recibida", 0):
-            continue  # sin cambios desde la última corrida
-        body = {"cantidad_recibida": recibido}
-        if recibido >= item["cantidad_pedida"]:
-            body["recibido_completo"] = True
-            body["recibido_at"] = datetime.now(timezone.utc).isoformat()
-        db.patch(config, "repo_pedido_items", params={"id": f"eq.{item['id']}"}, body=body)
-        pedidos_tocados.add(item["pedido_id"])
-
-    for pedido_id in pedidos_tocados:
-        items = db.select(config, "repo_pedido_items", params={
-            "select": "recibido_completo,cantidad_recibida",
-            "pedido_id": f"eq.{pedido_id}",
-        })
-        if all(i["recibido_completo"] for i in items):
-            nuevo_estado = "recibido_completo"
-        elif any(i["recibido_completo"] or i["cantidad_recibida"] > 0 for i in items):
-            nuevo_estado = "recibido_parcial"
-        else:
-            continue
-        db.patch(config, "repo_pedidos", params={"id": f"eq.{pedido_id}"}, body={"estado": nuevo_estado})
-
-    core.tnlog(f"  {len(pedidos_tocados)} pedidos con recepción actualizada")
-
-
 def main():
     config = db.load_config()
     fecha_hoy = date.today().isoformat()
@@ -249,7 +197,6 @@ def main():
     hoy_rows = upsert_snapshot(config, stock_by_sku, fecha_hoy)
 
     detect_quiebres(config, hoy_rows, prev_by_sku, fecha_hoy)
-    reconciliar_pedidos(config, stock_by_sku, fecha_hoy)
 
     core.tnlog("→ Sincronizando ventas incrementales de los 4 canales...")
     for canal in ("tn_pret", "tn_lavan", "ml_pret", "ml_lavan"):
@@ -257,6 +204,10 @@ def main():
             ventas_sync.sync_incremental(config, canal, item_details=item_details_by_channel.get(canal))
         except Exception as e:
             core.tnlog(f"  ⚠ Sync de ventas falló para {canal}: {e}")
+
+    # Después del sync de ventas: la detección de mercadería recibida usa las
+    # ventas desde el pedido (ver reposicion/recepciones.py).
+    recepciones.reconciliar_pedidos(config, stock_by_sku)
 
     core.tnlog("✓ Job diario terminado")
 

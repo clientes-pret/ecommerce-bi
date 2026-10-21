@@ -703,6 +703,16 @@ def calc_trend(sold_first, sold_second, active_days):
         label = f"→ {pct:+.0f}%"
     return label, pct
 
+def fecha_quiebre_str(dias):
+    """Fecha estimada de quiebre a `dias` de hoy. Un stock cargado con un valor
+    absurdo en Tiendanube/ML (ej. 9999999) con velocidad mínima da una fecha
+    fuera del rango de datetime — sin fecha en ese caso, en vez de romper la
+    corrida entera."""
+    try:
+        return (NOW + timedelta(days=dias)).strftime("%d/%m/%Y")
+    except OverflowError:
+        return "—"
+
 def units_to_order(stock, vel_diaria, coverage=None):
     """Units needed to reach `coverage` days of stock at current velocity.
 
@@ -774,7 +784,7 @@ def build_rows(results):
 
         if vel_full_diaria > 0:
             dias_q_full = int(stock_full / vel_full_diaria)
-            fecha_q_full = (NOW + timedelta(days=dias_q_full)).strftime("%d/%m/%Y")
+            fecha_q_full = fecha_quiebre_str(dias_q_full)
         else:
             dias_q_full, fecha_q_full = 9999, "—"
 
@@ -971,7 +981,7 @@ def build_rows(results):
 
             if vel_dep_diaria > 0 and stock_mgmt:
                 dias_quiebre  = int(stock / vel_dep_diaria)
-                fecha_quiebre = (NOW + timedelta(days=dias_quiebre)).strftime("%d/%m/%Y")
+                fecha_quiebre = fecha_quiebre_str(dias_quiebre)
             else:
                 dias_quiebre  = 9999
                 fecha_quiebre = "—"
@@ -1109,7 +1119,7 @@ def build_rows(results):
 
             if vel_dep_diaria > 0 and stock_mgmt:
                 dias_quiebre  = int(stock / vel_dep_diaria)
-                fecha_quiebre = (NOW + timedelta(days=dias_quiebre)).strftime("%d/%m/%Y")
+                fecha_quiebre = fecha_quiebre_str(dias_quiebre)
             else:
                 dias_quiebre  = 9999
                 fecha_quiebre = "—"

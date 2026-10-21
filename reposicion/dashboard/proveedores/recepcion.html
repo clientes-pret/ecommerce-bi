@@ -15,7 +15,7 @@ import { sb, $, esc, guard, nav, qs, peso, fecha, fechaHora, hoy, parseMonto } f
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'inicio');
 const id = qs('id');
-let r, items, fotos = [], vinculados = [], candidatos = [], sel = new Set(), err = '', guardando = false;
+let pedAb = [], r, items, fotos = [], vinculados = [], candidatos = [], sel = new Set(), err = '', guardando = false;
 
 async function cargar() {
   ({ data: r } = await sb.from('cc_recepciones_resumen').select('*').eq('id', id).maybeSingle());
@@ -26,6 +26,9 @@ async function cargar() {
   ({ data: vinculados } = await sb.from('cc_movimientos').select('*').eq('recepcion_id', id));
   const desde = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
   ({ data: candidatos } = await sb.from('cc_movimientos').select('id,fecha,detalle,ingreso').eq('proveedor_id', r.proveedor_id).is('recepcion_id', null).gt('ingreso', 0).gte('fecha', desde).order('fecha', { ascending: false }).limit(40));
+  pedAb = [];
+  const { data: pv } = await sb.from('cc_proveedores').select('repo_nombres').eq('id', r.proveedor_id).maybeSingle();
+  if (pv?.repo_nombres?.length) { const { data } = await sb.from('repo_pedidos').select('id,creado_at,estado,unidad_medida,repo_pedido_items(sku,cantidad_pedida,cantidad_recibida,recibido_completo)').in('proveedor', pv.repo_nombres).in('estado', ['enviado', 'recibido_parcial']).order('creado_at'); pedAb = data || []; }
   vinculados ||= []; candidatos ||= []; items ||= [];
 }
 
@@ -44,6 +47,7 @@ function pintar() {
         <td class="r num">${i.cant_remito ?? '—'}</td><td class="r num"><b>${i.cant_contada}</b></td></tr>`).join('')}
       <tr><td><b>Total</b></td><td class="r num">${items.reduce((a, i) => a + (i.cant_remito || 0), 0)}</td><td class="r num"><b>${r.unidades_contadas}</b></td></tr></tbody></table>
       ${dif || sinSku ? `<p class="small" style="margin-top:8px">${dif ? `<span class="chip warn">${dif} línea(s) difieren del remito</span> ` : ''}${sinSku ? `<span class="chip bad">${sinSku} sin SKU</span>` : ''}</p>` : ''}</div></div></div>
+  ${pedAb.length ? `<h2>Lo que pedimos y falta recibir</h2><div class="card tablewrap"><table><thead><tr><th>SKU</th><th>Pedido</th><th class="r">Pendiente</th><th class="r">Mati contó acá</th></tr></thead><tbody>${pedAb.flatMap((x) => x.repo_pedido_items.filter((i) => !i.recibido_completo).map((i) => { const c = items.filter((y) => y.sku === i.sku).reduce((a, y) => a + y.cant_contada, 0); return `<tr class="${c ? '' : ''}"><td><b>${esc(i.sku)}</b></td><td class="small muted">#${x.id} · ${fecha(x.creado_at)}${x.unidad_medida === 'bultos' ? ' · en bultos' : ''}</td><td class="r num">${Math.max(0, i.cantidad_pedida - i.cantidad_recibida)}</td><td class="r num">${c ? `<b class="ok-t">${c}</b>` : '<span class="muted">—</span>'}</td></tr>`; })).join('')}</tbody></table></div>` : ''}
   <h2>Factura y control</h2><div class="card">
     ${vinculados.length ? `<b>Facturas vinculadas</b>${vinculados.map((v) => `<div class="row between" style="padding:6px 0"><span>${fecha(v.fecha)} · ${esc(v.detalle)}</span><b class="num">${peso(v.ingreso)}</b></div>`).join('')}` : ''}
     ${!cerrada ? `${candidatos.length ? `<label>Vincular facturas ya cargadas en la cuenta (últimos 90 días)</label>${candidatos.map((c) => `<label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin:6px 0"><input type="checkbox" data-c="${c.id}" style="width:auto;min-height:0" ${sel.has(c.id) ? 'checked' : ''}> ${fecha(c.fecha)} · ${esc(c.detalle)} · <b class="num">${peso(c.ingreso)}</b></label>`).join('')}` : ''}
