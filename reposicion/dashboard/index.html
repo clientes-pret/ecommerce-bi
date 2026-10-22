@@ -30,6 +30,11 @@
   th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
   td.col-producto { max-width: 280px; overflow: hidden; text-overflow: ellipsis; cursor: help; }
   th { color: var(--muted); font-weight: 600; }
+  th.ordenable { cursor: pointer; user-select: none; }
+  th.ordenable:hover { color: var(--text); }
+  th.ordenable:not([data-dir])::after { content: " ↕"; opacity: 0.3; }
+  th.ordenable[data-dir="asc"]::after { content: " ▲"; color: var(--accent); }
+  th.ordenable[data-dir="desc"]::after { content: " ▼"; color: var(--accent); }
   tbody tr.fila-producto { cursor: pointer; }
   tbody tr.fila-producto:hover { background: rgba(255,255,255,0.03); }
   .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; display: inline-block; }
@@ -117,6 +122,7 @@
       <option value="ganancia">Ordenar: mayor ganancia 60d</option>
       <option value="revenue">Ordenar: mayor revenue 60d</option>
       <option value="stock">Ordenar: mayor stock (depósito + Full)</option>
+      <option value="__col" hidden>Ordenar: por columna</option>
     </select>
     <label class="chk"><input type="checkbox" id="ocultarSolicitados" checked> Ocultar ya solicitados</label>
     <span class="leyenda-pedido"><span class="punto-pedido" style="cursor:default"></span>= ya solicitado (pasá el mouse para ver la fecha)</span>
@@ -150,16 +156,16 @@
       <tr>
         <th><input type="checkbox" id="chkTodos" title="Seleccionar todos los que cumplen el filtro actual"></th>
         <th></th>
-        <th>SKU</th>
-        <th>Producto</th>
-        <th>Proveedor</th>
-        <th>Stock Depósito</th>
-        <th>Stock Full PAH</th>
-        <th>Vel/Sem</th>
-        <th id="thReponerDeposito">Reponer Depósito</th>
-        <th id="thReponerFull">Reponer Full</th>
-        <th>Estado</th>
-        <th>Quiebre depósito</th>
+        <th class="ordenable" data-orden="sku" title="Click para ordenar">SKU</th>
+        <th class="ordenable" data-orden="producto" title="Click para ordenar">Producto</th>
+        <th class="ordenable" data-orden="proveedor" title="Click para ordenar">Proveedor</th>
+        <th class="ordenable" data-orden="stock_dep" title="Click para ordenar">Stock Depósito</th>
+        <th class="ordenable" data-orden="stock_full" title="Click para ordenar">Stock Full PAH</th>
+        <th class="ordenable" data-orden="vel" title="Click para ordenar">Vel/Sem</th>
+        <th class="ordenable" data-orden="rep_dep" id="thReponerDeposito" title="Click para ordenar">Reponer Depósito</th>
+        <th class="ordenable" data-orden="rep_full" id="thReponerFull" title="Click para ordenar">Reponer Full</th>
+        <th class="ordenable" data-orden="estado" title="Click para ordenar (de más a menos grave)">Estado</th>
+        <th class="ordenable" data-orden="quiebre" title="Click para ordenar">Quiebre depósito</th>
       </tr>
     </thead>
     <tbody id="filas"></tbody>
@@ -436,6 +442,79 @@ function stockTotal(p) {
   return Object.values(DESTINOS).reduce((s, d) => s + (d.stock(p) || 0), 0);
 }
 
+// ─── Orden por columna ──────────────────────────────────────────────────────
+// Click en el título de una columna ordena TODAS las filas filtradas (antes de
+// paginar, no solo la página visible); otro click en el mismo título invierte.
+// Los números arrancan de mayor a menor, los textos de A a Z y la fecha de
+// quiebre de la más próxima a la más lejana. Los vacíos van siempre al final.
+// Convive con el selector "Ordenar:": elegir ahí un orden preset suelta el de
+// columna, y "Limpiar filtros" también.
+let ordenColumna = null; // { clave, dir: "asc" | "desc" }
+
+const NIVEL_ESTADO = {
+  "🔴 SIN STOCK": 6, "🔴 CRÍTICO": 5, [ETIQUETA_MOVER]: 4, "🟡 BAJO": 3,
+  "🟢 OK": 2, "⚫ Sin ventas con stock": 1, "⚫ Sin stock +60 d": 0,
+};
+
+function claveQuiebreDeposito(p) {
+  // Misma fecha que muestra la columna (ver quiebreDestinoHTML): la real si ya
+  // quebró, la estimada si todavía tiene stock. "Quebró antes del <primer
+  // snapshot>" no tiene fecha exacta y se toma como la más antigua.
+  const d = DESTINOS.deposito;
+  const fecha = p[d.fechaQuiebre];
+  if (d.stock(p) === 0 && (p[d.velDiaria] || 0) > 0) {
+    if (fecha && fecha <= hoyLocalISO()) return fecha;
+    if (fecha) return p.stock_actualizado_at ? new Date(p.stock_actualizado_at).toLocaleDateString("en-CA") : hoyLocalISO();
+    return "0000-00-00";
+  }
+  return fecha || null;
+}
+
+const COLUMNAS_ORDEN = {
+  sku:        { etiqueta: "SKU", tipo: "texto", dirInicial: "asc", valor: (p) => p.sku },
+  producto:   { etiqueta: "Producto", tipo: "texto", dirInicial: "asc", valor: (p) => p.nombre },
+  proveedor:  { etiqueta: "Proveedor", tipo: "texto", dirInicial: "asc", valor: (p) => p.proveedor },
+  stock_dep:  { etiqueta: "Stock depósito", tipo: "numero", dirInicial: "desc", valor: (p) => DESTINOS.deposito.stock(p) },
+  stock_full: { etiqueta: "Stock Full", tipo: "numero", dirInicial: "desc", valor: (p) => DESTINOS.full_pret.stock(p) },
+  vel:        { etiqueta: "Vel/Sem", tipo: "numero", dirInicial: "desc", valor: (p) => velSemanalTotal(p) },
+  rep_dep:    { etiqueta: "Reponer depósito", tipo: "numero", dirInicial: "desc", valor: (p) => p.a_reponer_deposito },
+  rep_full:   { etiqueta: "Reponer Full", tipo: "numero", dirInicial: "desc", valor: (p) => p.a_reponer_full_pret },
+  estado:     { etiqueta: "Estado", tipo: "numero", dirInicial: "desc", valor: (p) => NIVEL_ESTADO[estadoGeneral(p)] },
+  quiebre:    { etiqueta: "Quiebre depósito", tipo: "texto", dirInicial: "asc", valor: claveQuiebreDeposito },
+};
+
+function ordenarPorColumna(rows, clave, dir) {
+  const col = COLUMNAS_ORDEN[clave];
+  const signo = dir === "asc" ? 1 : -1;
+  const vacio = (v) => v === null || v === undefined || v === "" || Number.isNaN(v);
+  // Se calcula la clave una sola vez por fila (estadoGeneral no es barato).
+  const conClave = rows.map((p) => ({ p, v: col.valor(p) }));
+  conClave.sort((a, b) => {
+    const va = vacio(a.v), vb = vacio(b.v);
+    if (va || vb) return va === vb ? a.p.sku.localeCompare(b.p.sku) : (va ? 1 : -1);
+    const c = col.tipo === "texto"
+      ? String(a.v).localeCompare(String(b.v), "es", { numeric: true, sensitivity: "base" })
+      : a.v - b.v;
+    return c !== 0 ? signo * c : a.p.sku.localeCompare(b.p.sku);
+  });
+  return conClave.map((x) => x.p);
+}
+
+function actualizarIndicadoresOrden() {
+  document.querySelectorAll("th.ordenable").forEach((th) => {
+    if (ordenColumna && th.dataset.orden === ordenColumna.clave) th.dataset.dir = ordenColumna.dir;
+    else delete th.dataset.dir;
+  });
+  const sel = document.getElementById("ordenarPor");
+  const opt = sel.querySelector('option[value="__col"]');
+  if (ordenColumna) {
+    opt.textContent = `Ordenar: ${COLUMNAS_ORDEN[ordenColumna.clave].etiqueta} ${ordenColumna.dir === "asc" ? "▲" : "▼"}`;
+    sel.value = "__col";
+  } else if (sel.value === "__col") {
+    sel.value = "sugerido";
+  }
+}
+
 function renderCategorias() {
   const sel = document.getElementById("filtroCategoria");
   const actuales = new Set(Array.from(sel.options).map((o) => o.value));
@@ -497,6 +576,7 @@ function filasVisibles() {
       p.sku.toLowerCase().includes(busqueda) || (p.nombre || "").toLowerCase().includes(busqueda)
     );
   }
+  if (ordenColumna) return ordenarPorColumna(rows, ordenColumna.clave, ordenColumna.dir);
   return rows.sort(ORDENADORES[ordenarPor] || ORDENADORES.sugerido);
 }
 
@@ -1229,7 +1309,20 @@ if (MODO_ESTRELLA) {
 document.getElementById("filtroVista").addEventListener("change", cargar);
 document.getElementById("filtroProveedor").addEventListener("change", filtrar);
 document.getElementById("filtroCategoria").addEventListener("change", filtrar);
-document.getElementById("ordenarPor").addEventListener("change", filtrar);
+document.getElementById("ordenarPor").addEventListener("change", () => {
+  ordenColumna = null; // elegir un orden del selector suelta el orden por columna
+  actualizarIndicadoresOrden();
+  filtrar();
+});
+document.querySelectorAll("th.ordenable").forEach((th) => {
+  th.addEventListener("click", () => {
+    const clave = th.dataset.orden;
+    if (ordenColumna && ordenColumna.clave === clave) ordenColumna.dir = ordenColumna.dir === "asc" ? "desc" : "asc";
+    else ordenColumna = { clave, dir: COLUMNAS_ORDEN[clave].dirInicial };
+    actualizarIndicadoresOrden();
+    filtrar();
+  });
+});
 document.getElementById("ocultarSolicitados").addEventListener("change", filtrar);
 document.getElementById("btnExcluirEstrella").addEventListener("click", alternarExcluirEstrella);
 document.getElementById("buscador").addEventListener("input", filtrar);
@@ -1240,7 +1333,9 @@ document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
   document.getElementById("buscador").value = "";
   document.getElementById("filtroProveedor").value = "";
   document.getElementById("filtroCategoria").value = "";
+  ordenColumna = null;
   document.getElementById("ordenarPor").value = "sugerido";
+  actualizarIndicadoresOrden();
   document.querySelectorAll(".filtro-alerta").forEach((chk) => { chk.checked = true; });
   if (MODO_ESTRELLA) document.getElementById("ocultarSolicitados").checked = false;
   apagarExcluirEstrella();
