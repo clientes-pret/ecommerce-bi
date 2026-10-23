@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P&amp;L · Panel de control</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=10">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// P&L mensual, criterio devengado: la venta cuenta el mes en que se vende.
+// Ventas, neta y costo de productos salen del scorecard (scorecard_canal_dia); publicidad de scorecard_ads_dia;
+// gastos fijos y variables de cc_costos. El margen solo se calcula sobre los días con neta y costo cargados
+// (misma regla que la rentabilidad del Scorecard); lo que no tiene costo se muestra aparte, no se estima.
+import { sb, $, $$, esc, guard, nav, peso0, leerTodo, sumarMes } from './app.js';
+import { MESN } from './analisis.js?v=5';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'pyl');
+
+const CANALES = [
+  { marca: 'pret', canal: 'tn', nombre: 'Tienda Nube · Pret' },
+  { marca: 'pret', canal: 'ml', nombre: 'Mercado Libre · Pret' },
+  { marca: 'pret', canal: 'local', nombre: 'Local · Pret' },
+  { marca: 'lavan', canal: 'tn', nombre: 'Tienda Nube · Laván' },
+  { marca: 'lavan', canal: 'ml', nombre: 'Mercado Libre · Laván' },
+];
+const nom = (ym) => `${MESN[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
+const Nom = (ym) => nom(ym).charAt(0).toUpperCase() + nom(ym).slice(1);
+const pct = (v, base) => (base > 0 ? (v / base * 100).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%' : '—');
+const varPct = (a, b) => (b ? ((a - b) / Math.abs(b)) * 100 : null);
+
+await sb.rpc('cc_costos_al_dia'); // carga los costos que se repiten hasta el mes en curso
+const desde = '2026-01-01';
+const [filas, ads, costos] = await Promise.all([
+  leerTodo('scorecard_canal_dia', 'fecha,marca,canal,ventas,facturacion_neta,costo_productos,costo_envio', ['fecha', 'marca', 'canal'], (q) => q.gte('fecha', desde)),
+  leerTodo('scorecard_ads_dia', 'fecha,marca,plataforma,inversion', ['fecha', 'marca', 'plataforma'], (q) => q.gte('fecha', desde)),
+  leerTodo('cc_costos', 'id,tipo,monto,periodo', ['periodo', 'id'], (q) => q.gte('periodo', desde)),
+]);
+const ultimo = filas.filter((f) => f.ventas != null).reduce((m, f) => (f.fecha > m ? f.fecha : m), '');
+const mesesConDatos = [...new Set(filas.map((f) => f.fecha.slice(0, 7)))].sort();
+let mes = ultimo.slice(0, 7), marca = 'all';
+
+// Números del mes ym para las marcas elegidas.
+function calcular(ym) {
+  const deMarca = (m) => marca === 'all' || m === marca;
+  const canales = CANALES.filter((c) => deMarca(c.marca)).map((c) => {
+    const x = { ...c, ventas: 0, ventasC: 0, costo: 0, comis: 0, contrib: 0 };
+    for (const f of filas) {
+      if (f.marca !== c.marca || f.canal !== c.canal || f.fecha.slice(0, 7) !== ym || f.ventas == null) continue;
+      const v = Number(f.ventas); x.ventas += v;
+      const cubierto = f.facturacion_neta != null && f.costo_productos != null && (c.canal !== 'tn' || f.costo_envio != null);
+      if (!cubierto) continue;
+      const neta = Number(f.facturacion_neta), costo = Number(f.costo_productos), envio = c.canal === 'tn' ? Number(f.costo_envio) : 0;
+      x.ventasC += v; x.costo += costo; x.comis += v - neta + envio; x.contrib += neta - costo - envio;
+    }
+    return x;
+  });
+  const s = (k) => canales.reduce((a, c) => a + c[k], 0);
+  const publicidad = ads.filter((a) => deMarca(a.marca) && a.fecha.slice(0, 7) === ym && a.inversion != null).reduce((a, x) => a + Number(x.inversion), 0);
+  const costosMes = (t) => costos.filter((c) => c.tipo === t && c.periodo.slice(0, 7) === ym).reduce((a, c) => a + Number(c.monto), 0);
+  // Los costos cargados no tienen marca: solo entran en "Ambas".
+  const fijos = marca === 'all' ? costosMes('fijo') : null, variables = marca === 'all' ? costosMes('variable') : null;
+  const ventas = s('ventas'), ventasC = s('ventasC'), contrib = s('contrib');
+  const resultado = contrib - publicidad - (variables || 0) - (fijos || 0);
+  return { ym, canales, ventas, ventasC, costo: s('costo'), comis: s('comis'), contrib, publicidad, fijos, variables, resultado };
+}
+
+function pintar() {
+  const a = calcular(mes), b = calcular(sumarMes(mes, -1)), hayB = b.ventas > 0;
+  const enCurso = mes === ultimo.slice(0, 7);
+  const sinCosto = a.canales.filter((c) => c.ventas - c.ventasC > 1);
+  const ambas = marca === 'all';
+  const lineas = [
+    ['Ventas', a.ventas, b.ventas, 'total'],
+    ['Costo de mercadería', -a.costo, -b.costo],
+    ['Comisiones y envíos', -a.comis, -b.comis],
+    ['Margen de contribución', a.contrib, b.contrib, 'sub'],
+    ['Publicidad (Meta, Google, ML Ads)', -a.publicidad, -b.publicidad],
+    ...(ambas ? [['Costos variables cargados', -a.variables, -b.variables], ['Gastos fijos', -a.fijos, -b.fijos]] : []),
+    [ambas ? 'Resultado operativo' : 'Resultado después de publicidad', a.resultado, b.resultado, 'total'],
+  ];
+  const vtxt = (x, y) => { const v = varPct(x, y); return v == null || !hayB ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1).replace('.', ',')}%`; };
+  // En las líneas de costo la variación es del monto (un costo que baja muestra −), no del signo contable.
+  const filaPL = ([l, x, y, k]) => `<tr class="${k === 'total' ? 'total' : ''}"${k === 'sub' ? ' style="background:#FAF9F6"' : ''}><th scope="row" style="${k ? 'font-weight:700' : 'font-weight:400;padding-left:40px'}">${l}</th>
+    <td class="r num" style="${k ? 'font-weight:700' : ''}${x < 0 && k === 'total' ? ';color:var(--bad)' : ''}">${peso0(x || 0)}</td><td class="r num muted">${pct(Math.abs(x), a.ventas)}</td>
+    <td class="r num muted">${hayB ? peso0(y || 0) : '—'}</td><td class="r num muted">${hayB ? pct(Math.abs(y), b.ventas) : '—'}</td><td class="r num">${k ? vtxt(x, y) : vtxt(Math.abs(x), Math.abs(y))}</td></tr>`;
+  const barras = lineas.map(([l, x, , k]) => `<div style="display:grid;grid-template-columns:minmax(150px,220px) 1fr 110px;gap:12px;align-items:center;margin:8px 0">
+    <span class="small" style="${k ? 'font-weight:600' : ''}">${l}</span>
+    <div style="height:14px;background:var(--line-soft);border-radius:4px;overflow:hidden"><div style="height:100%;width:${a.ventas ? Math.min(100, Math.abs(x) / a.ventas * 100).toFixed(1) : 0}%;background:${k === 'total' && x < 0 ? '#B42318' : k ? '#2449B8' : '#E8935A'}"></div></div>
+    <span class="small num r">${pct(Math.abs(x), a.ventas)}</span></div>`).join('');
+  const filasCanal = a.canales.filter((c) => c.ventas > 0).map((c) => `<tr><th scope="row">${esc(c.nombre)}</th><td class="r num">${peso0(c.ventas)}</td><td class="r num muted">${pct(c.ventas, a.ventas)}</td>
+    <td class="r num">${c.ventasC ? `<b>${peso0(c.contrib)}</b> <span class="small ${c.contrib >= 0 ? 'ok-t' : 'bad-t'}">${pct(c.contrib, c.ventasC)}</span>` : '<span class="chip">Sin costo cargado</span>'}</td>
+    <td class="r num muted">${pct(c.ventasC, c.ventas)}</td></tr>`).join('');
+  const meses = mesesConDatos.filter((m) => m >= '2026-05');
+  const tabs = [['all', 'Ambas'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']].map(([k, t]) => `<button type="button" data-marca="${k}" aria-pressed="${marca === k}">${t}</button>`).join('');
+  const margenPct = a.ventasC ? a.contrib / a.ventasC * 100 : null, margenPctB = b.ventasC ? b.contrib / b.ventasC * 100 : null;
+  const kpi = (l, v, sub, cls = '') => `<div class="cc-card ${cls}"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${sub}</div></div>`;
+  const compara = (x, y) => (hayB && y ? `${vtxt(x, y)} vs ${nom(sumarMes(mes, -1))}` : 'sin mes anterior para comparar');
+
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>P&amp;L · ${Nom(mes)}</h1><p>Resultado del mes, criterio devengado${enCurso ? ` · mes en curso, ventas hasta el ${ultimo.slice(8, 10)}/${ultimo.slice(5, 7)}` : ''} · comparado con ${nom(sumarMes(mes, -1))}</p></div>
+    <div class="row wrapRow"><div class="seg" role="group" aria-label="Marca">${tabs}</div>
+    <button class="btn" id="ant" aria-label="Mes anterior" ${meses.indexOf(mes) <= 0 ? 'disabled' : ''}>‹</button>
+    <select id="mes" style="width:auto" aria-label="Mes">${meses.map((m) => `<option value="${m}" ${m === mes ? 'selected' : ''}>${Nom(m)}</option>`).join('')}</select>
+    <button class="btn" id="sig" aria-label="Mes siguiente" ${meses.indexOf(mes) >= meses.length - 1 ? 'disabled' : ''}>›</button></div></div>
+  ${sinCosto.length ? `<div class="card" style="background:#FDF0E6;border-color:#F3C9A6;color:#7A3A0A;margin:20px 0 0;padding:14px 20px">
+    <b>El margen se calcula sobre el ${pct(a.ventasC, a.ventas)} de las ventas, las que tienen costo y facturación neta cargados.</b>
+    Sin costo cargado: ${sinCosto.map((c) => `${esc(c.nombre)} (${peso0(c.ventas - c.ventasC)})`).join(' · ')}. Esas ventas suman en "Ventas" pero no en el margen ni en el resultado.</div>` : ''}
+  <div class="centro-comando">
+    ${kpi('Ventas', peso0(a.ventas), compara(a.ventas, b.ventas))}
+    ${kpi('Margen de contribución', margenPct == null ? '—' : margenPct.toFixed(1).replace('.', ',') + '%', `${peso0(a.contrib)} · sobre ventas con costo${margenPctB != null && hayB ? ` · ${(margenPct - margenPctB >= 0 ? '+' : '−') + Math.abs(margenPct - margenPctB).toFixed(1).replace('.', ',')} pp` : ''}`)}
+    ${ambas ? kpi('Gastos fijos', peso0(a.fijos), a.fijos ? compara(a.fijos, b.fijos) : 'todavía no hay costos fijos cargados en este mes') : kpi('Publicidad', peso0(a.publicidad), compara(a.publicidad, b.publicidad))}
+    ${kpi(ambas ? 'Resultado operativo' : 'Resultado después de publicidad', peso0(a.resultado), `${pct(a.resultado, a.ventas)} de las ventas · ${compara(a.resultado, b.resultado)}`, a.resultado < 0 ? 'alerta' : 'destacada')}
+  </div>
+  <section class="card tabla"><div class="cab"><div><h2>Estado de resultados</h2>${ambas ? '' : '<span class="muted">Los gastos fijos y variables cargados no tienen marca: se ven en "Ambas".</span>'}</div></div>
+    <div class="scroll"><table style="min-width:760px"><thead><tr><th scope="col">Concepto</th><th scope="col" class="r">${Nom(mes)}</th><th scope="col" class="r">% ventas</th><th scope="col" class="r">${Nom(sumarMes(mes, -1))}</th><th scope="col" class="r">% ventas</th><th scope="col" class="r">Variación</th></tr></thead>
+    <tbody>${lineas.map(filaPL).join('')}</tbody></table></div></section>
+  <div class="grid dos">
+    <section class="card"><h2 style="margin-top:0">De la venta al resultado</h2>${barras}</section>
+    <section class="card tabla"><div class="cab"><h2>Por marca y canal</h2></div><div class="scroll"><table><thead><tr><th scope="col">Canal</th><th scope="col" class="r">Ventas</th><th scope="col" class="r">% del total</th><th scope="col" class="r">Contribución</th><th scope="col" class="r">Con costo</th></tr></thead>
+      <tbody>${filasCanal}</tbody></table></div></section>
+  </div>
+  <p class="muted small" style="line-height:1.6">Devengado: la venta cuenta en el mes en que se vende, aunque la plata entre después. Ventas, facturación neta y costo de mercadería salen del scorecard; "Comisiones y envíos" es la diferencia entre ventas y facturación neta (en Tienda Nube se suma el costo de envío). Publicidad sale de la inversión cargada en el scorecard; gastos fijos y variables, de Costos. Los adelantos de sueldo no cambian el P&amp;L.</p>`;
+  $$('[data-marca]').forEach((x) => (x.onclick = () => { marca = x.dataset.marca; pintar(); }));
+  const ir = (m) => { mes = m; pintar(); };
+  $('#ant').onclick = () => ir(meses[meses.indexOf(mes) - 1]); $('#sig').onclick = () => ir(meses[meses.indexOf(mes) + 1]);
+  $('#mes').onchange = (e) => ir(e.target.value);
+}
+pintar();
+</script>
+</body>
+</html>

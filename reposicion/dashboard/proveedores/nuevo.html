@@ -18,17 +18,17 @@ const { data: provs } = await sb.from('cc_proveedores').select('id,nombre,grupo'
 const MESN = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const nomMes = (ym) => `${MESN[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
 
-// Vista actual: mov (movimiento con un proveedor) · costo (fijo/variable) · prov (proveedor nuevo).
+// Vista actual: mov (movimiento con un proveedor) · costo (fijo/variable) · adelanto (de sueldo) · prov (proveedor nuevo).
 // Los links viejos (proveedor.html → ?proveedor=…&tipo=pago) siguen cayendo en "mov".
-let vista = ['mov', 'costo', 'prov'].includes(qs('vista')) ? qs('vista') : 'mov';
+let vista = ['mov', 'costo', 'adelanto', 'prov'].includes(qs('vista')) ? qs('vista') : 'mov';
 
-const MENU = [['mov', 'Pago, factura o nota con un proveedor'], ['costo', 'Costo fijo o variable'], ['prov', 'Proveedor nuevo']];
+const MENU = [['mov', 'Pago, factura o nota con un proveedor'], ['costo', 'Costo fijo o variable'], ['adelanto', 'Adelanto de sueldo'], ['prov', 'Proveedor nuevo']];
 function pintar() {
   $('#app').innerHTML = `<div class="cabecera"><div><h1>Registrar</h1><p>¿Qué querés cargar?</p></div></div>
     <div class="seg" role="group" aria-label="Qué cargar" style="margin:20px 0 16px">${MENU.map(([k, t]) => `<button type="button" aria-pressed="${vista === k}" data-v="${k}">${t}</button>`).join('')}</div>
     <div id="vista"></div>`;
   $$('[data-v]').forEach((b) => (b.onclick = () => { vista = b.dataset.v; pintar(); }));
-  ({ mov: vistaMovimiento, costo: vistaCosto, prov: vistaProveedor })[vista]();
+  ({ mov: vistaMovimiento, costo: vistaCosto, adelanto: vistaAdelanto, prov: vistaProveedor })[vista]();
 }
 
 // ---- 1) Movimiento con un proveedor ----
@@ -107,7 +107,46 @@ ${camposRepite(costoTipo, hoy().slice(0, 7))}
   };
 }
 
-// ---- 3) Proveedor nuevo ----
+// ---- 3) Adelanto de sueldo ----
+// No es un costo extra: sale plata ese día y se descuenta del sueldo del mes elegido (lo usa el Cashflow).
+let adelMsg = '';
+async function vistaAdelanto() {
+  const { data: ads } = await sb.from('cc_adelantos_sueldo').select('*').order('fecha', { ascending: false }).order('id', { ascending: false }).limit(200);
+  const lista = ads || [], empleados = [...new Set(lista.map((a) => a.empleado))].sort();
+  const peso0 = (n) => Number(n).toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+  const fec = (d) => d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4);
+  $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin:0">Adelanto de sueldo</h2>
+<div class="muted small" style="margin-top:4px">No suma un gasto: adelanta la salida de plata y se descuenta del sueldo del mes que elijas.</div>
+<div class="campos">
+<div><label for="emp">Empleado</label><input id="emp" list="emps" autocomplete="off" required><datalist id="emps">${empleados.map((e) => `<option value="${esc(e)}">`).join('')}</datalist></div>
+<div><label for="imp">Importe</label><input id="imp" inputmode="decimal" placeholder="150.000,00" required></div>
+<div><label for="fecha">Fecha del adelanto</label><input type="date" id="fecha" value="${hoy()}" required></div>
+<div><label for="desc">Se descuenta del sueldo de</label><input type="month" id="desc" value="${hoy().slice(0, 7)}" required></div>
+<div class="ancho"><label for="nota">Nota (opcional)</label><input id="nota"></div>
+</div>
+<div class="pie"><p class="err" id="err"></p>${adelMsg ? `<p class="ok-t"><b>Guardado ✓</b> ${esc(adelMsg)}</p>` : ''}<button class="btn primary" id="ok">Guardar adelanto</button></div></form>
+<section class="card tabla"><div class="cab"><h2>Últimos adelantos</h2></div><div class="scroll">${lista.length ? `<table><thead><tr><th scope="col">Fecha</th><th scope="col">Empleado</th><th scope="col" class="r">Importe</th><th scope="col">Se descuenta de</th><th scope="col">Nota</th><th scope="col"></th></tr></thead><tbody>
+${lista.slice(0, 30).map((a) => `<tr><td class="num">${fec(a.fecha)}</td><th scope="row">${esc(a.empleado)}</th><td class="r num"><b>${peso0(a.monto)}</b></td><td>${nomMes(a.descuenta_mes.slice(0, 7))}</td><td class="muted">${esc(a.nota || '')}</td>
+<td class="r"><button type="button" class="btn sm danger" data-borrar="${a.id}">Borrar</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted" style="padding:0 24px 12px">Todavía no hay adelantos cargados.</p>'}</div></section>`;
+  $$('[data-borrar]').forEach((b) => (b.onclick = async () => {
+    if (b.dataset.seguro !== '1') { b.dataset.seguro = '1'; b.textContent = '¿Seguro? Borrar'; return; }
+    await sb.from('cc_adelantos_sueldo').delete().eq('id', +b.dataset.borrar); adelMsg = ''; vistaAdelanto();
+  }));
+  $('#f').onsubmit = async (e) => {
+    e.preventDefault(); $('#err').textContent = ''; adelMsg = '';
+    const empleado = $('#emp').value.trim().replace(/\s+/g, ' '), monto = parseMonto($('#imp').value), fecha = $('#fecha').value, desc = $('#desc').value;
+    if (!empleado) { $('#err').textContent = 'Poné el nombre del empleado.'; return; }
+    if (!(monto > 0)) { $('#err').textContent = 'Poné un importe mayor a 0 (ej. 150.000,00).'; return; }
+    if (!fecha || !desc) { $('#err').textContent = 'Elegí la fecha y el mes del sueldo.'; return; }
+    $('#ok').disabled = true;
+    const { error } = await sb.from('cc_adelantos_sueldo').insert({ empleado, monto, fecha, descuenta_mes: desc + '-01', nota: $('#nota').value.trim() || null });
+    if (error) { $('#err').textContent = 'No se pudo guardar: ' + error.message; $('#ok').disabled = false; return; }
+    adelMsg = `${empleado} · se descuenta del sueldo de ${nomMes(desc)}`;
+    vistaAdelanto();
+  };
+}
+
+// ---- 4) Proveedor nuevo ----
 let provMsg = null;
 function vistaProveedor() {
   $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin-top:0">Proveedor nuevo</h2>

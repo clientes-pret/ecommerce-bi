@@ -48,8 +48,23 @@ export async function salir() { await sb.auth.signOut(); location.href = 'index.
 // Rubros sugeridos para cargar costos (se puede escribir uno nuevo).
 export const RUBROS_COSTO = {
   fijo: ['Alquiler', 'Sueldos y cargas sociales', 'Servicios (luz, gas, internet)', 'Contador y administración', 'Software y suscripciones', 'Seguros', 'Impuestos fijos', 'Otros'],
-  variable: ['Comisiones de marketplace', 'Envíos y logística', 'Packaging', 'Publicidad', 'Impuestos sobre ventas', 'Costos de cobro / financieros', 'Mercadería dañada o devuelta', 'Otros'],
+  variable: ['Horas extra', 'Comisiones de marketplace', 'Envíos y logística', 'Packaging', 'Publicidad', 'Impuestos sobre ventas', 'Costos de cobro / financieros', 'Mercadería dañada o devuelta', 'Otros'],
 };
+
+// Lectura paginada con orden fijo (sin orden, las páginas pueden repetir o perder filas).
+// `armar(q)` agrega los filtros; `orden` es la lista de columnas para ordenar.
+export async function leerTodo(tabla, cols, orden, armar = (q) => q) {
+  const out = [];
+  for (let i = 0; ; i += 1000) {
+    let q = armar(sb.from(tabla).select(cols));
+    for (const o of orden) q = q.order(o);
+    const { data, error } = await q.range(i, i + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) return out;
+  }
+}
+export const sumarMes = (ym, n) => { let [y, m] = ym.split('-').map(Number); m += n; y += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1; return `${y}-${String(m).padStart(2, '0')}`; };
 
 // ---- Costos que se repiten ----
 // Campo "Se repite" del formulario de costos. Fijos arrancan en "todos los meses", variables en "solo este mes".
@@ -84,6 +99,7 @@ export function nav(perfil, activa) {
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Panel de control</div></div>' +
     it('admin.html', 'Inicio', 'inicio') + it('ventas.html', 'Ventas', 'ventas') +
     '<div class="grupo">Gestión</div>' + it('proveedores.html', 'Proveedores', 'prov') + it('costos.html', 'Costos', 'costos') +
+    it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
     `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a>` +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
