@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Costos · Proveedores</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#0f1115">
+  <link rel="stylesheet" href="estilo.css?v=4">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy } from './app.js';
+import { graficoSimple, activarTooltips, etqMes, MESN } from './analisis.js?v=4';
+const perfil = await guard(['admin', 'dueno']);
+const tipo = qs('tipo') === 'variable' ? 'variable' : 'fijo';
+nav(perfil, tipo === 'fijo' ? 'cfijo' : 'cvariable');
+const T = tipo === 'fijo'
+  ? { titulo: 'Costos fijos', sub: 'Lo que se paga todos los meses sin importar cuánto se venda.', color: '#e5b567',
+      cats: ['Alquiler', 'Sueldos y cargas sociales', 'Servicios (luz, gas, internet)', 'Contador y administración', 'Software y suscripciones', 'Seguros', 'Impuestos fijos', 'Otros'] }
+  : { titulo: 'Costos variables', sub: 'Lo que cambia según lo que se vende o se compra.', color: '#4f8cff',
+      cats: ['Comisiones de marketplace', 'Envíos y logística', 'Packaging', 'Publicidad', 'Impuestos sobre ventas', 'Costos de cobro / financieros', 'Mercadería dañada o devuelta', 'Otros'] };
+const mesDe = (s) => String(s).slice(0, 7);
+const addMes = (ym, n) => { let [y, m] = ym.split('-').map(Number); m += n; y += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1; return `${y}-${String(m).padStart(2, '0')}`; };
+const nom = (ym) => `${MESN[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
+let filas = [], mes = hoy().slice(0, 7), editId = null, borrarId = null, msg = '';
+
+async function cargar() { const { data } = await sb.from('cc_costos').select('*').eq('tipo', tipo).order('periodo').order('id').limit(5000); filas = (data || []).map((f) => ({ ...f, ym: mesDe(f.periodo), monto: Number(f.monto) })); }
+await cargar();
+const total = (ym) => filas.filter((f) => f.ym === ym).reduce((a, f) => a + f.monto, 0);
+
+function pintar() {
+  const delMes = filas.filter((f) => f.ym === mes), tot = total(mes), prev = total(addMes(mes, -1));
+  const var_ = prev > 0 ? ((tot / prev) - 1) * 100 : null;
+  const doce = Array.from({ length: 12 }, (_, i) => addMes(mes, i - 11)), serie = doce.map((m) => ({ mes: m, etq: etqMes(m), valor: total(m) }));
+  const conDatos = serie.filter((s) => s.valor > 0), prom = conDatos.length ? conDatos.reduce((a, s) => a + s.valor, 0) / conDatos.length : 0;
+  const anio = filas.filter((f) => f.ym.slice(0, 4) === mes.slice(0, 4) && f.ym <= mes).reduce((a, f) => a + f.monto, 0);
+  const porCat = Object.entries(delMes.reduce((o, f) => ((o[f.categoria] = (o[f.categoria] || 0) + f.monto), o), {})).sort((a, b) => b[1] - a[1]);
+  const e = editId ? filas.find((f) => f.id === editId) : null;
+  const todasCats = [...new Set([...T.cats, ...filas.map((f) => f.categoria)])];
+  const hayPrev = filas.some((f) => f.ym === addMes(mes, -1));
+  $('#app').innerHTML = `<div class="row between wrapRow"><div><h1>${T.titulo}</h1><div class="muted">${T.sub}</div></div>
+    <div class="row"><button class="btn sm" id="ant">◀</button><input type="month" id="mes" value="${mes}" style="width:auto"><button class="btn sm" id="sig">▶</button></div></div>
+  <div class="centro-comando">
+    <div class="cc-card"><div class="cc-label">Total de ${nom(mes)}</div><div class="cc-valor md num">${peso0(tot)}</div><div class="cc-sub">${var_ == null ? 'sin mes anterior para comparar' : `${var_ >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(var_))}% vs ${nom(addMes(mes, -1))}`}</div></div>
+    <div class="cc-card"><div class="cc-label">Promedio mensual</div><div class="cc-valor md num">${peso0(prom)}</div><div class="cc-sub">últimos 12 meses con datos</div></div>
+    <div class="cc-card"><div class="cc-label">Acumulado ${mes.slice(0, 4)}</div><div class="cc-valor md num">${peso0(anio)}</div><div class="cc-sub">hasta ${nom(mes)}</div></div>
+    <div class="cc-card"><div class="cc-label">Mayor rubro del mes</div><div class="cc-valor md">${porCat[0] ? esc(porCat[0][0]) : '—'}</div><div class="cc-sub">${porCat[0] ? `${peso0(porCat[0][1])} · ${Math.round((porCat[0][1] / tot) * 100)}% del total` : 'nada cargado'}</div></div>
+  </div>
+  <div class="card chart"><h2 style="margin-top:0">Últimos 12 meses <span class="muted small" style="text-transform:none">(tocá una columna para ver ese mes)</span></h2>${graficoSimple(serie, T.color, mes)}</div>
+  <div class="grid dos">
+    <div class="card"><h2 style="margin-top:0">${e ? 'Editar costo' : 'Cargar costo'}</h2>
+      <label>Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" value="${esc(e?.categoria || '')}"><datalist id="cats">${todasCats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
+      <label>Detalle (opcional)</label><input id="con" placeholder="${tipo === 'fijo' ? 'Ej.: Alquiler local + depósito' : 'Ej.: Comisión Mercado Libre'}" value="${esc(e?.concepto || '')}">
+      <div class="row wrapRow"><div class="grow"><label>Importe</label><input id="monto" inputmode="decimal" placeholder="1.250.000,00" value="${e ? String(e.monto).replace('.', ',') : ''}"></div>
+      <div class="grow"><label>Mes</label><input type="month" id="per" value="${e ? e.ym : mes}"></div></div>
+      <label>Nota (opcional)</label><input id="nota" value="${esc(e?.nota || '')}">
+      <p class="err">${esc(msg)}</p>
+      <div class="row wrapRow" style="margin-top:8px"><button class="btn primary" id="guardar">${e ? 'Guardar cambios' : '＋ Agregar'}</button>${e ? '<button class="btn" id="cancelar">Cancelar</button>' : ''}
+      ${tipo === 'fijo' && !e ? `<button class="btn" id="copiar" ${hayPrev && !delMes.length ? '' : 'disabled'} title="Copia los costos del mes anterior a ${nom(mes)}">⟳ Copiar de ${nom(addMes(mes, -1))}</button>` : ''}</div>
+      ${tipo === 'fijo' && !e ? `<div class="cc-nota">${delMes.length ? 'Este mes ya tiene costos cargados.' : hayPrev ? 'Como los fijos se repiten, podés copiar los del mes anterior y después ajustar lo que cambió.' : ''}</div>` : ''}</div>
+    <div class="card"><h2 style="margin-top:0">Por rubro · ${nom(mes)}</h2>${porCat.length ? `<table><tbody>${porCat.map(([c, v]) => `<tr><td>${esc(c)}<div style="height:5px;border-radius:3px;background:${T.color};width:${(v / tot) * 100}%;margin-top:4px;opacity:.8"></div></td><td class="r num">${peso0(v)}</td><td class="r muted num">${Math.round((v / tot) * 100)}%</td></tr>`).join('')}<tr><td><b>Total</b></td><td class="r num"><b>${peso0(tot)}</b></td><td></td></tr></tbody></table>` : '<p class="muted">Todavía no hay costos cargados en este mes.</p>'}</div>
+  </div>
+  <h2>Detalle de ${nom(mes)}</h2><div class="card tablewrap">${delMes.length ? `<table><thead><tr><th>Rubro</th><th>Detalle</th><th class="r">Importe</th><th></th></tr></thead><tbody>${delMes.map((f) => `<tr><td><b>${esc(f.categoria)}</b></td><td>${esc(f.concepto || '')}${f.nota ? `<div class="small muted">${esc(f.nota)}</div>` : ''}</td><td class="r num">${peso0(f.monto)}</td>
+    <td class="r" style="white-space:nowrap"><button class="btn sm" data-ed="${f.id}">Editar</button> <button class="btn sm danger" data-del="${f.id}">${borrarId === f.id ? '¿Seguro? Borrar' : 'Borrar'}</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted" style="padding:8px">Sin movimientos este mes.</p>'}</div>`;
+  const ir = (m) => { mes = m; editId = null; msg = ''; pintar(); };
+  $('#ant').onclick = () => ir(addMes(mes, -1)); $('#sig').onclick = () => ir(addMes(mes, 1)); $('#mes').onchange = (ev) => ev.target.value && ir(ev.target.value);
+  $$('rect.hit[data-mes]').forEach((r) => (r.onclick = () => ir(r.dataset.mes)));
+  $('#guardar').onclick = guardar; if ($('#cancelar')) $('#cancelar').onclick = () => { editId = null; msg = ''; pintar(); };
+  if ($('#copiar')) $('#copiar').onclick = copiar;
+  $$('[data-ed]').forEach((b) => (b.onclick = () => { editId = +b.dataset.ed; msg = ''; pintar(); scrollTo(0, 0); }));
+  $$('[data-del]').forEach((b) => (b.onclick = async () => { const i = +b.dataset.del; if (borrarId !== i) { borrarId = i; pintar(); return; } await sb.from('cc_costos').delete().eq('id', i); borrarId = null; await cargar(); pintar(); }));
+}
+async function guardar() {
+  const categoria = $('#cat').value.trim(), monto = parseMonto($('#monto').value), per = $('#per').value;
+  if (!categoria) { msg = 'Elegí o escribí el rubro.'; return pintar(); }
+  if (!(monto >= 0) || !$('#monto').value.trim()) { msg = 'Poné un importe válido (ej. 1.250.000,50).'; return pintar(); }
+  if (!per) { msg = 'Elegí el mes.'; return pintar(); }
+  const row = { tipo, categoria, concepto: $('#con').value.trim() || null, monto, periodo: per + '-01', nota: $('#nota').value.trim() || null };
+  const { error } = editId ? await sb.from('cc_costos').update(row).eq('id', editId) : await sb.from('cc_costos').insert(row);
+  if (error) { msg = 'No se pudo guardar: ' + error.message; return pintar(); }
+  msg = ''; editId = null; mes = per; await cargar(); pintar();
+}
+async function copiar() {
+  const prev = filas.filter((f) => f.ym === addMes(mes, -1)).map((f) => ({ tipo, categoria: f.categoria, concepto: f.concepto, monto: f.monto, periodo: mes + '-01', nota: f.nota }));
+  if (!prev.length) return;
+  const { error } = await sb.from('cc_costos').insert(prev);
+  msg = error ? 'No se pudo copiar: ' + error.message : ''; await cargar(); pintar();
+}
+activarTooltips();
+pintar();
+</script>
+</body>
+</html>

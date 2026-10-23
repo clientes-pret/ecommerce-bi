@@ -48,7 +48,8 @@ export function nav(perfil, activa) {
   const el = document.createElement('nav');
   el.className = 'nav';
   el.innerHTML = '<img src="../assets/logo-white.png" alt="" onerror="this.remove()">' + it('admin.html', 'Inicio', 'inicio') + it('proveedores.html', 'Proveedores', 'prov') + it('nuevo.html', '＋ Registrar', 'nuevo') +
-    `<a href="recibir.html">Recepción (celu)</a><span class="sp"></span><span class="muted small">${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a>`;
+    it('costos.html?tipo=fijo', 'Costos fijos', 'cfijo') + it('costos.html?tipo=variable', 'Costos variables', 'cvariable') +
+    `<span class="sp"></span><span class="muted small">${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a>`;
   document.body.prepend(el);
   $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
 }
