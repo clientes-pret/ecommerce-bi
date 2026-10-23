@@ -6,21 +6,21 @@
   <title>Costos · Proveedores</title>
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#0f1115">
-  <link rel="stylesheet" href="estilo.css?v=4">
+  <link rel="stylesheet" href="estilo.css?v=5">
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy } from './app.js';
+import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy, RUBROS_COSTO } from './app.js';
 import { graficoSimple, activarTooltips, etqMes, MESN } from './analisis.js?v=4';
 const perfil = await guard(['admin', 'dueno']);
 const tipo = qs('tipo') === 'variable' ? 'variable' : 'fijo';
 nav(perfil, tipo === 'fijo' ? 'cfijo' : 'cvariable');
 const T = tipo === 'fijo'
   ? { titulo: 'Costos fijos', sub: 'Lo que se paga todos los meses sin importar cuánto se venda.', color: '#e5b567',
-      cats: ['Alquiler', 'Sueldos y cargas sociales', 'Servicios (luz, gas, internet)', 'Contador y administración', 'Software y suscripciones', 'Seguros', 'Impuestos fijos', 'Otros'] }
+      cats: RUBROS_COSTO.fijo }
   : { titulo: 'Costos variables', sub: 'Lo que cambia según lo que se vende o se compra.', color: '#4f8cff',
-      cats: ['Comisiones de marketplace', 'Envíos y logística', 'Packaging', 'Publicidad', 'Impuestos sobre ventas', 'Costos de cobro / financieros', 'Mercadería dañada o devuelta', 'Otros'] };
+      cats: RUBROS_COSTO.variable };
 const mesDe = (s) => String(s).slice(0, 7);
 const addMes = (ym, n) => { let [y, m] = ym.split('-').map(Number); m += n; y += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1; return `${y}-${String(m).padStart(2, '0')}`; };
 const nom = (ym) => `${MESN[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;

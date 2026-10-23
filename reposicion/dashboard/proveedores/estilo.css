@@ -43,6 +43,8 @@ label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px
 .nav img { height: 22px; margin-right: 12px; }
 .nav a { padding: 6px 12px; border-radius: 6px; color: var(--ink); font-weight: 600; white-space: nowrap; } .nav a.on { background: var(--brand); color: var(--brand-ink); }
 .nav .sp { flex: 1; }
+.nav a.reg { background: var(--ok); color: #0b1a10; margin-left: 8px; } .nav a.reg:hover { filter: brightness(1.1); } .nav a.reg.on { box-shadow: 0 0 0 2px rgba(255,255,255,.35); }
+.nav a#salir { margin-left: 4px; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }

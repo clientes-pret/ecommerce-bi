@@ -6,17 +6,35 @@
   <title>Registrar · Proveedores</title>
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#0f1115">
-  <link rel="stylesheet" href="estilo.css?v=3">
+  <link rel="stylesheet" href="estilo.css?v=5">
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, esc, guard, nav, qs, hoy, parseMonto } from './app.js';
+import { sb, $, $$, esc, guard, nav, qs, hoy, parseMonto, RUBROS_COSTO } from './app.js';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'nuevo');
-const { data: provs } = await sb.from('cc_proveedores').select('id,nombre').order('nombre');
-const tipo0 = qs('tipo') || 'pago';
-$('#app').innerHTML = `<form class="card" id="f" style="max-width:560px"><h1>Registrar movimiento</h1>
+const { data: provs } = await sb.from('cc_proveedores').select('id,nombre,grupo').order('nombre');
+const MESN = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const nomMes = (ym) => `${MESN[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
+
+// Vista actual: mov (movimiento con un proveedor) · costo (fijo/variable) · prov (proveedor nuevo).
+// Los links viejos (proveedor.html → ?proveedor=…&tipo=pago) siguen cayendo en "mov".
+let vista = ['mov', 'costo', 'prov'].includes(qs('vista')) ? qs('vista') : 'mov';
+
+const MENU = [['mov', 'Pago, factura o nota con un proveedor'], ['costo', 'Costo fijo o variable'], ['prov', 'Proveedor nuevo']];
+function pintar() {
+  $('#app').innerHTML = `<div style="max-width:560px"><h1>Registrar</h1><div class="muted">¿Qué querés cargar?</div>
+    <div class="tabs">${MENU.map(([k, t]) => `<button class="btn ${vista === k ? 'primary' : ''}" data-v="${k}">${t}</button>`).join('')}</div>
+    <div id="vista"></div></div>`;
+  $$('[data-v]').forEach((b) => (b.onclick = () => { vista = b.dataset.v; pintar(); }));
+  ({ mov: vistaMovimiento, costo: vistaCosto, prov: vistaProveedor })[vista]();
+}
+
+// ---- 1) Movimiento con un proveedor ----
+function vistaMovimiento() {
+  const tipo0 = qs('tipo') || 'pago';
+  $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin-top:0">Movimiento con un proveedor</h2>
 <label>Proveedor</label><select id="prov" required><option value="">Elegir…</option>${(provs || []).map((p) => `<option value="${p.id}" ${qs('proveedor') == p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select>
 <label>Qué es</label><select id="tipo">${[['pago', 'Pago'], ['comprobante', 'Factura / comprobante'], ['nota_credito', 'Nota de crédito'], ['nota_debito', 'Nota de débito'], ['ajuste', 'Ajuste']].map(([v, t]) => `<option value="${v}" ${v === tipo0 ? 'selected' : ''}>${t}</option>`).join('')}</select>
 <div id="ajuste" hidden><label>El ajuste…</label><select id="suma"><option value="resta">Baja lo que debemos</option><option value="suma">Aumenta lo que debemos</option></select></div>
@@ -26,28 +44,83 @@ $('#app').innerHTML = `<form class="card" id="f" style="max-width:560px"><h1>Reg
 <div id="pago" hidden><label>Medio de pago</label><select id="medio"><option value="transferencia">Transferencia</option><option value="cheque">Cheque</option><option value="efectivo">Efectivo</option><option value="otro">Otro</option></select>
 <div id="chq" hidden><label>N° de cheque</label><input id="chqnro"><label>Fecha de cobro</label><input type="date" id="chqfec"></div></div>
 <label>Nota (opcional)</label><input id="nota"><p class="err" id="err"></p><button class="btn primary big" id="ok" style="margin-top:16px">Guardar</button></form>`;
-const ajustar = () => {
-  const t = $('#tipo').value;
-  $('#ajuste').hidden = t !== 'ajuste'; $('#pago').hidden = t !== 'pago'; $('#chq').hidden = !(t === 'pago' && $('#medio').value === 'cheque');
-  $('#lnum').textContent = t === 'pago' ? 'Referencia (opcional)' : 'Número de comprobante';
-};
-$('#tipo').onchange = $('#medio').onchange = ajustar; ajustar();
-$('#f').onsubmit = async (e) => {
-  e.preventDefault(); $('#err').textContent = ''; $('#ok').disabled = true;
-  const tipo = $('#tipo').value, monto = parseMonto($('#imp').value), prov = $('#prov').value;
-  if (!prov || !(monto > 0)) { $('#err').textContent = 'Elegí proveedor e ingresá un importe mayor a 0.'; $('#ok').disabled = false; return; }
-  const baja = tipo === 'pago' || tipo === 'nota_credito' || (tipo === 'ajuste' && $('#suma').value === 'resta');
-  const etiqueta = { pago: 'PAGO', comprobante: 'FC', nota_credito: 'NC', nota_debito: 'ND', ajuste: 'AJUSTE' }[tipo];
-  const num = $('#num').value.trim();
-  const row = { proveedor_id: +prov, fecha: $('#fecha').value, tipo, detalle: [etiqueta, num].filter(Boolean).join(' '), numero: num || null, ingreso: baja ? 0 : monto, pago: baja ? monto : 0, nota: $('#nota').value.trim() || null, origen: 'app' };
-  if (tipo === 'pago') {
-    row.medio_pago = $('#medio').value;
-    if (row.medio_pago === 'cheque') { row.cheque_nro = $('#chqnro').value.trim() || null; row.cheque_fecha_cobro = $('#chqfec').value || null; row.cheque_cobrado = false; }
-  }
-  const { error } = await sb.from('cc_movimientos').insert(row);
-  if (error) { $('#err').textContent = error.message; $('#ok').disabled = false; return; }
-  $('#ok').textContent = 'Guardado ✓'; setTimeout(() => (location.href = `proveedor.html?id=${prov}`), 600);
-};
+  const ajustar = () => {
+    const t = $('#tipo').value;
+    $('#ajuste').hidden = t !== 'ajuste'; $('#pago').hidden = t !== 'pago'; $('#chq').hidden = !(t === 'pago' && $('#medio').value === 'cheque');
+    $('#lnum').textContent = t === 'pago' ? 'Referencia (opcional)' : 'Número de comprobante';
+  };
+  $('#tipo').onchange = $('#medio').onchange = ajustar; ajustar();
+  $('#f').onsubmit = async (e) => {
+    e.preventDefault(); $('#err').textContent = ''; $('#ok').disabled = true;
+    const tipo = $('#tipo').value, monto = parseMonto($('#imp').value), prov = $('#prov').value;
+    if (!prov || !(monto > 0)) { $('#err').textContent = 'Elegí proveedor e ingresá un importe mayor a 0.'; $('#ok').disabled = false; return; }
+    const baja = tipo === 'pago' || tipo === 'nota_credito' || (tipo === 'ajuste' && $('#suma').value === 'resta');
+    const etiqueta = { pago: 'PAGO', comprobante: 'FC', nota_credito: 'NC', nota_debito: 'ND', ajuste: 'AJUSTE' }[tipo];
+    const num = $('#num').value.trim();
+    const row = { proveedor_id: +prov, fecha: $('#fecha').value, tipo, detalle: [etiqueta, num].filter(Boolean).join(' '), numero: num || null, ingreso: baja ? 0 : monto, pago: baja ? monto : 0, nota: $('#nota').value.trim() || null, origen: 'app' };
+    if (tipo === 'pago') {
+      row.medio_pago = $('#medio').value;
+      if (row.medio_pago === 'cheque') { row.cheque_nro = $('#chqnro').value.trim() || null; row.cheque_fecha_cobro = $('#chqfec').value || null; row.cheque_cobrado = false; }
+    }
+    const { error } = await sb.from('cc_movimientos').insert(row);
+    if (error) { $('#err').textContent = error.message; $('#ok').disabled = false; return; }
+    $('#ok').textContent = 'Guardado ✓'; setTimeout(() => (location.href = `proveedor.html?id=${prov}`), 600);
+  };
+}
+
+// ---- 2) Costo fijo o variable ----
+let costoTipo = 'fijo', costoMsg = null;
+function vistaCosto() {
+  const cats = RUBROS_COSTO[costoTipo];
+  $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin-top:0">Costo fijo o variable</h2>
+<div class="tabs" style="margin:4px 0 0"><button type="button" class="btn sm ${costoTipo === 'fijo' ? 'primary' : ''}" data-t="fijo">Fijo</button><button type="button" class="btn sm ${costoTipo === 'variable' ? 'primary' : ''}" data-t="variable">Variable</button></div>
+<div class="muted small">${costoTipo === 'fijo' ? 'Lo que se paga todos los meses sin importar cuánto se venda.' : 'Lo que cambia según lo que se vende o se compra.'}</div>
+<label>Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" autocomplete="off"><datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
+<label>Detalle (opcional)</label><input id="con" placeholder="${costoTipo === 'fijo' ? 'Ej.: Alquiler local + depósito' : 'Ej.: Comisión Mercado Libre'}">
+<div class="row wrapRow"><div class="grow"><label>Importe</label><input id="imp" inputmode="decimal" placeholder="1.250.000,00"></div>
+<div class="grow"><label>Mes</label><input type="month" id="per" value="${hoy().slice(0, 7)}"></div></div>
+<label>Nota (opcional)</label><input id="nota">
+<p class="err" id="err"></p>${costoMsg ? `<p class="ok-t"><b>Guardado ✓</b> ${esc(costoMsg.txt)} · <a href="costos.html?tipo=${costoMsg.tipo}">Ver ${costoMsg.tipo === 'fijo' ? 'costos fijos' : 'costos variables'}</a></p>` : ''}
+<button class="btn primary big" id="ok" style="margin-top:8px">Guardar costo</button></form>`;
+  $$('[data-t]').forEach((b) => (b.onclick = () => { costoTipo = b.dataset.t; costoMsg = null; vistaCosto(); }));
+  $('#f').onsubmit = async (e) => {
+    e.preventDefault(); $('#err').textContent = ''; costoMsg = null;
+    const categoria = $('#cat').value.trim(), monto = parseMonto($('#imp').value), per = $('#per').value;
+    if (!categoria) { $('#err').textContent = 'Elegí o escribí el rubro.'; return; }
+    if (!$('#imp').value.trim() || !(monto >= 0)) { $('#err').textContent = 'Poné un importe válido (ej. 1.250.000,50).'; return; }
+    if (!per) { $('#err').textContent = 'Elegí el mes.'; return; }
+    $('#ok').disabled = true;
+    const { error } = await sb.from('cc_costos').insert({ tipo: costoTipo, categoria, concepto: $('#con').value.trim() || null, monto, periodo: per + '-01', nota: $('#nota').value.trim() || null });
+    if (error) { $('#err').textContent = 'No se pudo guardar: ' + error.message; $('#ok').disabled = false; return; }
+    costoMsg = { tipo: costoTipo, txt: `${categoria} · ${nomMes(per)}` };
+    vistaCosto(); // formulario limpio, listo para cargar otro
+  };
+}
+
+// ---- 3) Proveedor nuevo ----
+let provMsg = null;
+function vistaProveedor() {
+  $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin-top:0">Proveedor nuevo</h2>
+<label>Nombre</label><input id="nombre" autocomplete="off" required>
+<label>Grupo (opcional)</label><input id="grupo" list="grupos" placeholder="Para juntar cuentas del mismo proveedor" autocomplete="off"><datalist id="grupos">${[...new Set((provs || []).map((p) => p.grupo).filter(Boolean))].map((g) => `<option value="${esc(g)}">`).join('')}</datalist>
+<p class="err" id="err"></p>${provMsg ? `<p class="ok-t"><b>Guardado ✓</b> ${esc(provMsg.nombre)} · <a href="nuevo.html?proveedor=${provMsg.id}&tipo=comprobante">Cargarle una factura</a> · <a href="proveedor.html?id=${provMsg.id}">Ver proveedor</a></p>` : ''}
+<button class="btn primary big" id="ok" style="margin-top:8px">Guardar proveedor</button></form>`;
+  $('#f').onsubmit = async (e) => {
+    e.preventDefault(); $('#err').textContent = ''; provMsg = null;
+    const nombre = $('#nombre').value.trim().replace(/\s+/g, ' ');
+    if (!nombre) { $('#err').textContent = 'Poné el nombre del proveedor.'; return; }
+    const parecido = (provs || []).find((p) => p.nombre.toLowerCase() === nombre.toLowerCase());
+    if (parecido) { $('#err').textContent = `Ya existe un proveedor llamado "${parecido.nombre}".`; return; }
+    $('#ok').disabled = true;
+    const { data, error } = await sb.from('cc_proveedores').insert({ nombre, grupo: $('#grupo').value.trim() || null }).select('id,nombre,grupo').single();
+    if (error) { $('#err').textContent = /duplicate|unique/i.test(error.message) ? 'Ya existe un proveedor con ese nombre.' : 'No se pudo guardar: ' + error.message; $('#ok').disabled = false; return; }
+    provs.push(data); provs.sort((a, b) => a.nombre.localeCompare(b.nombre));
+    provMsg = { id: data.id, nombre: data.nombre };
+    vistaProveedor();
+  };
+}
+
+pintar();
 </script>
 </body>
 </html>

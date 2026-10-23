@@ -42,14 +42,20 @@ export async function guard(roles) {
 
 export async function salir() { await sb.auth.signOut(); location.href = 'index.html'; }
 
+// Rubros sugeridos para cargar costos (se puede escribir uno nuevo).
+export const RUBROS_COSTO = {
+  fijo: ['Alquiler', 'Sueldos y cargas sociales', 'Servicios (luz, gas, internet)', 'Contador y administración', 'Software y suscripciones', 'Seguros', 'Impuestos fijos', 'Otros'],
+  variable: ['Comisiones de marketplace', 'Envíos y logística', 'Packaging', 'Publicidad', 'Impuestos sobre ventas', 'Costos de cobro / financieros', 'Mercadería dañada o devuelta', 'Otros'],
+};
+
 // Barra superior de las pantallas de administración.
 export function nav(perfil, activa) {
   const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}">${txt}</a>`;
   const el = document.createElement('nav');
   el.className = 'nav';
-  el.innerHTML = '<img src="../assets/logo-white.png" alt="" onerror="this.remove()">' + it('admin.html', 'Inicio', 'inicio') + it('proveedores.html', 'Proveedores', 'prov') + it('nuevo.html', '＋ Registrar', 'nuevo') +
+  el.innerHTML = '<img src="../assets/logo-white.png" alt="" onerror="this.remove()">' + it('admin.html', 'Inicio', 'inicio') + it('proveedores.html', 'Proveedores', 'prov') +
     it('costos.html?tipo=fijo', 'Costos fijos', 'cfijo') + it('costos.html?tipo=variable', 'Costos variables', 'cvariable') +
-    `<span class="sp"></span><span class="muted small">${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a>`;
+    `<span class="sp"></span><span class="muted small">${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a>`;
   document.body.prepend(el);
   $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
 }
