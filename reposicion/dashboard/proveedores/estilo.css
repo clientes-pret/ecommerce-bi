@@ -85,6 +85,12 @@ body.panel > .wrap { flex: 999 1 560px; min-width: 0; max-width: 1680px; margin:
   body.panel > .wrap { padding: 20px 16px 40px; }
 }
 
+/* Formularios a lo ancho: campos en grilla y botón Guardar abajo a la derecha */
+.campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 16px; }
+.campos .ancho { grid-column: 1 / -1; }
+.pie { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 16px; }
+.pie .err, .pie .ok-t { margin: 0; margin-right: auto; }
+
 /* Encabezado de página (título + acciones a la derecha) */
 .cabecera { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 4px; }
 .cabecera p { margin: 0; font-size: 15px; color: var(--muted); }

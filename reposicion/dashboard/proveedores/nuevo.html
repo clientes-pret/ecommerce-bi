@@ -6,7 +6,7 @@
   <title>Registrar · Proveedores</title>
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
-  <link rel="stylesheet" href="estilo.css?v=8">
+  <link rel="stylesheet" href="estilo.css?v=9">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -24,9 +24,9 @@ let vista = ['mov', 'costo', 'prov'].includes(qs('vista')) ? qs('vista') : 'mov'
 
 const MENU = [['mov', 'Pago, factura o nota con un proveedor'], ['costo', 'Costo fijo o variable'], ['prov', 'Proveedor nuevo']];
 function pintar() {
-  $('#app').innerHTML = `<div style="max-width:560px"><h1>Registrar</h1><div class="muted">¿Qué querés cargar?</div>
-    <div class="tabs">${MENU.map(([k, t]) => `<button class="btn ${vista === k ? 'primary' : ''}" data-v="${k}">${t}</button>`).join('')}</div>
-    <div id="vista"></div></div>`;
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Registrar</h1><p>¿Qué querés cargar?</p></div></div>
+    <div class="seg" role="group" aria-label="Qué cargar" style="margin:20px 0 16px">${MENU.map(([k, t]) => `<button type="button" aria-pressed="${vista === k}" data-v="${k}">${t}</button>`).join('')}</div>
+    <div id="vista"></div>`;
   $$('[data-v]').forEach((b) => (b.onclick = () => { vista = b.dataset.v; pintar(); }));
   ({ mov: vistaMovimiento, costo: vistaCosto, prov: vistaProveedor })[vista]();
 }
@@ -35,18 +35,22 @@ function pintar() {
 function vistaMovimiento() {
   const tipo0 = qs('tipo') || 'pago';
   $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin-top:0">Movimiento con un proveedor</h2>
-<label>Proveedor</label><select id="prov" required><option value="">Elegir…</option>${(provs || []).map((p) => `<option value="${p.id}" ${qs('proveedor') == p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select>
-<label>Qué es</label><select id="tipo">${[['pago', 'Pago'], ['comprobante', 'Factura / comprobante'], ['nota_credito', 'Nota de crédito'], ['nota_debito', 'Nota de débito'], ['ajuste', 'Ajuste']].map(([v, t]) => `<option value="${v}" ${v === tipo0 ? 'selected' : ''}>${t}</option>`).join('')}</select>
-<div id="ajuste" hidden><label>El ajuste…</label><select id="suma"><option value="resta">Baja lo que debemos</option><option value="suma">Aumenta lo que debemos</option></select></div>
-<label>Fecha</label><input type="date" id="fecha" value="${hoy()}" required>
-<label id="lnum">Número de comprobante</label><input id="num">
-<label>Importe</label><input id="imp" inputmode="decimal" placeholder="1.250.000,00" required>
-<div id="pago" hidden><label>Medio de pago</label><select id="medio"><option value="transferencia">Transferencia</option><option value="cheque">Cheque</option><option value="efectivo">Efectivo</option><option value="otro">Otro</option></select>
-<div id="chq" hidden><label>N° de cheque</label><input id="chqnro"><label>Fecha de cobro</label><input type="date" id="chqfec"></div></div>
-<label>Nota (opcional)</label><input id="nota"><p class="err" id="err"></p><button class="btn primary big" id="ok" style="margin-top:16px">Guardar</button></form>`;
+<div class="campos">
+<div><label for="prov">Proveedor</label><select id="prov" required><option value="">Elegir…</option>${(provs || []).map((p) => `<option value="${p.id}" ${qs('proveedor') == p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select></div>
+<div><label for="tipo">Qué es</label><select id="tipo">${[['pago', 'Pago'], ['comprobante', 'Factura / comprobante'], ['nota_credito', 'Nota de crédito'], ['nota_debito', 'Nota de débito'], ['ajuste', 'Ajuste']].map(([v, t]) => `<option value="${v}" ${v === tipo0 ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+<div id="ajuste" hidden><label for="suma">El ajuste…</label><select id="suma"><option value="resta">Baja lo que debemos</option><option value="suma">Aumenta lo que debemos</option></select></div>
+<div><label for="fecha">Fecha</label><input type="date" id="fecha" value="${hoy()}" required></div>
+<div><label for="imp">Importe</label><input id="imp" inputmode="decimal" placeholder="1.250.000,00" required></div>
+<div id="pago" hidden><label for="medio">Medio de pago</label><select id="medio"><option value="transferencia">Transferencia</option><option value="cheque">Cheque</option><option value="efectivo">Efectivo</option><option value="otro">Otro</option></select></div>
+<div id="chq1" hidden><label for="chqnro">N° de cheque</label><input id="chqnro"></div>
+<div id="chq2" hidden><label for="chqfec">Fecha de cobro</label><input type="date" id="chqfec"></div>
+<div><label id="lnum" for="num">Número de comprobante</label><input id="num"></div>
+<div class="ancho"><label for="nota">Nota (opcional)</label><input id="nota"></div>
+</div>
+<div class="pie"><p class="err" id="err"></p><button class="btn primary" id="ok">Guardar</button></div></form>`;
   const ajustar = () => {
-    const t = $('#tipo').value;
-    $('#ajuste').hidden = t !== 'ajuste'; $('#pago').hidden = t !== 'pago'; $('#chq').hidden = !(t === 'pago' && $('#medio').value === 'cheque');
+    const t = $('#tipo').value, chq = t === 'pago' && $('#medio').value === 'cheque';
+    $('#ajuste').hidden = t !== 'ajuste'; $('#pago').hidden = t !== 'pago'; $('#chq1').hidden = $('#chq2').hidden = !chq;
     $('#lnum').textContent = t === 'pago' ? 'Referencia (opcional)' : 'Número de comprobante';
   };
   $('#tipo').onchange = $('#medio').onchange = ajustar; ajustar();
@@ -72,16 +76,18 @@ function vistaMovimiento() {
 let costoTipo = 'fijo', costoMsg = null;
 function vistaCosto() {
   const cats = RUBROS_COSTO[costoTipo];
-  $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin-top:0">Costo fijo o variable</h2>
-<div class="tabs" style="margin:4px 0 0"><button type="button" class="btn sm ${costoTipo === 'fijo' ? 'primary' : ''}" data-t="fijo">Fijo</button><button type="button" class="btn sm ${costoTipo === 'variable' ? 'primary' : ''}" data-t="variable">Variable</button></div>
-<div class="muted small">${costoTipo === 'fijo' ? 'Lo que se paga todos los meses sin importar cuánto se venda.' : 'Lo que cambia según lo que se vende o se compra.'}</div>
-<label>Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" autocomplete="off"><datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
-<label>Detalle (opcional)</label><input id="con" placeholder="${costoTipo === 'fijo' ? 'Ej.: Alquiler local + depósito' : 'Ej.: Comisión Mercado Libre'}">
-<div class="row wrapRow"><div class="grow"><label>Importe</label><input id="imp" inputmode="decimal" placeholder="1.250.000,00"></div>
-<div class="grow"><label>Mes</label><input type="month" id="per" value="${hoy().slice(0, 7)}"></div></div>
-<label>Nota (opcional)</label><input id="nota">
-<p class="err" id="err"></p>${costoMsg ? `<p class="ok-t"><b>Guardado ✓</b> ${esc(costoMsg.txt)} · <a href="costos.html?tipo=${costoMsg.tipo}">Ver ${costoMsg.tipo === 'fijo' ? 'costos fijos' : 'costos variables'}</a></p>` : ''}
-<button class="btn primary big" id="ok" style="margin-top:8px">Guardar costo</button></form>`;
+  $('#vista').innerHTML = `<form class="card" id="f"><div class="row between wrapRow"><div><h2 style="margin:0">Costo fijo o variable</h2>
+<div class="muted small" style="margin-top:4px">${costoTipo === 'fijo' ? 'Lo que se paga todos los meses sin importar cuánto se venda.' : 'Lo que cambia según lo que se vende o se compra.'}</div></div>
+<div class="seg gris" role="group" aria-label="Tipo de costo"><button type="button" aria-pressed="${costoTipo === 'fijo'}" data-t="fijo">Fijo</button><button type="button" aria-pressed="${costoTipo === 'variable'}" data-t="variable">Variable</button></div></div>
+<div class="campos">
+<div><label for="cat">Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" autocomplete="off"><datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
+<div><label for="con">Detalle (opcional)</label><input id="con" placeholder="${costoTipo === 'fijo' ? 'Ej.: Alquiler local + depósito' : 'Ej.: Comisión Mercado Libre'}"></div>
+<div><label for="imp">Importe</label><input id="imp" inputmode="decimal" placeholder="1.250.000,00"></div>
+<div><label for="per">Mes</label><input type="month" id="per" value="${hoy().slice(0, 7)}"></div>
+<div class="ancho"><label for="nota">Nota (opcional)</label><input id="nota"></div>
+</div>
+<div class="pie"><p class="err" id="err"></p>${costoMsg ? `<p class="ok-t"><b>Guardado ✓</b> ${esc(costoMsg.txt)} · <a href="costos.html?tipo=${costoMsg.tipo}">Ver ${costoMsg.tipo === 'fijo' ? 'costos fijos' : 'costos variables'}</a></p>` : ''}
+<button class="btn primary" id="ok">Guardar costo</button></div></form>`;
   $$('[data-t]').forEach((b) => (b.onclick = () => { costoTipo = b.dataset.t; costoMsg = null; vistaCosto(); }));
   $('#f').onsubmit = async (e) => {
     e.preventDefault(); $('#err').textContent = ''; costoMsg = null;
@@ -101,10 +107,12 @@ function vistaCosto() {
 let provMsg = null;
 function vistaProveedor() {
   $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin-top:0">Proveedor nuevo</h2>
-<label>Nombre</label><input id="nombre" autocomplete="off" required>
-<label>Grupo (opcional)</label><input id="grupo" list="grupos" placeholder="Para juntar cuentas del mismo proveedor" autocomplete="off"><datalist id="grupos">${[...new Set((provs || []).map((p) => p.grupo).filter(Boolean))].map((g) => `<option value="${esc(g)}">`).join('')}</datalist>
-<p class="err" id="err"></p>${provMsg ? `<p class="ok-t"><b>Guardado ✓</b> ${esc(provMsg.nombre)} · <a href="nuevo.html?proveedor=${provMsg.id}&tipo=comprobante">Cargarle una factura</a> · <a href="proveedor.html?id=${provMsg.id}">Ver proveedor</a></p>` : ''}
-<button class="btn primary big" id="ok" style="margin-top:8px">Guardar proveedor</button></form>`;
+<div class="campos">
+<div><label for="nombre">Nombre</label><input id="nombre" autocomplete="off" required></div>
+<div><label for="grupo">Grupo (opcional)</label><input id="grupo" list="grupos" placeholder="Para juntar cuentas del mismo proveedor" autocomplete="off"><datalist id="grupos">${[...new Set((provs || []).map((p) => p.grupo).filter(Boolean))].map((g) => `<option value="${esc(g)}">`).join('')}</datalist></div>
+</div>
+<div class="pie"><p class="err" id="err"></p>${provMsg ? `<p class="ok-t"><b>Guardado ✓</b> ${esc(provMsg.nombre)} · <a href="nuevo.html?proveedor=${provMsg.id}&tipo=comprobante">Cargarle una factura</a> · <a href="proveedor.html?id=${provMsg.id}">Ver proveedor</a></p>` : ''}
+<button class="btn primary" id="ok">Guardar proveedor</button></div></form>`;
   $('#f').onsubmit = async (e) => {
     e.preventDefault(); $('#err').textContent = ''; provMsg = null;
     const nombre = $('#nombre').value.trim().replace(/\s+/g, ' ');
