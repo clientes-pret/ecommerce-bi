@@ -15,14 +15,25 @@
   <h1>Proveedores</h1>
   <p class="muted">Pret a Home · Casa Lavan</p>
   <form class="card" id="f">
-    <label>Email</label><input type="email" id="email" autocomplete="username" required>
-    <label>Contraseña</label><input type="password" id="pass" autocomplete="current-password" required>
+    <label for="email">Email</label><input type="email" id="email" autocomplete="username" required>
+    <label for="pass">Contraseña</label><input type="password" id="pass" autocomplete="current-password" required>
     <p class="err" id="err"></p>
+    <p class="ok-t" id="info"></p>
     <button class="btn primary big" id="ok" style="margin-top:16px">Entrar</button>
+    <p class="small" style="text-align:center;margin:14px 0 0"><a href="#" id="olvide">¿Olvidaste tu contraseña?</a></p>
+  </form>
+  <form class="card" id="fn" hidden>
+    <h2 style="margin-top:0">Elegí tu contraseña nueva</h2>
+    <p class="muted small" id="quien"></p>
+    <label for="p1">Contraseña nueva</label><input type="password" id="p1" autocomplete="new-password" minlength="8" required>
+    <label for="p2">Repetila</label><input type="password" id="p2" autocomplete="new-password" minlength="8" required>
+    <p class="muted small">Mínimo 8 caracteres.</p>
+    <p class="err" id="errn"></p>
+    <button class="btn primary big" id="okn" style="margin-top:8px">Guardar y entrar</button>
   </form>
 </div>
 <script type="module">
-import { sb, $, rutaPara, SUPABASE_ANON_KEY } from './app.js';
+import { sb, $, rutaPara, SUPABASE_ANON_KEY, LINK_RECUPERO } from './app.js';
 
 if (SUPABASE_ANON_KEY.startsWith('PEGAR')) $('#err').textContent = 'Falta configurar la anon key en config.js';
 
@@ -31,8 +42,42 @@ async function entrar(uid) {
   if (!p) { await sb.auth.signOut(); $('#err').textContent = 'Tu usuario todavía no tiene un rol asignado. Avisale a Matías.'; $('#ok').disabled = false; return; }
   location.replace(rutaPara(p.rol));
 }
+
+// Vino del link del mail para cambiar la contraseña: en vez de entrar directo, pedir la nueva.
+function pedirNueva(session) {
+  $('#f').hidden = true; $('#fn').hidden = false;
+  $('#quien').textContent = 'Usuario: ' + session.user.email;
+  $('#p1').focus();
+  $('#fn').onsubmit = async (e) => {
+    e.preventDefault();
+    const p1 = $('#p1').value, p2 = $('#p2').value;
+    if (p1.length < 8) { $('#errn').textContent = 'Tiene que tener al menos 8 caracteres.'; return; }
+    if (p1 !== p2) { $('#errn').textContent = 'Las dos contraseñas no coinciden.'; return; }
+    $('#errn').textContent = ''; $('#okn').disabled = true;
+    const { error } = await sb.auth.updateUser({ password: p1 });
+    if (error) { $('#errn').textContent = 'No se pudo guardar: ' + error.message; $('#okn').disabled = false; return; }
+    entrar(session.user.id);
+  };
+}
+
 const { data } = await sb.auth.getSession();
-if (data.session) entrar(data.session.user.id);
+if (LINK_RECUPERO.get('error')) {
+  $('#err').textContent = LINK_RECUPERO.get('error_code') === 'otp_expired'
+    ? 'El link para cambiar la contraseña venció o ya se usó. Pedí uno nuevo con "¿Olvidaste tu contraseña?".'
+    : 'El link no funcionó. Pedí uno nuevo con "¿Olvidaste tu contraseña?".';
+  history.replaceState(null, '', location.pathname);
+} else if (data.session && LINK_RECUPERO.get('type') === 'recovery') pedirNueva(data.session);
+else if (data.session) entrar(data.session.user.id);
+
+$('#olvide').onclick = async (e) => {
+  e.preventDefault();
+  const email = $('#email').value.trim();
+  $('#err').textContent = ''; $('#info').textContent = '';
+  if (!email) { $('#err').textContent = 'Escribí tu email arriba y volvé a tocar "¿Olvidaste tu contraseña?".'; $('#email').focus(); return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  if (error) { $('#err').textContent = 'No se pudo mandar el mail: ' + error.message; return; }
+  $('#info').textContent = `Listo: si ${email} tiene usuario, le llega un mail con un link para elegir contraseña nueva.`;
+};
 
 $('#f').onsubmit = async (e) => {
   e.preventDefault();

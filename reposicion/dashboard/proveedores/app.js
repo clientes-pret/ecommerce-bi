@@ -3,6 +3,9 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_ANON_KEY, LECTURA_IA } from './config.js';
 
 export { SUPABASE_URL, SUPABASE_ANON_KEY, LECTURA_IA };
+// El link del mail "olvidé mi contraseña" llega con #...type=recovery (o #error=... si venció).
+// Se lee antes de crear el cliente porque el cliente limpia el # al tomar la sesión.
+export const LINK_RECUPERO = new URLSearchParams(location.hash.slice(1));
 export const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export const $ = (s, r = document) => r.querySelector(s);
