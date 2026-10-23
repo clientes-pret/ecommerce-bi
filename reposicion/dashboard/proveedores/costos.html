@@ -6,7 +6,7 @@
   <title>Costos · Panel de control</title>
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
-  <link rel="stylesheet" href="estilo.css?v=10">
+  <link rel="stylesheet" href="estilo.css?v=11">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -14,7 +14,16 @@
 import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy, RUBROS_COSTO, camposRepite, activarRepite, guardarCosto } from './app.js';
 import { graficoSimple, activarTooltips, etqMes, MESN } from './analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
-nav(perfil, 'costos');
+// Sub-menús de Costos: cada uno muestra solo los rubros que le corresponden (por nombre del rubro).
+const RUBROS = {
+  software: { titulo: 'Software', match: /software|suscrip/i, cat: 'Software y suscripciones', tipo: 'fijo' },
+  sueldos: { titulo: 'Sueldos', match: /sueldo|cargas sociales|horas extra/i, cat: 'Sueldos y cargas sociales', tipo: 'fijo' },
+  servicios: { titulo: 'Servicios', match: /servicio/i, cat: 'Servicios (luz, gas, internet)', tipo: 'fijo' },
+  publicidad: { titulo: 'Publicidad', match: /publicidad|marketing|influencer/i, cat: 'Publicidad', tipo: 'variable' },
+};
+const RUBRO_KEY = RUBROS[qs('rubro')] ? qs('rubro') : null, RUBRO = RUBROS[RUBRO_KEY];
+const enRubro = (c) => !RUBRO || RUBRO.match.test(c.categoria || '');
+nav(perfil, RUBRO_KEY ? 'costos-' + RUBRO_KEY : 'costos');
 const TIPOS = { fijo: { nombre: 'Fijo', color: '#2449B8', chip: 'info' }, variable: { nombre: 'Variable', color: '#E8935A', chip: 'warn' } };
 const mesDe = (s) => String(s).slice(0, 7);
 const addMes = (ym, n) => { let [y, m] = ym.split('-').map(Number); m += n; y += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1; return `${y}-${String(m).padStart(2, '0')}`; };
@@ -28,7 +37,7 @@ let tab = ['fijo', 'variable'].includes(qs('tipo')) ? qs('tipo') : 'all';
 
 async function cargar() {
   const { data } = await sb.from('cc_costos').select('*').order('periodo').order('id').limit(5000);
-  filas = (data || []).map((f) => ({ ...f, ym: mesDe(f.periodo), monto: Number(f.monto) }));
+  filas = (data || []).filter(enRubro).map((f) => ({ ...f, ym: mesDe(f.periodo), monto: Number(f.monto) }));
 }
 // Ventas por mes (todos los canales) del scorecard, para mostrar cada costo como % de lo vendido.
 async function cargarVentas() {
@@ -39,10 +48,41 @@ async function cargarVentas() {
 // Costos que se repiten: definiciones en cc_costos_recurrentes; cada mes se carga en cc_costos (cc_costos_al_dia).
 async function cargarReglas() {
   const { data } = await sb.from('cc_costos_recurrentes').select('*').order('desde').order('id');
-  reglas = (data || []).map((r) => ({ ...r, monto: Number(r.monto), d: mesDe(r.desde), h: r.hasta ? mesDe(r.hasta) : null }));
+  reglas = (data || []).filter(enRubro).map((r) => ({ ...r, monto: Number(r.monto), d: mesDe(r.desde), h: r.hasta ? mesDe(r.hasta) : null }));
 }
 await sb.rpc('cc_costos_al_dia'); // carga los meses que falten hasta el mes en curso (si falla, la pantalla sigue andando)
-await Promise.all([cargar(), cargarVentas(), cargarReglas()]);
+// Extras de cada sub-menú: Sueldos (equipo y adelantos), Publicidad (inversión en ads del scorecard).
+let equipo = [], adelantos = [], adsMes = {};
+async function cargarExtras() {
+  if (RUBRO_KEY === 'sueldos') {
+    const [{ data: eq }, { data: ad }] = await Promise.all([
+      sb.from('cc_equipo').select('area,sueldo,activo').eq('activo', true),
+      sb.from('cc_adelantos_sueldo').select('fecha,empleado,monto,descuenta_mes').order('fecha', { ascending: false }).limit(500),
+    ]);
+    equipo = eq || []; adelantos = ad || [];
+  }
+  if (RUBRO_KEY === 'publicidad') {
+    const { data } = await sb.from('v_scorecard_ads_mensual').select('periodo,plataforma,inversion');
+    adsMes = {}; for (const r of data || []) if (r.inversion != null) { const k = mesDe(r.periodo); (adsMes[k] ||= {}); adsMes[k][r.plataforma] = (adsMes[k][r.plataforma] || 0) + Number(r.inversion); }
+  }
+}
+function extras() {
+  if (RUBRO_KEY === 'sueldos') {
+    const masa = equipo.reduce((a, p) => a + Number(p.sueldo || 0), 0), cargado = total(mes);
+    const delMes = adelantos.filter((a) => a.descuenta_mes.slice(0, 7) === mes), dados = adelantos.filter((a) => a.fecha.slice(0, 7) === mes);
+    return `<div class="grid dos" style="margin-top:16px">
+      <div class="cc-card"><div class="cc-label">Sueldos según Equipo</div><div class="cc-valor md num">${peso0(masa)}</div><div class="cc-sub">${equipo.length} personas activas · cargado en Costos este mes: ${peso0(cargado)}${masa && cargado ? ` (${Math.round(cargado / masa * 100)}%)` : ''} · <a href="equipo.html">ver Equipo</a></div></div>
+      <div class="cc-card"><div class="cc-label">Adelantos de sueldo</div><div class="cc-valor md num">${peso0(delMes.reduce((a, x) => a + Number(x.monto), 0))}</div><div class="cc-sub">se descuentan del sueldo de ${nom(mes)}${dados.length ? ` · dados en ${nom(mes)}: ${dados.map((x) => esc(x.empleado.split(' ')[0]) + ' ' + peso0(x.monto)).join(', ')}` : ''} · <a href="nuevo.html?vista=adelanto">cargar adelanto</a></div></div></div>`;
+  }
+  if (RUBRO_KEY === 'publicidad') {
+    const a = adsMes[mes] || {}, plat = [['meta', 'Meta Ads'], ['google', 'Google Ads'], ['ml', 'Mercado Libre Ads']], tot = plat.reduce((x, [k]) => x + (a[k] || 0), 0);
+    return `<section class="card" style="margin-top:16px"><div class="row between wrapRow"><h2 style="margin:0">Inversión en anuncios · ${nom(mes)}</h2><span class="muted small">del scorecard, ambas marcas · total ${peso0(tot)}</span></div>
+      <div class="centro-comando" style="margin:12px 0 0">${plat.map(([k, n]) => `<div class="cc-card"><div class="cc-label">${n}</div><div class="cc-valor md num">${a[k] != null ? peso0(a[k]) : '—'}</div></div>`).join('')}</div>
+      <p class="cc-nota">Esta inversión ya entra sola en el P&amp;L y el cashflow. Acá cargá solo lo demás (agencia, influencers, producción de contenido) para no contarla dos veces.</p></section>`;
+  }
+  return '';
+}
+await Promise.all([cargar(), cargarVentas(), cargarReglas(), cargarExtras()]);
 const total = (ym, t = 'all') => filas.filter((f) => f.ym === ym && (t === 'all' || f.tipo === t)).reduce((a, f) => a + f.monto, 0);
 
 function pintar() {
@@ -54,14 +94,15 @@ function pintar() {
   const totVis = visibles.reduce((a, f) => a + f.monto, 0);
   const doce = Array.from({ length: 12 }, (_, i) => addMes(mes, i - 11)), serie = doce.map((m) => ({ mes: m, etq: etqMes(m), valor: total(m, tab) }));
   const e = editId ? filas.find((f) => f.id === editId) : null;
-  const tipoForm = e?.tipo || (tab === 'variable' ? 'variable' : 'fijo');
+  const tipoForm = e?.tipo || (tab === 'variable' ? 'variable' : tab === 'fijo' ? 'fijo' : RUBRO?.tipo || 'fijo');
   const todasCats = [...new Set([...RUBROS_COSTO.fijo, ...RUBROS_COSTO.variable, ...filas.map((f) => f.categoria)])];
   const subVentas = vtas > 0 ? `de las ventas (${peso0(vtas)})` : 'de las ventas';
   const seg = [['all', 'Todos'], ['fijo', 'Fijos'], ['variable', 'Variables']].map(([k, t]) => `<button type="button" data-tab="${k}" aria-pressed="${tab === k}">${t}</button>`).join('');
-  $('#app').innerHTML = `<div class="cabecera"><div><h1>Costos · ${Nom(mes)}</h1><p>Fijos: no dependen de cuánto vendés. Variables: suben y bajan con cada venta.</p></div>
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Costos${RUBRO ? ' · ' + RUBRO.titulo : ''} · ${Nom(mes)}</h1><p>${RUBRO ? `Rubros de ${RUBRO.titulo.toLowerCase()} · <a href="costos.html">ver todos los costos</a>` : 'Fijos: no dependen de cuánto vendés. Variables: suben y bajan con cada venta.'}</p></div>
     <div class="row wrapRow"><button class="btn" id="ant" aria-label="Mes anterior">‹</button><input type="month" id="mes" value="${mes}" style="width:auto" aria-label="Mes"><button class="btn" id="sig" aria-label="Mes siguiente">›</button>
     <a class="btn primary" href="#nuevo-costo" id="irNuevo">＋ Nuevo costo</a></div></div>
   ${avisoVencen()}
+  ${extras()}
   <div class="centro-comando">
     <div class="cc-card"><div class="cc-label">Total costos</div><div class="cc-valor num">${peso0(tot)}</div><div class="cc-sub"><span>${pct(tot, vtas)} ${subVentas}</span>${var_ == null ? '' : `<span>${var_ >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(var_))}% vs ${nom(addMes(mes, -1))}</span>`}</div></div>
     <div class="cc-card"><div class="cc-label">Fijos</div><div class="cc-valor num">${peso0(fij)}</div><div class="cc-sub">${pct(fij, vtas)} de las ventas</div></div>
@@ -82,7 +123,7 @@ function pintar() {
     <div class="muted small">Lo que se paga todos los meses (fijos) o lo que cambia según lo que se vende (variables).</div>
     <div class="campos">
       <div><label for="tipo">Tipo</label><select id="tipo"><option value="fijo" ${tipoForm === 'fijo' ? 'selected' : ''}>Fijo</option><option value="variable" ${tipoForm === 'variable' ? 'selected' : ''}>Variable</option></select></div>
-      <div><label for="cat">Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" value="${esc(e?.categoria || '')}"><datalist id="cats">${todasCats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div><label for="cat">Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" value="${esc(e?.categoria || RUBRO?.cat || '')}"><datalist id="cats">${todasCats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
       <div><label for="con">Detalle (opcional)</label><input id="con" placeholder="Ej.: Alquiler local + depósito" value="${esc(e?.concepto || '')}"></div>
       <div><label for="monto">Importe</label><input id="monto" inputmode="decimal" placeholder="1.250.000,00" value="${e ? String(e.monto).replace('.', ',') : ''}"></div>
       <div><label for="per">${e ? 'Mes' : 'Mes (o primer mes)'}</label><input type="month" id="per" value="${e ? e.ym : mes}"></div>

@@ -6,7 +6,7 @@
   <title>Registrar · Proveedores</title>
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
-  <link rel="stylesheet" href="estilo.css?v=10">
+  <link rel="stylesheet" href="estilo.css?v=11">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -111,8 +111,11 @@ ${camposRepite(costoTipo, hoy().slice(0, 7))}
 // No es un costo extra: sale plata ese día y se descuenta del sueldo del mes elegido (lo usa el Cashflow).
 let adelMsg = '';
 async function vistaAdelanto() {
-  const { data: ads } = await sb.from('cc_adelantos_sueldo').select('*').order('fecha', { ascending: false }).order('id', { ascending: false }).limit(200);
-  const lista = ads || [], empleados = [...new Set(lista.map((a) => a.empleado))].sort();
+  const [{ data: ads }, { data: eq }] = await Promise.all([
+    sb.from('cc_adelantos_sueldo').select('*').order('fecha', { ascending: false }).order('id', { ascending: false }).limit(200),
+    sb.from('cc_equipo').select('nombre').eq('activo', true),
+  ]);
+  const lista = ads || [], empleados = [...new Set([...(eq || []).map((p) => p.nombre), ...lista.map((a) => a.empleado)])].sort();
   const peso0 = (n) => Number(n).toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
   const fec = (d) => d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4);
   $('#vista').innerHTML = `<form class="card" id="f"><h2 style="margin:0">Adelanto de sueldo</h2>

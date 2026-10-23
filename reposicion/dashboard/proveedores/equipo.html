@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Equipo · Panel de control</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=11">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Equipo: datos de las personas que trabajan. Datos personales: la tabla cc_equipo solo la ven admin/dueño (RLS).
+import { sb, $, $$, esc, guard, nav, peso0, fecha, hoy, parseMonto } from './app.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'equipo');
+
+const AREAS = ['Marketing', 'Depósito', 'Venta del salón', 'Administración'];
+const CONTRATO = { relacion_dependencia: ['Relación de dependencia', 'info'], prestador_servicios: ['Prestador de servicios', 'warn'] };
+const H = hoy();
+let personas = [], editId = null, nuevo = false, verBajas = false, bajaId = null, msg = '';
+
+async function cargar() {
+  const { data, error } = await sb.from('cc_equipo').select('*').order('nombre').order('id');
+  if (error) { msg = 'No pude leer el equipo: ' + error.message; personas = []; return; }
+  personas = data || [];
+}
+// Días hasta el próximo cumpleaños (0 = hoy).
+function diasCumple(d) {
+  if (!d) return null;
+  const y = +H.slice(0, 4), md = d.slice(5);
+  let prox = `${y}-${md}`; if (prox < H) prox = `${y + 1}-${md}`;
+  return Math.round((Date.parse(prox) - Date.parse(H)) / 864e5);
+}
+function antiguedad(d) {
+  if (!d) return '';
+  const m = (+H.slice(0, 4) - +d.slice(0, 4)) * 12 + (+H.slice(5, 7) - +d.slice(5, 7)) - (+H.slice(8) < +d.slice(8) ? 1 : 0);
+  if (m < 1) return 'recién ingresó';
+  const a = Math.floor(m / 12), r = m % 12;
+  return [a ? `${a} ${a === 1 ? 'año' : 'años'}` : '', r ? `${r} ${r === 1 ? 'mes' : 'meses'}` : ''].filter(Boolean).join(' y ');
+}
+const ddmm = (d) => (d ? d.slice(8, 10) + '/' + d.slice(5, 7) : '—');
+
+function formulario(p) {
+  const v = (k) => esc(p?.[k] ?? ''), num = (k) => (p?.[k] != null ? String(p[k]).replace('.', ',') : '');
+  return `<section class="card" id="form"><h2 style="margin-top:0">${p ? `Editar · ${esc(p.nombre)}` : 'Agregar persona'}</h2>
+  <div class="campos">
+    <div><label for="nombre">Nombre y apellido</label><input id="nombre" value="${v('nombre')}" autocomplete="off" required></div>
+    <div><label for="area">Área</label><input id="area" list="areas" value="${v('area')}" placeholder="Elegí o escribí una nueva" autocomplete="off"><datalist id="areas">${[...new Set([...AREAS, ...personas.map((x) => x.area).filter(Boolean)])].map((a) => `<option value="${esc(a)}">`).join('')}</datalist></div>
+    <div><label for="puesto">Puesto (opcional)</label><input id="puesto" value="${v('puesto')}" placeholder="Ej.: Depósito, Atención al cliente"></div>
+    <div><label for="contratacion">Tipo de contratación</label><select id="contratacion"><option value="">Elegir…</option>${Object.entries(CONTRATO).map(([k, [t]]) => `<option value="${k}" ${p?.contratacion === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+    <div><label for="ingreso">Fecha de ingreso</label><input type="date" id="ingreso" value="${v('fecha_ingreso')}"></div>
+    <div><label for="cumple">Cumpleaños</label><input type="date" id="cumple" value="${v('cumpleanos')}"></div>
+    <div><label for="tel">Teléfono (opcional)</label><input id="tel" value="${v('telefono')}" inputmode="tel"></div>
+    <div><label for="sueldo">Sueldo mensual</label><input id="sueldo" inputmode="decimal" placeholder="850.000,00" value="${num('sueldo')}"></div>
+    <div><label for="hextra">Valor de la hora extra</label><input id="hextra" inputmode="decimal" placeholder="8.500,00" value="${num('valor_hora_extra')}"></div>
+    <div class="ancho"><label for="dir">Dirección</label><input id="dir" value="${v('direccion')}" autocomplete="off"></div>
+    <div class="ancho"><label for="nota">Nota (opcional)</label><input id="nota" value="${v('nota')}"></div>
+  </div>
+  <div class="pie"><p class="err">${esc(msg)}</p><button class="btn" id="cancelar">Cancelar</button><button class="btn primary" id="guardar">${p ? 'Guardar cambios' : 'Agregar'}</button></div></section>`;
+}
+
+// Sueldos por área: dónde se va la plata del equipo.
+function porArea(activos, masa) {
+  if (!activos.length) return '';
+  const g = {};
+  for (const p of activos) { const k = p.area || 'Sin área'; (g[k] ||= { n: 0, s: 0 }); g[k].n += 1; g[k].s += Number(p.sueldo || 0); }
+  const filas = Object.entries(g).sort((a, b) => b[1].s - a[1].s);
+  return `<section class="card tabla"><div class="cab"><div><h2>Sueldos por área</h2><span class="muted">Personas activas · sueldo mensual cargado</span></div></div>
+    <div class="scroll"><table><thead><tr><th scope="col">Área</th><th scope="col" class="r">Personas</th><th scope="col" class="r">Sueldos por mes</th><th scope="col" class="r">% del total</th><th scope="col" style="width:35%"></th></tr></thead><tbody>
+    ${filas.map(([k, x]) => `<tr><th scope="row">${esc(k)}</th><td class="r num">${x.n}</td><td class="r num"><b>${peso0(x.s)}</b></td><td class="r num muted">${masa ? Math.round(x.s / masa * 100) + '%' : '—'}</td>
+      <td><div style="height:10px;background:var(--line-soft);border-radius:4px;overflow:hidden"><div style="height:100%;width:${masa ? (x.s / masa * 100).toFixed(1) : 0}%;background:#2449B8"></div></div></td></tr>`).join('')}
+    </tbody></table></div></section>`;
+}
+
+function pintar() {
+  const activos = personas.filter((p) => p.activo), bajas = personas.filter((p) => !p.activo);
+  const vis = verBajas ? personas : activos;
+  const masa = activos.reduce((a, p) => a + Number(p.sueldo || 0), 0);
+  const nRel = activos.filter((p) => p.contratacion === 'relacion_dependencia').length, nPrest = activos.filter((p) => p.contratacion === 'prestador_servicios').length;
+  const cumples = activos.map((p) => ({ p, d: diasCumple(p.cumpleanos) })).filter((x) => x.d != null && x.d <= 30).sort((a, b) => a.d - b.d);
+  const aniv = activos.filter((p) => p.fecha_ingreso && p.fecha_ingreso.slice(5, 7) === H.slice(5, 7) && p.fecha_ingreso.slice(0, 4) < H.slice(0, 4));
+  const e = editId ? personas.find((p) => p.id === editId) : null;
+  const fila = (p) => {
+    const [ct, cc] = CONTRATO[p.contratacion] || ['—', ''], dc = diasCumple(p.cumpleanos);
+    return `<tr${p.activo ? '' : ' style="opacity:.6"'}><th scope="row"><a href="#form" class="prov" data-ed="${p.id}">${esc(p.nombre)}</a>${p.activo ? '' : ' <span class="chip">dado de baja</span>'}${p.puesto ? `<div class="small muted" style="font-weight:400">${esc(p.puesto)}</div>` : ''}</th>
+      <td>${p.area ? esc(p.area) : '<span class="muted">Sin área</span>'}</td>
+      <td>${p.contratacion ? `<span class="chip cuadro ${cc}">${ct}</span>` : '<span class="muted">—</span>'}</td>
+      <td>${p.fecha_ingreso ? `${fecha(p.fecha_ingreso)}<div class="small muted">${p.activo ? antiguedad(p.fecha_ingreso) : p.fecha_egreso ? 'hasta ' + fecha(p.fecha_egreso) : ''}</div>` : '—'}</td>
+      <td>${ddmm(p.cumpleanos)}${dc != null && dc <= 30 && p.activo ? `<div class="small ${dc <= 7 ? 'warn-t' : 'muted'}">${dc === 0 ? '¡hoy!' : `en ${dc} ${dc === 1 ? 'día' : 'días'}`}</div>` : ''}</td>
+      <td class="r num"><b>${p.sueldo != null ? peso0(p.sueldo) : '—'}</b></td><td class="r num">${p.valor_hora_extra != null ? peso0(p.valor_hora_extra) : '—'}</td>
+      <td class="small">${esc(p.direccion || '')}${p.telefono ? `<div class="muted">${esc(p.telefono)}</div>` : ''}</td>
+      <td class="r" style="white-space:nowrap"><button class="btn sm" data-ed="${p.id}">Editar</button> ${p.activo ? `<button class="btn sm danger" data-baja="${p.id}">${bajaId === p.id ? '¿Seguro? Dar de baja' : 'Dar de baja'}</button>` : `<button class="btn sm" data-alta="${p.id}">Reactivar</button>`}</td></tr>`;
+  };
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Equipo</h1><p>Las personas que trabajan en Pret a Home y Casa Laván · solo lo ven los usuarios del panel</p></div>
+    <a class="btn primary" href="#form" id="agregar">＋ Agregar persona</a></div>
+  <div class="centro-comando">
+    <div class="cc-card"><div class="cc-label">Personas activas</div><div class="cc-valor">${activos.length}</div><div class="cc-sub">${nRel} en relación de dependencia · ${nPrest} prestadores${bajas.length ? ` · ${bajas.length} dados de baja` : ''}</div></div>
+    <div class="cc-card"><div class="cc-label">Sueldos por mes</div><div class="cc-valor num">${peso0(masa)}</div><div class="cc-sub">suma de los sueldos cargados (sin horas extra ni cargas)</div></div>
+    <div class="cc-card ${cumples.some((x) => x.d <= 7) ? 'destacada' : ''}"><div class="cc-label">Cumpleaños próximos 30 días</div><div class="cc-valor md">${cumples.length ? esc(cumples[0].p.nombre.split(' ')[0]) : '—'}</div><div class="cc-sub">${cumples.length ? cumples.map((x) => `${esc(x.p.nombre.split(' ')[0])} ${ddmm(x.p.cumpleanos)}`).join(' · ') : 'ninguno'}</div></div>
+    <div class="cc-card"><div class="cc-label">Aniversarios este mes</div><div class="cc-valor md">${aniv.length || '—'}</div><div class="cc-sub">${aniv.length ? aniv.map((p) => `${esc(p.nombre.split(' ')[0])} (${+H.slice(0, 4) - +p.fecha_ingreso.slice(0, 4)} ${+H.slice(0, 4) - +p.fecha_ingreso.slice(0, 4) === 1 ? 'año' : 'años'})`).join(' · ') : 'nadie cumple años en la empresa este mes'}</div></div>
+  </div>
+  ${porArea(activos, masa)}
+  <section class="card tabla"><div class="cab"><div><h2>Personas</h2><span class="muted">Tocá un nombre para editar sus datos</span></div>
+    ${bajas.length ? `<label style="margin:0;font-weight:500"><input type="checkbox" id="verBajas" ${verBajas ? 'checked' : ''}> Mostrar dados de baja</label>` : ''}</div>
+    <div class="scroll">${vis.length ? `<table style="min-width:1000px"><thead><tr><th scope="col">Nombre</th><th scope="col">Área</th><th scope="col">Contratación</th><th scope="col">Ingreso</th><th scope="col">Cumpleaños</th><th scope="col" class="r">Sueldo</th><th scope="col" class="r">Hora extra</th><th scope="col">Dirección</th><th scope="col"></th></tr></thead>
+      <tbody>${vis.map(fila).join('')}</tbody></table>` : `<p class="muted" style="padding:0 24px 12px">${msg ? esc(msg) : 'Todavía no hay personas cargadas. Tocá "＋ Agregar persona".'}</p>`}</div></section>
+  ${e || nuevo ? formulario(e) : ''}
+  <p class="muted small" style="line-height:1.6">Datos personales: solo los ven quienes entran al panel. El sueldo de acá es de referencia; el gasto del mes se carga en Costos › Sueldos (y los adelantos, en Registrar).</p>`;
+  $('#agregar').onclick = (ev) => { ev.preventDefault(); nuevo = true; editId = null; msg = ''; pintar(); $('#form').scrollIntoView(); $('#nombre').focus(); };
+  $$('[data-ed]').forEach((b) => (b.onclick = (ev) => { ev.preventDefault(); editId = +b.dataset.ed; nuevo = false; msg = ''; pintar(); $('#form').scrollIntoView(); }));
+  $$('[data-baja]').forEach((b) => (b.onclick = async () => {
+    const id = +b.dataset.baja; if (bajaId !== id) { bajaId = id; pintar(); return; }
+    await sb.from('cc_equipo').update({ activo: false, fecha_egreso: H, actualizado_en: new Date().toISOString() }).eq('id', id); bajaId = null; await cargar(); pintar();
+  }));
+  $$('[data-alta]').forEach((b) => (b.onclick = async () => { await sb.from('cc_equipo').update({ activo: true, fecha_egreso: null, actualizado_en: new Date().toISOString() }).eq('id', +b.dataset.alta); await cargar(); pintar(); }));
+  if ($('#verBajas')) $('#verBajas').onchange = (ev) => { verBajas = ev.target.checked; pintar(); };
+  if ($('#cancelar')) $('#cancelar').onclick = () => { editId = null; nuevo = false; msg = ''; pintar(); };
+  if ($('#guardar')) $('#guardar').onclick = guardar;
+}
+async function guardar() {
+  const nombre = $('#nombre').value.trim().replace(/\s+/g, ' ');
+  const monto = (id) => { const t = $(id).value.trim(); return t ? parseMonto(t) : null; };
+  const sueldo = monto('#sueldo'), hextra = monto('#hextra');
+  if (!nombre) { msg = 'Poné el nombre.'; return repintarForm(); }
+  if ((sueldo != null && !(sueldo >= 0)) || (hextra != null && !(hextra >= 0))) { msg = 'Revisá los importes (ej. 850.000,00).'; return repintarForm(); }
+  const row = { nombre, area: $('#area').value.trim().replace(/\s+/g, ' ') || null, puesto: $('#puesto').value.trim() || null, contratacion: $('#contratacion').value || null, fecha_ingreso: $('#ingreso').value || null,
+    cumpleanos: $('#cumple').value || null, telefono: $('#tel').value.trim() || null, direccion: $('#dir').value.trim() || null,
+    sueldo, valor_hora_extra: hextra, nota: $('#nota').value.trim() || null, actualizado_en: new Date().toISOString() };
+  const { error } = editId ? await sb.from('cc_equipo').update(row).eq('id', editId) : await sb.from('cc_equipo').insert(row);
+  if (error) { msg = 'No se pudo guardar: ' + error.message; return repintarForm(); }
+  msg = ''; editId = null; nuevo = false; await cargar(); pintar();
+}
+// Muestra el error sin perder lo que se escribió en el formulario.
+function repintarForm() { const p = $('#form .err'); if (p) p.textContent = msg; }
+await cargar();
+pintar();
+</script>
+</body>
+</html>

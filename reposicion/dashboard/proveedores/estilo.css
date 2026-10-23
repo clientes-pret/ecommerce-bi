@@ -69,6 +69,8 @@ body.panel > .wrap { flex: 999 1 560px; min-width: 0; max-width: 1680px; margin:
 .side a { padding: 12px; border-radius: 8px; font-size: 14px; color: var(--side-ink); white-space: nowrap; }
 .side a:hover { background: rgba(255,255,255,.06); color: #fff; }
 .side a.on { background: var(--brand); color: #fff; font-weight: 600; }
+.side a.sub { padding: 8px 12px 8px 28px; font-size: 13px; color: var(--side-muted); }
+.side a.sub.on { background: rgba(255,255,255,.1); color: #fff; }
 .side .sp { flex: 1; min-height: 16px; }
 .side a.reg { background: #fff; color: var(--ink); font-weight: 600; text-align: center; margin: 0 4px 8px; } .side a.reg:hover { background: #E8EDFB; color: var(--ink); }
 .side a.reg.on { box-shadow: 0 0 0 2px var(--brand); }

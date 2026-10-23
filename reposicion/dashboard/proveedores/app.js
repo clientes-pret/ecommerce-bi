@@ -92,14 +92,16 @@ export async function guardarCosto({ tipo, categoria, concepto, monto, mes, nota
 
 // Menú lateral del panel de control (pantallas de administración).
 export function nav(perfil, activa) {
-  const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}"${activa === k ? ' aria-current="page"' : ''}>${txt}</a>`;
+  const it = (href, txt, k, cls = '') => `<a href="${href}" class="${[cls, activa === k ? 'on' : ''].filter(Boolean).join(' ')}"${activa === k ? ' aria-current="page"' : ''}>${txt}</a>`;
   const el = document.createElement('nav');
   el.className = 'side';
   el.setAttribute('aria-label', 'Panel de control');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Panel de control</div></div>' +
     it('admin.html', 'Inicio', 'inicio') + it('ventas.html', 'Ventas', 'ventas') +
     '<div class="grupo">Gestión</div>' + it('proveedores.html', 'Proveedores', 'prov') + it('costos.html', 'Costos', 'costos') +
-    it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
+    [['software', 'Software'], ['sueldos', 'Sueldos'], ['servicios', 'Servicios'], ['publicidad', 'Publicidad']]
+      .map(([k, t]) => it(`costos.html?rubro=${k}`, t, 'costos-' + k, 'sub')).join('') +
+    it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
     `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a>` +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
