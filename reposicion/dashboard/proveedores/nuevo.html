@@ -6,12 +6,12 @@
   <title>Registrar · Proveedores</title>
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
-  <link rel="stylesheet" href="estilo.css?v=9">
+  <link rel="stylesheet" href="estilo.css?v=10">
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, $$, esc, guard, nav, qs, hoy, parseMonto, RUBROS_COSTO } from './app.js';
+import { sb, $, $$, esc, guard, nav, qs, hoy, parseMonto, RUBROS_COSTO, camposRepite, activarRepite, guardarCosto } from './app.js';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'nuevo');
 const { data: provs } = await sb.from('cc_proveedores').select('id,nombre,grupo').order('nombre');
@@ -83,12 +83,14 @@ function vistaCosto() {
 <div><label for="cat">Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" autocomplete="off"><datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
 <div><label for="con">Detalle (opcional)</label><input id="con" placeholder="${costoTipo === 'fijo' ? 'Ej.: Alquiler local + depósito' : 'Ej.: Comisión Mercado Libre'}"></div>
 <div><label for="imp">Importe</label><input id="imp" inputmode="decimal" placeholder="1.250.000,00"></div>
-<div><label for="per">Mes</label><input type="month" id="per" value="${hoy().slice(0, 7)}"></div>
+<div><label for="per">${costoTipo === 'fijo' ? 'Mes (o primer mes)' : 'Mes'}</label><input type="month" id="per" value="${hoy().slice(0, 7)}"></div>
+${camposRepite(costoTipo, hoy().slice(0, 7))}
 <div class="ancho"><label for="nota">Nota (opcional)</label><input id="nota"></div>
 </div>
 <div class="pie"><p class="err" id="err"></p>${costoMsg ? `<p class="ok-t"><b>Guardado ✓</b> ${esc(costoMsg.txt)} · <a href="costos.html?tipo=${costoMsg.tipo}">Ver ${costoMsg.tipo === 'fijo' ? 'costos fijos' : 'costos variables'}</a></p>` : ''}
 <button class="btn primary" id="ok">Guardar costo</button></div></form>`;
   $$('[data-t]').forEach((b) => (b.onclick = () => { costoTipo = b.dataset.t; costoMsg = null; vistaCosto(); }));
+  activarRepite();
   $('#f').onsubmit = async (e) => {
     e.preventDefault(); $('#err').textContent = ''; costoMsg = null;
     const categoria = $('#cat').value.trim(), monto = parseMonto($('#imp').value), per = $('#per').value;
@@ -96,9 +98,11 @@ function vistaCosto() {
     if (!$('#imp').value.trim() || !(monto >= 0)) { $('#err').textContent = 'Poné un importe válido (ej. 1.250.000,50).'; return; }
     if (!per) { $('#err').textContent = 'Elegí el mes.'; return; }
     $('#ok').disabled = true;
-    const { error } = await sb.from('cc_costos').insert({ tipo: costoTipo, categoria, concepto: $('#con').value.trim() || null, monto, periodo: per + '-01', nota: $('#nota').value.trim() || null });
+    const rep = $('#rep').value, hasta = $('#repHasta').value;
+    const { error } = await guardarCosto({ tipo: costoTipo, categoria, concepto: $('#con').value.trim() || null, monto, mes: per, nota: $('#nota').value.trim() || null });
     if (error) { $('#err').textContent = 'No se pudo guardar: ' + error.message; $('#ok').disabled = false; return; }
-    costoMsg = { tipo: costoTipo, txt: `${categoria} · ${nomMes(per)}` };
+    const cuando = rep === 'no' ? nomMes(per) : rep === 'siempre' ? `todos los meses desde ${nomMes(per)}` : `de ${nomMes(per)} a ${nomMes(hasta)}`;
+    costoMsg = { tipo: costoTipo, txt: `${categoria} · ${cuando}` };
     vistaCosto(); // formulario limpio, listo para cargar otro
   };
 }

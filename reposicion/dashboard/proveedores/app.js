@@ -51,6 +51,30 @@ export const RUBROS_COSTO = {
   variable: ['Comisiones de marketplace', 'Envíos y logística', 'Packaging', 'Publicidad', 'Impuestos sobre ventas', 'Costos de cobro / financieros', 'Mercadería dañada o devuelta', 'Otros'],
 };
 
+// ---- Costos que se repiten ----
+// Campo "Se repite" del formulario de costos. Fijos arrancan en "todos los meses", variables en "solo este mes".
+export function camposRepite(tipo, mes) {
+  const def = tipo === 'fijo' ? 'siempre' : 'no';
+  return `<div><label for="rep">Se repite</label><select id="rep">
+    <option value="no" ${def === 'no' ? 'selected' : ''}>Solo este mes</option>
+    <option value="siempre" ${def === 'siempre' ? 'selected' : ''}>Todos los meses (sin fin)</option>
+    <option value="hasta">Todos los meses hasta…</option></select></div>
+  <div id="repHastaBox" hidden><label for="repHasta">Último mes</label><input type="month" id="repHasta" value="${mes}"></div>`;
+}
+export function activarRepite() {
+  const sync = () => ($('#repHastaBox').hidden = $('#rep').value !== 'hasta');
+  $('#rep').onchange = sync; sync();
+}
+// Guarda un costo: si se repite, crea el costo recurrente y carga sus meses hasta el mes en curso.
+export async function guardarCosto({ tipo, categoria, concepto, monto, mes, nota }) {
+  const rep = $('#rep').value, hasta = $('#repHasta').value;
+  if (rep === 'no') return sb.from('cc_costos').insert({ tipo, categoria, concepto, monto, periodo: mes + '-01', nota });
+  if (rep === 'hasta' && (!hasta || hasta < mes)) return { error: { message: 'El último mes tiene que ser igual o posterior al mes de inicio.' } };
+  const { error } = await sb.from('cc_costos_recurrentes').insert({ tipo, categoria, concepto, monto, desde: mes + '-01', hasta: rep === 'hasta' ? hasta + '-01' : null, nota });
+  if (error) return { error };
+  return sb.rpc('cc_costos_al_dia');
+}
+
 // Menú lateral del panel de control (pantallas de administración).
 export function nav(perfil, activa) {
   const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}"${activa === k ? ' aria-current="page"' : ''}>${txt}</a>`;
