@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Proveedores · Proveedores</title>
   <link rel="icon" href="icon-192.png">
-  <meta name="theme-color" content="#0f1115">
-  <link rel="stylesheet" href="estilo.css?v=5">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=7">
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
 import { sb, $, esc, guard, nav, peso0, fecha, hoy } from './app.js';
-import { diasEntre, semaforo } from './analisis.js?v=3';
+import { diasEntre, semaforo } from './analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'prov');
 const H = hoy();
@@ -21,17 +21,19 @@ const rows = (data || []).map((r) => ({ ...r, saldo: Number(r.saldo), chq: Numbe
   dPago: r.ultimo_pago ? diasEntre(r.ultimo_pago, H) : null, dIng: r.ultimo_comprobante ? diasEntre(r.ultimo_comprobante, H) : null }));
 let orden = 'saldo', dir = -1;
 const conSaldo = rows.filter((r) => r.saldo > 1);
-$('#app').innerHTML = `<h1>Proveedores</h1><div class="muted">Elegí un proveedor para ver su centro de comando.</div>
+const olvidados = conSaldo.filter((r) => (r.dPago ?? 999) > 60);
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Proveedores</h1><p>Cuánto le debés a cada uno · al ${fecha(H)}</p></div>
+  <div class="row wrapRow"><a class="btn" href="nuevo.html?tipo=comprobante">Cargar factura</a><a class="btn primary" href="nuevo.html?tipo=pago">Registrar pago</a></div></div>
 <div class="centro-comando">
-  <div class="cc-card"><div class="cc-label">Proveedores con deuda</div><div class="cc-valor">${conSaldo.length}</div><div class="cc-sub">de ${rows.filter((r) => r.activo).length} activos</div></div>
-  <div class="cc-card"><div class="cc-label">Saldo total</div><div class="cc-valor md num">${peso0(conSaldo.reduce((a, r) => a + r.saldo, 0))}</div><div class="cc-sub">solo cuentas con deuda</div></div>
-  <div class="cc-card"><div class="cc-label">Sin pagar hace +60 días</div><div class="cc-valor ${conSaldo.filter((r) => (r.dPago ?? 999) > 60).length ? 'warn-t' : ''}">${conSaldo.filter((r) => (r.dPago ?? 999) > 60).length}</div><div class="cc-sub">con deuda pendiente</div></div>
-  <div class="cc-card"><div class="cc-label">Cheques no cobrados</div><div class="cc-valor md num">${peso0(rows.reduce((a, r) => a + r.chq, 0))}</div></div>
+  <div class="cc-card"><div class="cc-label">Deuda total</div><div class="cc-valor num">${peso0(conSaldo.reduce((a, r) => a + r.saldo, 0))}</div><div class="cc-sub">${conSaldo.length} proveedores con saldo, de ${rows.filter((r) => r.activo).length} activos</div></div>
+  <div class="cc-card ${olvidados.length ? 'alerta' : ''}"><div class="cc-label">Sin pagar hace +60 días</div><div class="cc-valor num">${peso0(olvidados.reduce((a, r) => a + r.saldo, 0))}</div><div class="cc-sub">${olvidados.length} proveedores con deuda</div></div>
+  <div class="cc-card"><div class="cc-label">Cheques no cobrados</div><div class="cc-valor num">${peso0(rows.reduce((a, r) => a + r.chq, 0))}</div><div class="cc-sub">emitidos, todavía no debitados</div></div>
 </div>
-<div class="row wrapRow" style="margin:12px 0"><input id="q" style="max-width:340px" placeholder="Buscar proveedor… (Enter abre el primero)" autofocus>
-<label style="margin:0"><input type="checkbox" id="conSaldo" checked> Solo con saldo</label>
-<label style="margin:0"><input type="checkbox" id="inact"> Incluir inactivos</label></div>
-<div class="card tablewrap"><table><thead><tr><th class="ord" data-o="nombre">Proveedor</th><th class="r ord" data-o="saldo">Saldo</th><th>Estado</th><th class="ord" data-o="dPago">Último pago</th><th class="ord" data-o="dIng">Último ingreso</th><th class="r ord" data-o="chq">Cheques s/cobrar</th></tr></thead><tbody id="tb"></tbody></table></div>`;
+<section class="card tabla"><div class="cab"><div><h2>Saldo por proveedor</h2><span class="muted">Elegí uno para ver su cuenta corriente</span></div>
+  <div class="row wrapRow"><input id="q" style="max-width:300px" placeholder="Buscar proveedor… (Enter abre el primero)" autofocus aria-label="Buscar proveedor">
+  <label style="margin:0;font-weight:500"><input type="checkbox" id="conSaldo" checked> Solo con saldo</label>
+  <label style="margin:0;font-weight:500"><input type="checkbox" id="inact"> Incluir inactivos</label></div></div>
+<div class="scroll"><table style="min-width:760px"><thead><tr><th scope="col" class="ord" data-o="nombre">Proveedor</th><th scope="col">Estado</th><th scope="col" class="r ord" data-o="saldo">Saldo</th><th scope="col" class="ord" data-o="dPago">Último pago</th><th scope="col" class="ord" data-o="dIng">Último ingreso</th><th scope="col" class="r ord" data-o="chq">Cheques s/cobrar</th></tr></thead><tbody id="tb"></tbody></table></div></section>`;
 let vista = [];
 function pintar() {
   const q = $('#q').value.toLowerCase(), cs = $('#conSaldo').checked, ia = $('#inact').checked;
@@ -40,8 +42,8 @@ function pintar() {
   vista.sort((a, b) => (k(a) < k(b) ? -1 : k(a) > k(b) ? 1 : 0) * dir);
   const ago = (d) => (d == null ? '' : d === 0 ? 'hoy' : `hace ${d} d`);
   $('#tb').innerHTML = vista.map((r) => { const [t, c] = semaforo(r.saldo, r.dPago);
-    return `<tr class="click" onclick="location.href='proveedor.html?id=${r.proveedor_id}'"><td><b>${esc(r.nombre)}</b>${r.activo ? '' : ' <span class="chip">inactivo</span>'}</td>
-    <td class="r num" style="${r.saldo < -1 ? 'color:var(--ok)' : ''}">${peso0(r.saldo)}</td><td><span class="chip ${c}">${t}</span></td>
+    return `<tr class="click" onclick="location.href='proveedor.html?id=${r.proveedor_id}'"><th scope="row"><a class="prov" href="proveedor.html?id=${r.proveedor_id}">${esc(r.nombre)}</a>${r.activo ? '' : ' <span class="chip">inactivo</span>'}</th>
+    <td><span class="chip cuadro ${c}">${t}</span></td><td class="r num" style="font-weight:600;${r.saldo < -1 ? 'color:var(--ok)' : ''}">${peso0(r.saldo)}</td>
     <td>${fecha(r.ultimo_pago)} <span class="muted small">${ago(r.dPago)}</span></td><td>${fecha(r.ultimo_comprobante)} <span class="muted small">${ago(r.dIng)}</span></td>
     <td class="r num">${r.chq ? peso0(r.chq) : ''}</td></tr>`; }).join('') || '<tr><td colspan="6" class="muted">Sin resultados.</td></tr>';
 }

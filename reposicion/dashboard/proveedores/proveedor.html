@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Proveedor · Proveedores</title>
   <link rel="icon" href="icon-192.png">
-  <meta name="theme-color" content="#0f1115">
-  <link rel="stylesheet" href="estilo.css?v=5">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=7">
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
 import { sb, $, $$, esc, guard, nav, qs, peso, peso0, fecha, fechaHora, chipEstado, hoy } from './app.js';
-import { analizar, activarTooltips, mesesAtras, lecturas, graficoBarras, graficoSaldo, barraAging, semaforo, diasEntre } from './analisis.js?v=3';
+import { analizar, activarTooltips, mesesAtras, lecturas, graficoBarras, graficoSaldo, barraAging, semaforo, diasEntre } from './analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'prov');
 const id = qs('id'), H = hoy(), PAG = 100;
@@ -87,7 +87,7 @@ function resumen() {
     <div class="card"><h2 style="margin-top:0">Antigüedad de la deuda</h2>${barraAging(a)}
       <div class="cc-nota">Se asume que cada pago cancela las facturas más viejas primero.${a.desde ? ` Cuenta abierta desde ${fecha(a.desde)}.` : ''}</div></div>
   </div>
-  <div class="card chart">${selAnio()}<h2 style="margin-top:0">Facturado vs. pagado por mes</h2><div class="leyenda"><span><i style="background:#4f8cff"></i>Facturado</span><span><i style="background:#6fcf97"></i>Pagado</span></div>${graficoBarras(per)}</div>
+  <div class="card chart">${selAnio()}<h2 style="margin-top:0">Facturado vs. pagado por mes</h2><div class="leyenda"><span><i style="background:#2449B8"></i>Facturado</span><span><i style="background:#3D8B5E"></i>Pagado</span></div>${graficoBarras(per)}</div>
   <div class="card chart"><h2 style="margin-top:0">Evolución del saldo</h2>${graficoSaldo(per)}</div>
   <div class="grid dos">
     <div class="card"><h2 style="margin-top:0">Mercadería recibida en depósito</h2>${rc.length ? `<div class="row wrapRow" style="gap:24px;margin-bottom:8px"><div><div class="cc-label">Última</div><b>${fecha(rc[0].fecha)}</b></div><div><div class="cc-label">Recepciones</div><b>${rc.length}</b></div><div><div class="cc-label">Con diferencia</div><b class="${conDif ? 'bad-t' : ''}">${conDif}</b></div></div>
@@ -99,15 +99,16 @@ function resumen() {
 function cuenta() {
   let f = movs.slice().reverse();
   if (solo === 'pagos') f = f.filter((m) => m.tipo === 'pago'); if (solo === 'comprobantes') f = f.filter((m) => m.tipo !== 'pago');
-  const fila = (m) => `<tr><td class="num">${fecha(m.fecha)}</td>
+  const fila = (m) => `<tr><td class="num muted">${fecha(m.fecha)}</td>
     <td>${esc(m.detalle)}${m.tipo !== 'comprobante' && m.tipo !== 'pago' ? `<span class="chip" style="margin-left:6px">${TIPO[m.tipo]}</span>` : ''}
     ${m.medio_pago === 'cheque' ? `<div class="small muted">Cheque ${esc(m.cheque_nro || '')} ${m.cheque_fecha_cobro ? '· cobro ' + fecha(m.cheque_fecha_cobro) : ''} ${m.cheque_cobrado === false ? `<button class="btn sm" data-cobrado="${m.id}" style="margin-left:6px">Marcar cobrado</button>` : m.cheque_cobrado ? '· cobrado' : ''}</div>` : ''}
     ${m.nota ? `<div class="small muted">${esc(m.nota)}</div>` : ''}</td>
-    <td class="r num">${Number(m.ingreso) ? peso(m.ingreso) : ''}</td><td class="r num">${Number(m.pago) ? peso(m.pago) : ''}</td><td class="r num"><b>${solo === 'todo' ? peso(m.saldo) : ''}</b></td>
+    <td class="r num">${Number(m.ingreso) ? peso(m.ingreso) : ''}</td><td class="r num ok-t">${Number(m.pago) ? peso(m.pago) : ''}</td><td class="r num"><b>${solo === 'todo' ? peso(m.saldo) : ''}</b></td>
     <td>${m.recepcion_id ? `<a href="recepcion.html?id=${m.recepcion_id}" class="chip ${m.control_estado === 'ok' ? 'ok' : m.control_estado === 'con_diferencia' ? 'bad' : ''}">${m.control_estado === 'ok' ? 'Controlada ✓' : m.control_estado === 'con_diferencia' ? 'Diferencia' : 'Vinculada'}</a>` : ''}</td></tr>`;
-  return `<div class="row" style="margin-bottom:8px"><select id="solo" style="width:auto"><option value="todo" ${solo === 'todo' ? 'selected' : ''}>Todo</option><option value="pagos" ${solo === 'pagos' ? 'selected' : ''}>Solo pagos</option><option value="comprobantes" ${solo === 'comprobantes' ? 'selected' : ''}>Solo comprobantes</option></select><span class="muted small">${f.length} movimientos</span></div>
-  <div class="card tablewrap"><table><thead><tr><th>Fecha</th><th>Detalle</th><th class="r">Ingreso</th><th class="r">Pago</th><th class="r">Saldo</th><th>Control</th></tr></thead><tbody>${f.slice(0, mostrar).map(fila).join('')}</tbody></table>
-  ${f.length > mostrar ? '<button class="btn" id="mas" style="margin:12px">Ver más antiguos</button>' : ''}</div>`;
+  return `<section class="card tabla" style="margin-top:16px"><div class="cab"><div><h2>Cuenta corriente · ${esc(prov.nombre)}</h2><span class="muted">Saldo ${peso0(a.saldo)} · ${f.length} movimientos</span></div>
+    <div class="seg gris" role="group" aria-label="Qué movimientos">${[['todo', 'Todo'], ['pagos', 'Solo pagos'], ['comprobantes', 'Solo comprobantes']].map(([k, t]) => `<button type="button" data-solo="${k}" aria-pressed="${solo === k}">${t}</button>`).join('')}</div></div>
+  <div class="scroll"><table style="min-width:760px"><thead><tr><th scope="col">Fecha</th><th scope="col">Movimiento</th><th scope="col" class="r">Factura</th><th scope="col" class="r">Pago</th><th scope="col" class="r">Saldo</th><th scope="col">Control</th></tr></thead><tbody>${f.slice(0, mostrar).map(fila).join('')}</tbody></table></div>
+  ${f.length > mostrar ? '<button class="btn" id="mas" style="margin:12px 24px">Ver más antiguos</button>' : ''}</section>`;
 }
 
 const EST = { enviado: ['Enviado', 'warn'], recibido_parcial: ['Recibido parcial', 'warn'], recibido_completo: ['Recibido completo', 'ok'], cancelado: ['Cancelado', ''] };
@@ -130,24 +131,23 @@ function nombresRepoOpc() {
 }
 async function guardarVinculo(lista) { await sb.from('cc_proveedores').update({ repo_nombres: lista }).eq('id', id); prov.repo_nombres = lista; await cargarPedidos(); pintar(); }
 function mercaderia() {
-  return `<div class="card tablewrap">${recs.length ? `<table><thead><tr><th>Fecha</th><th>Remito</th><th class="r">Bultos</th><th class="r">Unidades</th><th>Mati dice</th><th>Estado</th></tr></thead><tbody>
+  return `<section class="card tabla" style="margin-top:16px"><div class="cab"><h2>Mercadería recibida</h2></div><div class="scroll">${recs.length ? `<table><thead><tr><th scope="col">Fecha</th><th scope="col">Remito</th><th scope="col" class="r">Bultos</th><th scope="col" class="r">Unidades</th><th scope="col">Mati dice</th><th scope="col">Estado</th></tr></thead><tbody>
     ${recs.map((r) => `<tr class="click" onclick="location.href='recepcion.html?id=${r.id}'"><td>${fechaHora(r.fecha)}</td><td>${esc(r.nro_remito || 's/n')}</td><td class="r">${r.bultos ?? ''}</td><td class="r num">${r.unidades_contadas}</td><td>${r.recibido_completo ? '<span class="chip ok">Completo</span>' : '<span class="chip bad">Faltante</span>'}</td><td>${chipEstado(r.estado)}</td></tr>`).join('')}</tbody></table>`
-    : '<p class="muted" style="padding:12px">Todavía no hay recepciones cargadas desde el depósito para este proveedor.</p>'}</div>`;
+    : '<p class="muted" style="padding:0 24px 12px">Todavía no hay recepciones cargadas desde el depósito para este proveedor.</p>'}</div></section>`;
 }
 
 function pintar() {
   const [sem, sc] = semaforo(a.saldo, a.ultimoPago?.dias ?? null);
   $('#app').innerHTML = `<p class="small"><a href="proveedores.html">← Todos los proveedores</a></p>
-  <div class="row between wrapRow"><div><h1>${esc(prov.nombre)} ${prov.activo ? '' : '<span class="chip">inactivo</span>'}</h1><div class="muted small">${prov.grupo ? 'Grupo: ' + esc(prov.grupo) + ' · ' : ''}${a.n} movimientos${a.desde ? ' desde ' + fecha(a.desde) : ''}</div></div>
-    <div class="row wrapRow"><a class="btn primary sm" href="nuevo.html?proveedor=${id}&tipo=comprobante">＋ Factura</a><a class="btn primary sm" href="nuevo.html?proveedor=${id}&tipo=pago">＋ Pago</a>
-    <button class="btn sm" id="activo">${prov.activo ? 'Marcar inactivo' : 'Reactivar'}</button></div></div>
-  <div class="tabs">${[['resumen', 'Centro de comando'], ['cc', 'Cuenta corriente'], ['ped', 'Pedidos'], ['rec', 'Mercadería recibida']].map(([k, t]) => `<button class="btn sm ${tab === k ? 'primary' : ''}" data-tab="${k}">${t}</button>`).join('')}</div>
+  <div class="cabecera"><div><div class="row" style="gap:10px"><h1>${esc(prov.nombre)}</h1>${prov.activo ? '' : '<span class="chip">inactivo</span>'}</div><p>${prov.grupo ? 'Grupo: ' + esc(prov.grupo) + ' · ' : ''}Saldo ${peso0(a.saldo)} · ${a.n} movimientos${a.desde ? ' desde ' + fecha(a.desde) : ''}</p></div>
+    <div class="row wrapRow"><button class="btn" id="activo">${prov.activo ? 'Marcar inactivo' : 'Reactivar'}</button><a class="btn" href="nuevo.html?proveedor=${id}&tipo=comprobante">Cargar factura</a><a class="btn primary" href="nuevo.html?proveedor=${id}&tipo=pago">Registrar pago</a></div></div>
+  <div class="seg" role="group" aria-label="Sección" style="margin:20px 0 4px">${[['resumen', 'Centro de comando'], ['cc', 'Cuenta corriente'], ['ped', 'Pedidos'], ['rec', 'Mercadería recibida']].map(([k, t]) => `<button type="button" aria-pressed="${tab === k}" data-tab="${k}">${t}</button>`).join('')}</div>
   ${tab === 'resumen' ? resumen() : tab === 'cc' ? cuenta() : tab === 'ped' ? tabPedidos() : mercaderia()}`;
   $$('[data-tab]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); tab = b.dataset.tab; pintar(); scrollTo(0, 0); }));
   const vb = $('#vincular'); if (vb) vb.onclick = () => { const v = $('#nrepo').value; if (v) guardarVinculo([...(prov.repo_nombres || []), v]); };
   $$('[data-quitar]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); guardarVinculo((prov.repo_nombres || []).filter((n) => n !== b.dataset.quitar)); }));
   const an = $('#anio'); if (an) an.onchange = () => { anio = an.value; pintar(); };
-  const sel = $('#solo'); if (sel) sel.onchange = () => { solo = sel.value; mostrar = PAG; pintar(); };
+  $$('[data-solo]').forEach((b) => (b.onclick = () => { solo = b.dataset.solo; mostrar = PAG; pintar(); }));
   const mas = $('#mas'); if (mas) mas.onclick = () => { mostrar += PAG; pintar(); };
   $('#activo').onclick = async () => { await sb.from('cc_proveedores').update({ activo: !prov.activo }).eq('id', id); prov.activo = !prov.activo; pintar(); };
   $$('[data-cobrado]').forEach((b) => (b.onclick = async () => { await sb.from('cc_movimientos').update({ cheque_cobrado: true }).eq('id', b.dataset.cobrado); await cargarMovs(); pintar(); }));

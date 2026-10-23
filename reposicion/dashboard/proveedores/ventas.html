@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ventas · Panel de control</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=7">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Ventas = el Scorecard diario, leyendo de scorecard_canal_dia / scorecard_ads_dia en Supabase.
+// Misma lógica que el artifact "Scorecard Pret & Laván" (evalDay/evalWeek/evalMonth y rentabilidad por canal).
+import { sb, $, $$, esc, guard, nav, peso0, hoy } from './app.js';
+import { corto, MESN } from './analisis.js?v=5';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'ventas');
+
+const DAY = 864e5;
+const PRET = '#7A3B46', LAVAN = '#2B6D68';
+const CANALES = [
+  { marca: 'pret', canal: 'tn', nombre: 'Tienda Nube · Pret a Home', ads: ['meta', 'google'] },
+  { marca: 'pret', canal: 'local', nombre: 'Local físico · Pret a Home', ads: null },
+  { marca: 'pret', canal: 'ml', nombre: 'Mercado Libre · Pret a Home', ads: ['ml'] },
+  { marca: 'lavan', canal: 'tn', nombre: 'Tienda Nube · Casa Laván', ads: ['meta', 'google'] },
+  { marca: 'lavan', canal: 'ml', nombre: 'Mercado Libre · Casa Laván', ads: ['ml'] },
+];
+const PLATAFORMAS = [['meta', 'Meta Ads'], ['google', 'Google Ads'], ['ml', 'Mercado Libre Ads']];
+const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
+const iso = (d) => d.toISOString().slice(0, 10);
+const masDias = (s, n) => iso(new Date(Date.parse(s + 'T00:00:00Z') + n * DAY));
+const lunes = (s) => { const dow = new Date(s + 'T00:00:00Z').getUTCDay(); return masDias(s, dow === 0 ? -6 : 1 - dow); };
+const primeroMes = (s) => s.slice(0, 7) + '-01';
+const ddmm = (s) => s.slice(8, 10) + '/' + s.slice(5, 7);
+const largo = (s) => `${DIAS[new Date(s + 'T00:00:00Z').getUTCDay()]} ${Number(s.slice(8, 10))} de ${MESN[Number(s.slice(5, 7)) - 1]} de ${s.slice(0, 4)}`;
+const pctTxt = (v) => (v >= 0 ? '+' : '−') + Math.abs(v * 100).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
+const num = (v) => (v == null ? null : Number(v));
+
+// Lectura paginada y con orden fijo (sin orden, las páginas pueden repetir o perder filas).
+async function todo(tabla, cols, desde, orden) {
+  const out = [];
+  for (let i = 0; ; i += 1000) {
+    let q = sb.from(tabla).select(cols).gte('fecha', desde);
+    for (const o of orden) q = q.order(o);
+    const { data, error } = await q.range(i, i + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) return out;
+  }
+}
+
+// 8 meses de historia alcanzan para el promedio (8 semanas / 8 meses previos).
+const desde = masDias(hoy(), -300);
+let filas, ads;
+try {
+  [filas, ads] = await Promise.all([
+    todo('scorecard_canal_dia', 'fecha,marca,canal,ventas,ordenes,facturacion_neta,costo_productos,costo_envio', desde, ['fecha', 'marca', 'canal']),
+    todo('scorecard_ads_dia', 'fecha,marca,plataforma,inversion', desde, ['fecha', 'marca', 'plataforma']),
+  ]);
+} catch (e) {
+  $('#app').innerHTML = `<h1>Ventas</h1><div class="card"><p class="err">No pude leer el scorecard: ${esc(e.message)}</p></div>`;
+  throw e;
+}
+const fila = {}; // `${marca}_${canal}` -> { fecha -> fila }
+for (const f of filas) ((fila[`${f.marca}_${f.canal}`] ??= {})[f.fecha] = f);
+const adsDia = {}; // `${marca}_${plataforma}` -> { fecha -> inversion }
+for (const a of ads) if (a.inversion != null) ((adsDia[`${a.marca}_${a.plataforma}`] ??= {})[a.fecha] = Number(a.inversion));
+
+// "Hoy" del tablero = último día con ventas cargadas (la carga va con atraso; no inventamos el día de hoy).
+const ref = filas.filter((f) => f.ventas != null).reduce((m, f) => (f.fecha > m ? f.fecha : m), '');
+let marca = 'all';
+
+// Serie fecha -> ventas de un canal (solo días con dato).
+const serie = (c) => Object.fromEntries(Object.entries(fila[`${c.marca}_${c.canal}`] || {}).filter(([, f]) => f.ventas != null).map(([d, f]) => [d, Number(f.ventas)]));
+const sumaSeries = (ss) => { const o = {}; for (const s of ss) for (const [d, v] of Object.entries(s)) o[d] = (o[d] || 0) + v; return o; };
+const sumaRango = (s, a, b) => { let t = 0, hay = false; for (const [d, v] of Object.entries(s)) if (d >= a && d <= b) { t += v; hay = true; } return hay ? t : null; };
+
+// El promedio histórico solo usa períodos completos: desde el día en que TODOS los canales sumados ya tienen datos
+// (antes de julio solo estaba el local) y sin la semana/mes en que arrancó la serie a la mitad.
+// `desde` = primer día con datos del canal (o el mayor de esos días si se suman varios canales).
+const inicio = (ss) => ss.map((s) => Object.keys(s).sort()[0] || '9999').reduce((m, x) => (x > m ? x : m), '');
+function evalDia(s, d, desde = '') {
+  if (s[d] === undefined) return { actual: null, delta: null, sinDato: true };
+  const dow = new Date(d + 'T00:00:00Z').getUTCDay();
+  const m = Object.keys(s).filter((x) => x >= desde && x < d && new Date(x + 'T00:00:00Z').getUTCDay() === dow).sort().reverse().slice(0, 8).map((x) => s[x]);
+  if (!m.length) return { actual: s[d], delta: null };
+  const avg = m.reduce((a, b) => a + b, 0) / m.length;
+  return { actual: s[d], delta: avg > 0 ? (s[d] - avg) / avg : null };
+}
+function evalPeriodo(s, d, clave, fraccion, desde) {
+  const b = {}; for (const [x, v] of Object.entries(s)) b[clave(x)] = (b[clave(x)] || 0) + v;
+  const k = clave(d), actual = b[k] || 0;
+  const prev = Object.keys(b).filter((x) => x >= desde && x < k).sort().reverse().slice(0, 8);
+  if (!prev.length) return { actual, delta: null };
+  const base = (prev.reduce((a, x) => a + b[x], 0) / prev.length) * fraccion;
+  return { actual, delta: base > 0 ? (actual - base) / base : null };
+}
+const evalSemana = (s, d, desde = '') => evalPeriodo(s, d, lunes, (Math.round((Date.parse(d) - Date.parse(lunes(d))) / DAY) + 1) / 7, desde);
+const evalMes = (s, d, desde = '') => { const y = +d.slice(0, 4), m = +d.slice(5, 7); return evalPeriodo(s, d, primeroMes, +d.slice(8, 10) / new Date(Date.UTC(y, m, 0)).getUTCDate(), desde); };
+const badge = (ev) => ev.sinDato ? '<span class="chip">Sin dato</span>'
+  : ev.delta == null ? '<span class="chip">Sin base histórica</span>'
+  : `<span class="chip ${ev.delta >= 0 ? 'ok' : 'warn'}">${ev.delta >= 0 ? '+' : '−'}${Math.abs(Math.round(ev.delta * 100))}% vs promedio</span>`;
+
+// Rentabilidad del mes de un canal: neta − costo de productos − envío (solo TN; en ML ya viene en la neta) − ads del canal,
+// sumando solo días con neta y costo cargados. Local físico no aplica (no trackea costo).
+function rentabilidad(c) {
+  if (!c.ads) return null;
+  let neta = 0, rev = 0, n = 0;
+  for (const [d, f] of Object.entries(fila[`${c.marca}_${c.canal}`] || {})) {
+    if (d < primeroMes(ref) || d > ref || f.facturacion_neta == null || f.costo_productos == null) continue;
+    if (c.canal === 'tn' && f.costo_envio == null) continue;
+    let r = num(f.facturacion_neta) - num(f.costo_productos) - (c.canal === 'tn' ? num(f.costo_envio) : 0);
+    for (const p of c.ads) r -= adsDia[`${c.marca}_${p}`]?.[d] || 0;
+    neta += r; n += 1; if (f.ventas != null) rev += Number(f.ventas);
+  }
+  return n ? { neta, prom: neta / n, n, rev } : { n: 0 };
+}
+
+function pintar() {
+  if (!ref) { $('#app').innerHTML = '<h1>Ventas</h1><div class="card"><p class="muted">Todavía no hay ventas cargadas en el scorecard.</p></div>'; return; }
+  const vis = CANALES.filter((c) => marca === 'all' || c.marca === marca);
+  const sem = lunes(ref), mes = primeroMes(ref), atraso = Math.round((Date.parse(hoy()) - Date.parse(ref)) / DAY);
+  const series = vis.map(serie), total = sumaSeries(series), desdeTotal = inicio(series);
+  const ordenes = (canal, a) => vis.filter((c) => c.canal === canal).reduce((t, c) => t + Object.values(fila[`${c.marca}_${c.canal}`] || {}).filter((f) => f.fecha >= a && f.fecha <= ref).reduce((x, f) => x + (f.ordenes || 0), 0), 0);
+  const kpis = [[`Último día · ${ddmm(ref)}`, ref, evalDia(total, ref, desdeTotal)], [`Semana · desde el lunes ${ddmm(sem)}`, sem, evalSemana(total, ref, desdeTotal)], [`Mes · ${MESN[+ref.slice(5, 7) - 1]}`, mes, evalMes(total, ref, desdeTotal)]];
+  const ventasMes = sumaRango(total, mes, ref) || 0;
+  const tabs = [['all', 'Consolidado'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']].map(([k, t]) => `<button type="button" data-marca="${k}" aria-pressed="${marca === k}">${t}</button>`).join('');
+  const dot = (c) => `<span class="dot" style="background:${c.marca === 'pret' ? PRET : LAVAN}"></span>`;
+  const nombreMarca = marca === 'all' ? 'Ambas marcas' : marca === 'pret' ? 'Pret a Home' : 'Casa Laván';
+  const filasCanal = vis.map((c, i) => {
+    const s = series[i], r = rentabilidad(c);
+    const v = (a) => { const x = sumaRango(s, a, ref); return x == null ? '—' : peso0(x); };
+    const pend = '<span class="chip">Pendiente</span>', na = '<span class="chip">No aplica</span>';
+    const pct = (x, base) => (base > 0 ? ` <span class="small" style="font-weight:700;color:${x >= 0 ? 'var(--ok)' : 'var(--warn)'}">${pctTxt(x / base)}</span>` : '');
+    return `<tr><th scope="row" style="white-space:nowrap"><span class="row" style="gap:8px">${dot(c)}${esc(c.nombre)}</span></th>
+      <td class="r num">${v(ref)}</td><td class="r num">${v(sem)}</td><td class="r num"><b>${v(mes)}</b></td>
+      <td class="r num" style="color:var(--ink-soft)">${!r ? na : !r.n ? pend : peso0(r.prom)}</td>
+      <td class="r num" style="white-space:nowrap">${!r ? na : !r.n ? pend : `<b>${peso0(r.neta)}</b>${pct(r.neta, r.rev)}`}</td></tr>`;
+  }).join('');
+  const filasEval = vis.map((c, i) => {
+    const s = series[i], desde = inicio([s]);
+    return `<tr><th scope="row" style="white-space:nowrap"><span class="row" style="gap:8px">${dot(c)}${esc(c.nombre)}</span></th>
+      ${[evalDia(s, ref, desde), evalSemana(s, ref, desde), evalMes(s, ref, desde)].map((ev) => `<td><span class="row" style="gap:8px"><span class="num" style="min-width:64px">${ev.actual == null ? '—' : corto(ev.actual)}</span>${badge(ev)}</span></td>`).join('')}</tr>`;
+  }).join('');
+  const marcasAds = marca === 'all' ? ['pret', 'lavan'] : [marca];
+  const tarjetasAds = PLATAFORMAS.map(([p, n]) => {
+    let t = 0, hay = false;
+    for (const m of marcasAds) for (const [d, v] of Object.entries(adsDia[`${m}_${p}`] || {})) if (d >= mes && d <= ref) { t += v; hay = true; }
+    return `<div class="cc-card"><div class="cc-label row between">${n}<span class="chip ${hay ? 'ok' : ''}">${hay ? 'Cargado' : 'Sin datos'}</span></div>
+      <div class="cc-valor md num">${hay ? peso0(t) : '—'}</div><div class="cc-sub">${hay && ventasMes > 0 ? `${(t / ventasMes * 100).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% de las ventas del mes` : '&nbsp;'}</div></div>`;
+  }).join('');
+
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Ventas</h1><p>Scorecard diario · ${largo(ref)}</p></div>
+    <span class="row small muted" style="gap:6px"><span class="dot" style="background:${atraso <= 1 ? 'var(--ok)' : '#B54708'}"></span>Datos cargados hasta el ${ddmm(ref)}${atraso > 1 ? ` · ${atraso} días de atraso` : ''}</span></div>
+  <div class="seg" role="group" aria-label="Marca" style="margin-top:20px">${tabs}</div>
+  <div class="centro-comando">${kpis.map(([l, a, ev]) => {
+    const v = sumaRango(total, a, ref);
+    return `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor num">${v == null ? 'Sin datos' : peso0(v)}</div>
+      <div class="cc-sub"><span>${ordenes('tn', a)} órdenes TN · ${ordenes('ml', a)} órdenes ML</span>${badge(ev)}</div></div>`;
+  }).join('')}</div>
+  <section class="card tabla"><div class="cab"><div><h2>Ventas por canal</h2><span class="muted">Rentabilidad = facturación neta − costo de productos − envío − ads, en lo que va del mes (solo días con neta y costo cargados)</span></div></div>
+    <div class="scroll"><table style="min-width:820px"><thead><tr><th scope="col">Canal</th><th scope="col" class="r">Último día</th><th scope="col" class="r">Semana</th><th scope="col" class="r">Mes</th><th scope="col" class="r">Rentab. por día</th><th scope="col" class="r">Rentab. neta del mes</th></tr></thead>
+    <tbody>${filasCanal}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>¿Cómo viene el período?</h2><span class="muted">Contra el promedio histórico de cada canal (solo semanas y meses completos): mismo día de semana para el último día, ritmo proyectado para semana y mes</span></div></div>
+    <div class="scroll"><table style="min-width:620px"><thead><tr><th scope="col">Canal</th><th scope="col">Último día</th><th scope="col">Semana</th><th scope="col">Mes</th></tr></thead>
+    <tbody>${filasEval}</tbody></table></div></section>
+  <div class="row between wrapRow" style="align-items:baseline;margin-top:28px"><h2 style="margin:0">Inversión publicitaria · ${MESN[+ref.slice(5, 7) - 1]} ${ref.slice(0, 4)}</h2><span class="muted small">${nombreMarca}</span></div>
+  <div class="centro-comando" style="margin-top:12px">${tarjetasAds}</div>
+  <p class="muted small" style="line-height:1.6">Misma lógica que el Scorecard diario. Lee de las tablas del scorecard en Supabase, que el P&amp;L va a sumar por mes.</p>`;
+  $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; pintar(); }));
+}
+pintar();
+</script>
+</body>
+</html>

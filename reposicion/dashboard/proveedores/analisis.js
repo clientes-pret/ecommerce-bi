@@ -143,8 +143,8 @@ export function graficoBarras(mensual) {
   for (let i = 0; i <= 3; i++) { const v = (max * i) / 3; s += `<line class="ax" x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}"/><text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end">${corto(v)}</text>`; }
   mensual.forEach((m, i) => {
     const x = pl + i * bw, w = Math.max(2, bw * 0.38);
-    if (m.compras > 0) s += `<rect x="${x + bw * 0.08}" y="${y(m.compras)}" width="${w}" height="${H - pb - y(m.compras)}" rx="2" fill="#4f8cff"></rect>`;
-    if (m.pagos > 0) s += `<rect x="${x + bw * 0.08 + w + 1}" y="${y(m.pagos)}" width="${w}" height="${H - pb - y(m.pagos)}" rx="2" fill="#6fcf97"></rect>`;
+    if (m.compras > 0) s += `<rect x="${x + bw * 0.08}" y="${y(m.compras)}" width="${w}" height="${H - pb - y(m.compras)}" rx="2" fill="#2449B8"></rect>`;
+    if (m.pagos > 0) s += `<rect x="${x + bw * 0.08 + w + 1}" y="${y(m.pagos)}" width="${w}" height="${H - pb - y(m.pagos)}" rx="2" fill="#3D8B5E"></rect>`;
     if (i % Math.ceil(mensual.length / 12) === 0 || mensual.length <= 12) s += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${m.etq}</text>`;
     s += `<rect class="hit" x="${x}" y="${pt}" width="${bw}" height="${H - pt - pb}" data-t="${nombreMes(m.mes)}|Facturado: ${peso0(m.compras)}|Pagado: ${peso0(m.pagos)}"/>`;
   });
@@ -158,15 +158,15 @@ export function graficoSaldo(mensual) {
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Evolución del saldo">`;
   for (let i = 0; i <= 3; i++) { const v = mn + (rng * i) / 3; s += `<line class="ax" x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}"/><text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end">${corto(v)}</text>`; }
   const pts = vals.map((v, i) => `${x(i)},${y(v)}`).join(' ');
-  s += `<polygon points="${pl},${y(mn)} ${pts} ${x(vals.length - 1)},${y(mn)}" fill="rgba(79,140,255,.15)"/><polyline points="${pts}" fill="none" stroke="#4f8cff" stroke-width="2"/>`;
-  vals.forEach((v, i) => { s += `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="#4f8cff"></circle>`; if (i % Math.ceil(vals.length / 12) === 0 || vals.length <= 12) s += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${mensual[i].etq}</text>`; s += `<rect class="hit" x="${x(i) - (W - pl - pr) / vals.length / 2}" y="${pt}" width="${(W - pl - pr) / vals.length}" height="${H - pt - pb}" data-t="${nombreMes(mensual[i].mes)}|Saldo a fin de mes: ${peso0(v)}"/>`; });
+  s += `<polygon points="${pl},${y(mn)} ${pts} ${x(vals.length - 1)},${y(mn)}" fill="rgba(36,73,184,.12)"/><polyline points="${pts}" fill="none" stroke="#2449B8" stroke-width="2"/>`;
+  vals.forEach((v, i) => { s += `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="#2449B8"></circle>`; if (i % Math.ceil(vals.length / 12) === 0 || vals.length <= 12) s += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${mensual[i].etq}</text>`; s += `<rect class="hit" x="${x(i) - (W - pl - pr) / vals.length / 2}" y="${pt}" width="${(W - pl - pr) / vals.length}" height="${H - pt - pb}" data-t="${nombreMes(mensual[i].mes)}|Saldo a fin de mes: ${peso0(v)}"/>`; });
   return s + '</svg>';
 }
 
 export function barraAging(a) {
   const t = a.aging.d0_30 + a.aging.d31_60 + a.aging.d61_90 + a.aging.d90;
   if (t <= 0) return '<p class="muted small">Sin deuda abierta.</p>';
-  const seg = [['0–30 días', a.aging.d0_30, '#6fcf97'], ['31–60', a.aging.d31_60, '#e5b567'], ['61–90', a.aging.d61_90, '#f08a5d'], ['+90', a.aging.d90, '#f0707d']];
+  const seg = [['0–30 días', a.aging.d0_30, '#3D8B5E'], ['31–60', a.aging.d31_60, '#D9A23A'], ['61–90', a.aging.d61_90, '#E8935A'], ['+90', a.aging.d90, '#B42318']];
   return `<div class="aging">${seg.map(([n, v, c]) => `<span style="width:${(v / t) * 100}%;background:${c}" title="${n}: ${peso0(v)}"></span>`).join('')}</div>` +
     `<div class="row wrapRow small" style="gap:14px">${seg.map(([n, v, c]) => `<span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${c};margin-right:5px"></i>${n}: <b class="num">${peso0(v)}</b></span>`).join('')}</div>`;
 }
@@ -181,7 +181,7 @@ export function semaforo(saldo, diasSinPagar) {
 export { esc };
 
 // Barras de un solo valor por mes (costos). Cada columna lleva data-mes para poder elegirla con un click.
-export function graficoSimple(serie, color = '#4f8cff', activo = null) {
+export function graficoSimple(serie, color = '#2449B8', activo = null) {
   const W = 720, H = 200, pl = 52, pr = 8, pt = 10, pb = 26, max = Math.max(1, ...serie.map((m) => m.valor)), bw = (W - pl - pr) / serie.length;
   const y = (v) => pt + (H - pt - pb) * (1 - v / max);
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Total por mes">`;

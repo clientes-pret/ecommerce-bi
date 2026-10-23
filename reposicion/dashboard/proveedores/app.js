@@ -48,14 +48,18 @@ export const RUBROS_COSTO = {
   variable: ['Comisiones de marketplace', 'Envíos y logística', 'Packaging', 'Publicidad', 'Impuestos sobre ventas', 'Costos de cobro / financieros', 'Mercadería dañada o devuelta', 'Otros'],
 };
 
-// Barra superior de las pantallas de administración.
+// Menú lateral del panel de control (pantallas de administración).
 export function nav(perfil, activa) {
-  const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}">${txt}</a>`;
+  const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}"${activa === k ? ' aria-current="page"' : ''}>${txt}</a>`;
   const el = document.createElement('nav');
-  el.className = 'nav';
-  el.innerHTML = '<img src="../assets/logo-white.png" alt="" onerror="this.remove()">' + it('admin.html', 'Inicio', 'inicio') + it('proveedores.html', 'Proveedores', 'prov') +
-    it('costos.html?tipo=fijo', 'Costos fijos', 'cfijo') + it('costos.html?tipo=variable', 'Costos variables', 'cvariable') +
-    `<span class="sp"></span><span class="muted small">${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a>`;
+  el.className = 'side';
+  el.setAttribute('aria-label', 'Panel de control');
+  el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Panel de control</div></div>' +
+    it('admin.html', 'Inicio', 'inicio') + it('ventas.html', 'Ventas', 'ventas') +
+    '<div class="grupo">Gestión</div>' + it('proveedores.html', 'Proveedores', 'prov') + it('costos.html', 'Costos', 'costos') +
+    `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a>` +
+    `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
+  document.body.classList.add('panel');
   document.body.prepend(el);
   $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
 }
