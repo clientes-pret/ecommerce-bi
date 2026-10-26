@@ -120,7 +120,7 @@ function pintar() {
   <section class="card tabla"><div class="cab"><div><h2>Detalle del mes</h2><span class="muted">${vtas > 0 ? `% sobre las ventas de ${nom(mes)} del scorecard` : 'Sin ventas del scorecard este mes para calcular el %'}</span></div>
     <div class="seg gris" role="group" aria-label="Tipo de costo">${seg}</div></div>
     <div class="scroll">${visibles.length ? `<table><thead><tr><th scope="col">Rubro</th><th scope="col">Tipo</th><th scope="col">Detalle</th><th scope="col" class="r">Importe</th><th scope="col" class="r">% ventas</th><th scope="col"><span class="muted" style="font-weight:400">&nbsp;</span></th></tr></thead><tbody>
-    ${visibles.map((f) => `<tr><th scope="row">${esc(f.categoria)}${f.recurrente_id ? ' <span class="chip" title="Se carga solo todos los meses">se repite</span>' : ''}</th><td><span class="chip cuadro ${TIPOS[f.tipo].chip}">${TIPOS[f.tipo].nombre}</span></td><td>${esc(f.concepto || '')}${atribHTML(f)}${f.nota ? `<div class="small muted">${esc(f.nota)}</div>` : ''}</td>
+    ${visibles.map((f) => `<tr><th scope="row">${esc(f.categoria)}${f.recurrente_id ? ' <span class="chip" title="Se carga solo todos los meses">recurrente</span>' : ''}</th><td><span class="chip cuadro ${TIPOS[f.tipo].chip}">${TIPOS[f.tipo].nombre}</span></td><td>${esc(f.concepto || '')}${atribHTML(f)}${f.nota ? `<div class="small muted">${esc(f.nota)}</div>` : ''}</td>
       <td class="r num"><b>${peso0(f.monto)}</b>${detalleDolar(f)}</td><td class="r num muted">${pct(f.monto, vtas)}</td>
       <td class="r" style="white-space:nowrap"><button class="btn sm" data-ed="${f.id}">Editar</button> <button class="btn sm danger" data-del="${f.id}">${borrarId === f.id ? '¿Seguro? Borrar' : 'Borrar'}</button></td></tr>`).join('')}
     <tr class="total"><th scope="row">Total</th><td></td><td></td><td class="r num">${peso0(totVis)}</td><td class="r num muted">${pct(totVis, vtas)}</td><td></td></tr></tbody></table>`
@@ -142,7 +142,7 @@ function pintar() {
       <div class="ancho"><div class="small" style="font-weight:600;margin:4px 0 8px">¿De qué es este costo?</div>${camposAtribucion(e || {})}
         <p class="muted small" style="margin:-4px 0 12px">Si tildás varias marcas o canales, el costo se reparte según lo que vendió cada uno ese mes. Entre áreas, en partes iguales.</p></div>
     </div>
-    ${e?.recurrente_id ? '<p class="cc-nota">Este costo se repite todos los meses: acá cambiás solo este mes. Para cambiar el monto de acá en adelante usá "Cambiar monto" en Costos que se repiten.</p>' : ''}
+    ${e?.recurrente_id ? '<p class="cc-nota">Este costo se repite todos los meses: acá cambiás solo este mes. Para cambiar el monto de acá en adelante usá "Cambiar monto" en Costos Recurrentes.</p>' : ''}
     <div class="pie"><p class="err">${esc(msg)}</p>${e ? '<button class="btn" id="cancelar">Cancelar</button>' : ''}<button class="btn primary" id="guardar">${e ? 'Guardar cambios' : 'Guardar'}</button></div>
   </section>
   <p class="muted small" style="line-height:1.6">Las ventas para calcular los porcentajes salen del scorecard (Tienda Nube, Mercado Libre y local, ambas marcas).</p>`;
@@ -235,9 +235,9 @@ function seccionRecurrentes() {
   const vigentes = vis.filter((r) => !r.h || r.h >= MES_ACTUAL), terminados = vis.filter((r) => r.h && r.h < MES_ACTUAL);
   const cab = '<thead><tr><th scope="col">Rubro</th><th scope="col">Tipo</th><th scope="col">Detalle</th><th scope="col" class="r">Por mes</th><th scope="col">Desde</th><th scope="col">Hasta</th><th scope="col">Estado</th><th scope="col"></th></tr></thead>';
   const totalMes = vigentes.filter((r) => r.d <= MES_ACTUAL).reduce((a, r) => a + r.monto, 0);
-  return `<section class="card tabla"><div class="cab"><div><h2>Costos que se repiten</h2><span class="muted">Se cargan solos cada mes${vigentes.length ? ` · hoy suman ${peso0(totalMes)} por mes` : ''}</span></div></div>
+  return `<section class="card tabla"><div class="cab"><div><h2>Costos Recurrentes</h2><span class="muted">Se cargan solos cada mes${vigentes.length ? ` · hoy suman ${peso0(totalMes)} por mes` : ''}</span></div></div>
     <div class="scroll">${vigentes.length ? `<table style="min-width:900px">${cab}<tbody>${vigentes.map(filaRegla).join('')}</tbody></table>`
-      : '<p class="muted" style="padding:0 24px 12px">Todavía no hay costos que se repitan. Al cargar un costo elegí "Se repite: todos los meses".</p>'}
+      : '<p class="muted" style="padding:0 24px 12px">Todavía no hay costos recurrentes. Al cargar un costo elegí "Se repite: todos los meses".</p>'}
     ${terminados.length ? `<details style="padding:4px 24px 12px"><summary class="muted small" style="cursor:pointer">Terminados (${terminados.length})</summary><table style="min-width:900px">${cab}<tbody>${terminados.map(filaRegla).join('')}</tbody></table></details>` : ''}</div></section>`;
 }
 function activarRecurrentes() {
