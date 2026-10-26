@@ -17,6 +17,8 @@ const m2 = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', 
 const m0 = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 export const peso = (n) => (n == null ? '—' : m2.format(Number(n)));
 export const peso0 = (n) => (n == null ? '—' : m0.format(Number(n)));
+const u2 = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 2 });
+export const dolar = (n) => (n == null ? '—' : u2.format(Number(n)));
 export const fecha = (d) => (d ? new Date(d.length > 10 ? d : d + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
 export const fechaHora = (d) => (d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
 export const hoy = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
@@ -80,12 +82,44 @@ export function activarRepite() {
   const sync = () => ($('#repHastaBox').hidden = $('#rep').value !== 'hasta');
   $('#rep').onchange = sync; sync();
 }
+// ---- Costos en dólares ----
+// Selector de moneda del importe (por defecto, pesos).
+export const camposMoneda = (moneda = 'ARS', id = 'moneda') => `<select id="${id}" aria-label="Moneda" style="width:auto">
+  <option value="ARS" ${moneda === 'ARS' ? 'selected' : ''}>Pesos</option><option value="USD" ${moneda === 'USD' ? 'selected' : ''}>USD</option></select>`;
+// Columnas de moneda para guardar un costo. En USD la base lo pasa a pesos con el dólar oficial (venta) del día 1
+// del mes (trigger cc_costos_convertir); cotizacion: null fuerza ese cálculo.
+export const montoEn = (moneda, monto) => (moneda === 'USD'
+  ? { moneda, monto: 0, monto_usd: monto, cotizacion: null }
+  : { moneda: 'ARS', monto, monto_usd: null, cotizacion: null });
+// Trae el dólar oficial BNA (argentinadatos.com, un valor por día) y guarda en cc_cotizaciones_usd lo que falte
+// (y los últimos 10 días, por si se corrigieron). Si falla, la pantalla sigue con lo que ya hay guardado.
+export async function actualizarDolar() {
+  try {
+    const { data: ult } = await sb.from('cc_cotizaciones_usd').select('fecha').order('fecha', { ascending: false }).limit(1);
+    const r = await fetch('https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial');
+    if (!r.ok) return;
+    const d = ult?.[0]?.fecha ? new Date(ult[0].fecha + 'T12:00:00') : null;
+    if (d) d.setDate(d.getDate() - 10);
+    const desde = d ? d.toLocaleDateString('en-CA') : '';
+    const xs = (await r.json()).filter((x) => x.fecha >= desde && Number(x.venta) > 0)
+      .map((x) => ({ fecha: x.fecha, compra: x.compra, venta: x.venta, actualizado_at: new Date().toISOString() }));
+    for (let i = 0; i < xs.length; i += 1000) await sb.from('cc_cotizaciones_usd').upsert(xs.slice(i, i + 1000), { onConflict: 'fecha' });
+  } catch (e) { console.warn('No se pudo actualizar el dólar', e); }
+}
+// Debajo del importe en pesos: "US$ 50 × $1.540 (dólar del 01/10)", o provisorio si todavía no está el del día 1.
+export function detalleDolar(c, provisorio = c.cotizacion_fecha < c.periodo) {
+  if (c.moneda !== 'USD') return '';
+  const f = c.cotizacion_fecha ? c.cotizacion_fecha.slice(8, 10) + '/' + c.cotizacion_fecha.slice(5, 7) : '';
+  return `<div class="small muted">${dolar(c.monto_usd)} × ${peso(c.cotizacion)}${provisorio
+    ? ` <span class="chip warn" title="Todavía no está el dólar del día 1 de este mes: se usó el del ${f} y se corrige solo cuando aparezca">provisorio</span>` : ` (dólar del ${f})`}</div>`;
+}
+
 // Guarda un costo: si se repite, crea el costo recurrente y carga sus meses hasta el mes en curso.
-export async function guardarCosto({ tipo, categoria, concepto, monto, mes, nota }) {
-  const rep = $('#rep').value, hasta = $('#repHasta').value;
-  if (rep === 'no') return sb.from('cc_costos').insert({ tipo, categoria, concepto, monto, periodo: mes + '-01', nota });
+export async function guardarCosto({ tipo, categoria, concepto, monto, mes, nota, moneda = 'ARS' }) {
+  const rep = $('#rep').value, hasta = $('#repHasta').value, m = montoEn(moneda, monto);
+  if (rep === 'no') return sb.from('cc_costos').insert({ tipo, categoria, concepto, ...m, periodo: mes + '-01', nota });
   if (rep === 'hasta' && (!hasta || hasta < mes)) return { error: { message: 'El último mes tiene que ser igual o posterior al mes de inicio.' } };
-  const { error } = await sb.from('cc_costos_recurrentes').insert({ tipo, categoria, concepto, monto, desde: mes + '-01', hasta: rep === 'hasta' ? hasta + '-01' : null, nota });
+  const { error } = await sb.from('cc_costos_recurrentes').insert({ tipo, categoria, concepto, ...m, desde: mes + '-01', hasta: rep === 'hasta' ? hasta + '-01' : null, nota });
   if (error) return { error };
   return sb.rpc('cc_costos_al_dia');
 }

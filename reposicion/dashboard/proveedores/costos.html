@@ -11,7 +11,7 @@
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy, RUBROS_COSTO, camposRepite, activarRepite, guardarCosto } from './app.js';
+import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy, RUBROS_COSTO, camposRepite, activarRepite, guardarCosto, peso, dolar, camposMoneda, montoEn, actualizarDolar, detalleDolar } from './app.js';
 import { graficoSimple, activarTooltips, etqMes, MESN } from './analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
 // Sub-menús de Costos: cada uno muestra solo los rubros que le corresponden (por nombre del rubro).
@@ -50,6 +50,7 @@ async function cargarReglas() {
   const { data } = await sb.from('cc_costos_recurrentes').select('*').order('desde').order('id');
   reglas = (data || []).filter(enRubro).map((r) => ({ ...r, monto: Number(r.monto), d: mesDe(r.desde), h: r.hasta ? mesDe(r.hasta) : null }));
 }
+await actualizarDolar(); // dólar oficial para los costos en USD (antes de cargar los meses que se repiten)
 await sb.rpc('cc_costos_al_dia'); // carga los meses que falten hasta el mes en curso (si falla, la pantalla sigue andando)
 // Extras de cada sub-menú: Sueldos (equipo y adelantos), Publicidad (inversión en ads del scorecard).
 let equipo = [], adelantos = [], adsMes = {};
@@ -113,7 +114,7 @@ function pintar() {
     <div class="seg gris" role="group" aria-label="Tipo de costo">${seg}</div></div>
     <div class="scroll">${visibles.length ? `<table><thead><tr><th scope="col">Rubro</th><th scope="col">Tipo</th><th scope="col">Detalle</th><th scope="col" class="r">Importe</th><th scope="col" class="r">% ventas</th><th scope="col"><span class="muted" style="font-weight:400">&nbsp;</span></th></tr></thead><tbody>
     ${visibles.map((f) => `<tr><th scope="row">${esc(f.categoria)}${f.recurrente_id ? ' <span class="chip" title="Se carga solo todos los meses">se repite</span>' : ''}</th><td><span class="chip cuadro ${TIPOS[f.tipo].chip}">${TIPOS[f.tipo].nombre}</span></td><td>${esc(f.concepto || '')}${f.nota ? `<div class="small muted">${esc(f.nota)}</div>` : ''}</td>
-      <td class="r num"><b>${peso0(f.monto)}</b></td><td class="r num muted">${pct(f.monto, vtas)}</td>
+      <td class="r num"><b>${peso0(f.monto)}</b>${detalleDolar(f)}</td><td class="r num muted">${pct(f.monto, vtas)}</td>
       <td class="r" style="white-space:nowrap"><button class="btn sm" data-ed="${f.id}">Editar</button> <button class="btn sm danger" data-del="${f.id}">${borrarId === f.id ? '¿Seguro? Borrar' : 'Borrar'}</button></td></tr>`).join('')}
     <tr class="total"><th scope="row">Total</th><td></td><td></td><td class="r num">${peso0(totVis)}</td><td class="r num muted">${pct(totVis, vtas)}</td><td></td></tr></tbody></table>`
     : `<p class="muted" style="padding:0 24px 12px">Todavía no hay costos ${tab === 'fijo' ? 'fijos ' : tab === 'variable' ? 'variables ' : ''}cargados en ${nom(mes)}.</p>`}</div></section>
@@ -125,7 +126,8 @@ function pintar() {
       <div><label for="tipo">Tipo</label><select id="tipo"><option value="fijo" ${tipoForm === 'fijo' ? 'selected' : ''}>Fijo</option><option value="variable" ${tipoForm === 'variable' ? 'selected' : ''}>Variable</option></select></div>
       <div><label for="cat">Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" value="${esc(e?.categoria || RUBRO?.cat || '')}"><datalist id="cats">${todasCats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
       <div><label for="con">Detalle (opcional)</label><input id="con" placeholder="Ej.: Alquiler local + depósito" value="${esc(e?.concepto || '')}"></div>
-      <div><label for="monto">Importe</label><input id="monto" inputmode="decimal" placeholder="1.250.000,00" value="${e ? String(e.monto).replace('.', ',') : ''}"></div>
+      <div><label for="monto">Importe</label><div class="row" style="gap:8px">${camposMoneda(e?.moneda)}<input id="monto" inputmode="decimal" placeholder="1.250.000,00" value="${e ? String(e.moneda === 'USD' ? e.monto_usd : e.monto).replace('.', ',') : ''}"></div>
+        <div class="small muted" id="monedaAyuda" ${e?.moneda === 'USD' ? '' : 'hidden'}>Se pasa a pesos con el dólar oficial (Banco Nación, venta) del día 1 de cada mes.</div></div>
       <div><label for="per">${e ? 'Mes' : 'Mes (o primer mes)'}</label><input type="month" id="per" value="${e ? e.ym : mes}"></div>
       ${e ? '' : camposRepite(tipoForm, mes)}
       <div class="${e ? '' : 'ancho'}"><label for="nota">Nota (opcional)</label><input id="nota" value="${esc(e?.nota || '')}"></div>
@@ -143,6 +145,7 @@ function pintar() {
     pintar();
   }));
   $('#guardar').onclick = guardar; if ($('#cancelar')) $('#cancelar').onclick = () => { editId = null; msg = ''; pintar(); };
+  $('#moneda').onchange = () => ($('#monedaAyuda').hidden = $('#moneda').value !== 'USD');
   if (!e) { activarRepite(); $('#tipo').onchange = () => { $('#rep').value = $('#tipo').value === 'fijo' ? 'siempre' : 'no'; $('#rep').onchange(); }; }
   activarRecurrentes();
   $$('[data-ed]').forEach((b) => (b.onclick = () => { editId = +b.dataset.ed; msg = ''; pintar(); $('#nuevo-costo').scrollIntoView(); }));
@@ -153,10 +156,10 @@ async function guardar() {
   if (!categoria) { msg = 'Elegí o escribí el rubro.'; return pintar(); }
   if (!(monto >= 0) || !$('#monto').value.trim()) { msg = 'Poné un importe válido (ej. 1.250.000,50).'; return pintar(); }
   if (!per) { msg = 'Elegí el mes.'; return pintar(); }
-  const concepto = $('#con').value.trim() || null, nota = $('#nota').value.trim() || null;
+  const concepto = $('#con').value.trim() || null, nota = $('#nota').value.trim() || null, moneda = $('#moneda').value;
   const { error } = editId
-    ? await sb.from('cc_costos').update({ tipo, categoria, concepto, monto, periodo: per + '-01', nota }).eq('id', editId)
-    : await guardarCosto({ tipo, categoria, concepto, monto, mes: per, nota });
+    ? await sb.from('cc_costos').update({ tipo, categoria, concepto, ...montoEn(moneda, monto), periodo: per + '-01', nota }).eq('id', editId)
+    : await guardarCosto({ tipo, categoria, concepto, monto, mes: per, nota, moneda });
   if (error) { msg = 'No se pudo guardar: ' + error.message; return pintar(); }
   msg = ''; editId = null; mes = per; await Promise.all([cargar(), cargarReglas()]); pintar();
 }
@@ -179,7 +182,7 @@ function filaAccion(r) {
   if (!accion || accion.id !== r.id) return '';
   const n = filas.filter((f) => f.recurrente_id === r.id).length;
   const campo = accion.que === 'monto'
-    ? `<div><label for="accMonto">Monto nuevo por mes</label><input id="accMonto" inputmode="decimal" placeholder="1.250.000,00" style="max-width:220px"></div>
+    ? `<div><label for="accMonto">Monto nuevo por mes</label><div class="row" style="gap:8px">${camposMoneda(r.moneda, 'accMoneda')}<input id="accMonto" inputmode="decimal" placeholder="1.250.000,00" style="max-width:220px"></div></div>
        <div><label for="accMes">Desde</label><input type="month" id="accMes" value="${r.d > MES_ACTUAL ? r.d : MES_ACTUAL}" style="width:auto"></div>
        <p class="muted small" style="margin:0 0 12px">Los meses anteriores quedan con el monto de antes.</p>`
     : accion.que === 'fin'
@@ -193,7 +196,7 @@ function filaAccion(r) {
 function filaRegla(r) {
   const vigente = !r.h || r.h >= MES_ACTUAL;
   return `<tr><th scope="row">${esc(r.categoria)}</th><td><span class="chip cuadro ${TIPOS[r.tipo].chip}">${TIPOS[r.tipo].nombre}</span></td><td>${esc(r.concepto || '')}${r.nota ? `<div class="small muted">${esc(r.nota)}</div>` : ''}</td>
-    <td class="r num"><b>${peso0(r.monto)}</b></td><td>${nom(r.d)}</td><td>${r.h ? nom(r.h) : 'sin fin'}</td><td>${estadoRegla(r)}</td>
+    <td class="r num">${r.moneda === 'USD' ? `<b>${dolar(r.monto_usd)}</b><div class="small muted">≈ ${peso0(r.monto)} con el dólar de hoy (${peso(r.cotizacion)}); cada mes se convierte con el del día 1</div>` : `<b>${peso0(r.monto)}</b>`}</td><td>${nom(r.d)}</td><td>${r.h ? nom(r.h) : 'sin fin'}</td><td>${estadoRegla(r)}</td>
     <td class="r" style="white-space:nowrap">${vigente ? `<button class="btn sm" data-acc="monto" data-id="${r.id}">Cambiar monto</button> <button class="btn sm" data-acc="fin" data-id="${r.id}">Terminar</button> ` : ''}<button class="btn sm danger" data-acc="borrar" data-id="${r.id}">Borrar</button></td></tr>${filaAccion(r)}`;
 }
 function seccionRecurrentes() {
@@ -216,7 +219,7 @@ function activarRecurrentes() {
       const m = parseMonto($('#accMonto').value), d = $('#accMes').value;
       if (!$('#accMonto').value.trim() || !(m >= 0)) { msgRec = 'Poné un monto válido (ej. 1.250.000,50).'; return pintar(); }
       if (!d) { msgRec = 'Elegí desde qué mes.'; return pintar(); }
-      res = await sb.rpc('cc_costo_recurrente_cambiar_monto', { p_id: accion.id, p_desde: d + '-01', p_monto: m });
+      res = await sb.rpc('cc_costo_recurrente_cambiar_monto', { p_id: accion.id, p_desde: d + '-01', p_monto: m, p_moneda: $('#accMoneda').value });
       if (!res.error) res = await sb.rpc('cc_costos_al_dia');
     } else if (accion.que === 'fin') {
       const d = $('#accMes').value;
