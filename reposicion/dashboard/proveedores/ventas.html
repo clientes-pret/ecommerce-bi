@@ -119,6 +119,48 @@ function rentabilidad(c) {
   return n ? { neta, prom: neta / n, n, rev } : { n: 0 };
 }
 
+// ---- Scorecard por canal (igual que el artifact): una fila por día o por semana, sumando las marcas elegidas ----
+// Suma solo los datos reales: un campo queda null ("Pendiente") si ningún día/marca lo tiene; si alguno lo tiene, suma esos.
+let sc = { canal: 'tn', gran: 'dia', pag: 0 };
+const POR_PAGINA = 10;
+const ADS_DE = { tn: [['meta', 'Meta Ads'], ['google', 'Google Ads']], ml: [['ml', 'ML Ads']] };
+function sumar(dias, marcas, canal) {
+  const t = { ventas: null, ordenes: null, neta: null, costo: null, envio: null, ads: {} };
+  const mas = (k, v) => { if (v != null) t[k] = (t[k] || 0) + Number(v); };
+  for (const d of dias) for (const m of marcas) {
+    const f = fila[`${m}_${canal}`]?.[d];
+    if (f) { mas('ventas', f.ventas); mas('ordenes', f.ordenes); mas('neta', f.facturacion_neta); mas('costo', f.costo_productos); mas('envio', f.costo_envio); }
+    for (const [p] of ADS_DE[canal]) { const v = adsDia[`${m}_${p}`]?.[d]; if (v != null) t.ads[p] = (t.ads[p] || 0) + v; }
+  }
+  // Rentabilidad sin ads = neta − costo de productos − envío (solo TN: en ML el envío ya viene dentro de la neta).
+  t.rentS = t.neta == null || t.costo == null || (canal === 'tn' && t.envio == null) ? null : t.neta - t.costo - (canal === 'tn' ? t.envio : 0);
+  const adsVals = Object.values(t.ads);
+  t.inversion = adsVals.length ? adsVals.reduce((a, b) => a + b, 0) : null;
+  t.rentC = t.rentS == null || t.inversion == null ? null : t.rentS - t.inversion;
+  t.roas = t.ventas != null && t.inversion > 0 ? t.ventas / t.inversion : null;
+  return t;
+}
+const PEND = '<span class="chip">Pendiente</span>', NA = '<span class="chip">No aplica</span>';
+const conPct = (v, base) => (v == null ? PEND : `${peso0(v)}${base > 0 ? ` <span class="small" style="font-weight:700;color:${v >= 0 ? 'var(--ok)' : 'var(--warn)'}">${pctTxt(v / base)}</span>` : ''}`);
+const celdasSc = (t, canal, adsJuntos = false) => {
+  const c = (x) => `<td class="r num" style="white-space:nowrap">${x}</td>`;
+  return c(t.ventas == null ? PEND : peso0(t.ventas)) + c(t.neta == null ? PEND : peso0(t.neta)) + c(t.ordenes == null ? PEND : t.ordenes.toLocaleString('es-AR'))
+    + c(t.costo == null ? PEND : peso0(t.costo)) + c(canal === 'ml' ? NA : t.envio == null ? PEND : peso0(t.envio)) + c(conPct(t.rentS, t.ventas))
+    + (adsJuntos ? c(t.inversion == null ? PEND : peso0(t.inversion)) : ADS_DE[canal].map(([p]) => c(t.ads[p] == null ? PEND : peso0(t.ads[p]))).join(''))
+    + c(t.roas == null ? (t.inversion > 0 ? PEND : '<span class="chip">Sin inversión</span>') : t.roas.toFixed(2).replace('.', ',') + 'x')
+    + c(t.rentS == null ? PEND : t.inversion == null ? '<span class="chip">Sin inversión</span>' : conPct(t.rentC, t.ventas));
+};
+const cabSc = (canal, primera, adsJuntos = false) => `<tr><th scope="col">${primera}</th><th scope="col" class="r">Ventas</th><th scope="col" class="r">Facturación neta</th><th scope="col" class="r">Órdenes</th>
+  <th scope="col" class="r">Costo de productos</th><th scope="col" class="r">Costo de envío</th><th scope="col" class="r">Rentab. s/ads</th>
+  ${adsJuntos ? '<th scope="col" class="r">Inversión en ads</th>' : ADS_DE[canal].map(([, n]) => `<th scope="col" class="r">${n}</th>`).join('')}<th scope="col" class="r">ROAS</th><th scope="col" class="r">Rentab. c/ads</th></tr>`;
+const ddmmaa = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}`;
+function periodosSc(marcas) {
+  const dias = [...new Set(marcas.flatMap((m) => Object.keys(fila[`${m}_${sc.canal}`] || {})))].filter((d) => d <= ref).sort().reverse();
+  if (sc.gran === 'dia') return dias.map((d) => ({ et: ddmmaa(d), dias: [d] }));
+  const sem = {}; for (const d of dias) (sem[lunes(d)] ??= []).push(d);
+  return Object.keys(sem).sort().reverse().map((l) => ({ et: `${ddmmaa(l)} al ${ddmmaa(masDias(l, 6))}`, dias: sem[l] }));
+}
+
 function pintar() {
   if (!ref) { $('#app').innerHTML = '<h1>Ventas</h1><div class="card"><p class="muted">Todavía no hay ventas cargadas en el scorecard.</p></div>'; return; }
   const vis = CANALES.filter((c) => marca === 'all' || c.marca === marca);
@@ -146,6 +188,12 @@ function pintar() {
       ${[evalDia(s, ref, desde), evalSemana(s, ref, desde), evalMes(s, ref, desde)].map((ev) => `<td><span class="row" style="gap:8px"><span class="num" style="min-width:64px">${ev.actual == null ? '—' : corto(ev.actual)}</span>${badge(ev)}</span></td>`).join('')}</tr>`;
   }).join('');
   const marcasAds = marca === 'all' ? ['pret', 'lavan'] : [marca];
+  // Último día cargado, por canal (como "Ayer" del artifact) y Scorecard por canal paginado.
+  const filaUltimo = ['tn', 'ml'].map((canal) => `<tr><th scope="row" style="white-space:nowrap">${canal === 'tn' ? 'Tienda Nube' : 'Mercado Libre'}</th>${celdasSc(sumar([ref], marcasAds, canal), canal, true)}</tr>`).join('');
+  const periodos = periodosSc(marcasAds), paginas = Math.max(1, Math.ceil(periodos.length / POR_PAGINA));
+  sc.pag = Math.min(sc.pag, paginas - 1);
+  const filasSc = periodos.slice(sc.pag * POR_PAGINA, (sc.pag + 1) * POR_PAGINA).map((p) => `<tr><th scope="row" class="num" style="white-space:nowrap;font-weight:500">${p.et}</th>${celdasSc(sumar(p.dias, marcasAds, sc.canal), sc.canal)}</tr>`).join('');
+  const segSc = (k, opciones) => `<div class="seg" role="group">${opciones.map(([v, t]) => `<button type="button" data-sc-${k}="${v}" aria-pressed="${sc[k] === v}">${t}</button>`).join('')}</div>`;
   const tarjetasAds = PLATAFORMAS.map(([p, n]) => {
     let t = 0, hay = false;
     for (const m of marcasAds) for (const [d, v] of Object.entries(adsDia[`${m}_${p}`] || {})) if (d >= mes && d <= ref) { t += v; hay = true; }
@@ -167,10 +215,22 @@ function pintar() {
   <section class="card tabla"><div class="cab"><div><h2>¿Cómo viene el período?</h2><span class="muted">Contra el promedio histórico de cada canal (solo semanas y meses completos): mismo día de semana para el último día, ritmo proyectado para semana y mes</span></div></div>
     <div class="scroll"><table style="min-width:620px"><thead><tr><th scope="col">Canal</th><th scope="col">Último día</th><th scope="col">Semana</th><th scope="col">Mes</th></tr></thead>
     <tbody>${filasEval}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>Último día · ${ddmmaa(ref)}</h2><span class="muted">${nombreMarca}, por canal. Rentabilidad s/ads = neta − costo de productos − envío (en ML el envío ya viene dentro de la neta)</span></div></div>
+    <div class="scroll"><table style="min-width:1000px"><thead>${cabSc('tn', 'Canal', true)}</thead><tbody>${filaUltimo}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>Scorecard por canal</h2><span class="muted">${nombreMarca} · por día o por semana (lunes a domingo)</span></div>
+      <div class="row wrapRow" style="gap:8px">${segSc('canal', [['tn', 'Tienda Nube'], ['ml', 'Mercado Libre']])}${segSc('gran', [['dia', 'Por día'], ['semana', 'Por semana']])}</div></div>
+    <div class="scroll"><table style="min-width:1100px"><thead>${cabSc(sc.canal, sc.gran === 'dia' ? 'Fecha' : 'Semana')}</thead><tbody>${filasSc || `<tr><td colspan="11" class="muted">Sin datos todavía.</td></tr>`}</tbody></table></div>
+    <div class="row between" style="padding:12px 24px 4px"><button class="btn sm" type="button" id="scMas" ${sc.pag <= 0 ? 'disabled' : ''}>← Más recientes</button>
+      <span class="small muted">Página ${sc.pag + 1} de ${paginas} · ${periodos.length} ${sc.gran === 'dia' ? 'días' : 'semanas'}</span>
+      <button class="btn sm" type="button" id="scMenos" ${sc.pag >= paginas - 1 ? 'disabled' : ''}>Más antiguos →</button></div></section>
   <div class="row between wrapRow" style="align-items:baseline;margin-top:28px"><h2 style="margin:0">Inversión publicitaria · ${MESN[+ref.slice(5, 7) - 1]} ${ref.slice(0, 4)}</h2><span class="muted small">${nombreMarca}</span></div>
   <div class="centro-comando" style="margin-top:12px">${tarjetasAds}</div>
-  <p class="muted small" style="line-height:1.6">Misma lógica que el Scorecard diario. Lee de las tablas del scorecard en Supabase, que el P&amp;L va a sumar por mes.</p>`;
-  $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; pintar(); }));
+  <p class="muted small" style="line-height:1.6">Misma lógica que el Scorecard diario. La rutina diaria (11:00) carga el día anterior directo en Supabase; lo mismo usan P&amp;L y Cashflow.</p>`;
+  $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; sc.pag = 0; pintar(); }));
+  $$('[data-sc-canal]').forEach((b) => (b.onclick = () => { sc.canal = b.dataset.scCanal; sc.pag = 0; pintar(); }));
+  $$('[data-sc-gran]').forEach((b) => (b.onclick = () => { sc.gran = b.dataset.scGran; sc.pag = 0; pintar(); }));
+  $('#scMas').onclick = () => { sc.pag -= 1; pintar(); };
+  $('#scMenos').onclick = () => { sc.pag += 1; pintar(); };
 }
 pintar();
 </script>
