@@ -64,8 +64,11 @@ async function cargar() {
     leerTodo('cf_saldos', 'fecha,cuenta,saldo,fuente,hora,actualizado_at', ['fecha', 'cuenta']),
     leerTodo('cf_mp_egresos', 'cuenta,movimiento,fecha,categoria,monto,descripcion', ['fecha', 'cuenta', 'movimiento'], (q) => q.gte('fecha', desde)),
     leerTodo('cf_tn_medios', 'fecha,tienda,medio,total', ['fecha', 'tienda', 'medio'], (q) => q.gte('fecha', desde)),
-    leerTodo('cf_pagonube_movimientos', 'tienda,descripcion,fecha_creacion,fecha_disponible,neto,importado_at', ['tienda', 'clave'], (q) => q.gte('fecha_creacion', desde)),
+    leerTodo('cf_pagonube_movimientos', 'tienda,descripcion,numero_venta,fecha_creacion,fecha_disponible,neto,estimado,importado_at', ['tienda', 'clave'], (q) => q.gte('fecha_creacion', desde)),
   ]);
+  // Pago Nube: lo calculado desde las órdenes cede ante el reporte importado que trae esa misma venta.
+  const importadas = new Set(pn.filter((r) => !r.estimado).map((r) => `${r.tienda}|${r.numero_venta}`));
+  pn = pn.filter((r) => !r.estimado || !importadas.has(`${r.tienda}|${r.numero_venta}`));
 }
 await cargar();
 
@@ -252,8 +255,9 @@ function pintar() {
   // Saldos por cuenta.
   const pendCuenta = {}; for (const p of pend) pendCuenta[p.cuenta] = (pendCuenta[p.cuenta] || 0) + Number(p.monto);
   for (const o of Object.values(r.pendPN)) for (const [t, v] of Object.entries(o)) pendCuenta['pago_nube_' + t] = (pendCuenta['pago_nube_' + t] || 0) + v;
-  const ultImport = {}; for (const x of pn) if (!ultImport[x.tienda] || x.importado_at > ultImport[x.tienda]) ultImport[x.tienda] = x.importado_at;
-  const estadoPN = ['pret', 'lavan'].map((t) => `${t === 'pret' ? 'Pret' : 'Laván'}: ${r.pnRango[t] ? `ventas del ${fFecha(r.pnRango[t].desde)} al ${fFecha(r.pnRango[t].hasta)} (importado ${fechaHora(ultImport[t])})` : 'sin importar'}`).join(' · ');
+  const repHasta = {}, calcHasta = {};
+  for (const x of pn) { const o = x.estimado ? calcHasta : repHasta, d = x.fecha_creacion.slice(0, 10); if (!o[x.tienda] || d > o[x.tienda]) o[x.tienda] = d; }
+  const estadoPN = ['pret', 'lavan'].map((t) => `${t === 'pret' ? 'Pret' : 'Laván'}: ${repHasta[t] ? `reporte hasta el ${fFecha(repHasta[t])}` : 'sin reporte'}${calcHasta[t] ? `, calculado desde las órdenes hasta el ${fFecha(calcHasta[t])}` : ''}`).join(' · ');
   const manualTot = Object.entries(r.ultHoy).filter(([c]) => !CUENTAS[c]?.auto).reduce((a, [, s]) => a + Number(s.saldo), 0);
   const mpTot = Object.entries(r.ultHoy).filter(([c]) => CUENTAS[c]?.auto).reduce((a, [, s]) => a + Number(s.saldo), 0);
   const faltan = Object.entries(CUENTAS).filter(([c, x]) => !x.auto && !r.ultHoy[c]).map(([, x]) => x.nombre);
@@ -304,7 +308,7 @@ function pintar() {
   ${egMes.length ? `<section class="card tabla"><div class="cab"><div><h2>Salidas desde MercadoPago en ${nom(ACTUAL)}</h2><span class="muted">Las más grandes, sin retiros a bancos</span></div></div>
     <div class="scroll"><table><thead><tr><th scope="col">Fecha</th><th scope="col">Cuenta</th><th scope="col">Qué fue</th><th scope="col" class="r">Monto</th></tr></thead><tbody>
     ${egMes.map((e) => `<tr><td>${fFecha(e.fecha)}</td><td>${CUENTAS[e.cuenta].nombre}</td><td>${esc(e.descripcion || '')}</td><td class="r num">${peso0(e.monto)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
-  <p class="muted small" style="line-height:1.6">MercadoPago${mpInicio ? ` (desde el ${fFecha(mpInicio)})` : ''}: movimientos reales de las cuentas de Pret y Laván. "Mercado Libre" es lo liberado de las ventas, ya neto de comisiones, impuestos, envíos, reclamos y devoluciones. "Otros cobros" es lo demás que entra a la cuenta: Tienda Nube pagado con Mercado Pago, transferencias recibidas, QR, rendimientos. "Factura de Mercado Libre" son los cobros automáticos que ML hace del saldo por lo que no descuenta en cada venta (ML Ads, Full y otros cargos); por eso, desde esa fecha, ML Ads no se suma en Publicidad. Los pagos y transferencias hechos desde MercadoPago pueden repetir algo de Pagos a proveedores si se pagó desde ahí. Antes de esa fecha, Mercado Libre se estima con la facturación neta del scorecard corrida por el plazo de liberación. Tienda Nube: lo cobrado con Pago Nube sale del reporte importado (cada cobro el día que queda disponible, menos devoluciones y contracargos); lo demás y los días que el reporte no cubre, facturación neta corrida por el plazo de liberación, sin lo pagado con Mercado Pago (ya figura en "Otros cobros") ni las ventas "offline", que son las del local (ya figuran en "Local (cobrado)"); días sin neta, ventas × % neto (ML Pret ${pctNeto('pret_ml')}, ML Laván ${pctNeto('lavan_ml')}, TN Pret ${pctNeto('pret_tn')}). Los costos de Costos se toman como pagados en su mes; los adelantos salen el día que se dan. Lo que viene: lo que MercadoPago ya agendó para liberar (o el promedio diario, si es mayor), costos recurrentes y adelantos cargados; el resto, promedio diario de ${BASE.map(nom).join(', ') || 'los meses completos'}. El saldo de cierre proyectado parte del saldo de hoy de todas las cuentas cargadas: si faltan Pago Nube o bancos, queda corto.</p>`;
+  <p class="muted small" style="line-height:1.6">MercadoPago${mpInicio ? ` (desde el ${fFecha(mpInicio)})` : ''}: movimientos reales de las cuentas de Pret y Laván. "Mercado Libre" es lo liberado de las ventas, ya neto de comisiones, impuestos, envíos, reclamos y devoluciones. "Otros cobros" es lo demás que entra a la cuenta: Tienda Nube pagado con Mercado Pago, transferencias recibidas, QR, rendimientos. "Factura de Mercado Libre" son los cobros automáticos que ML hace del saldo por lo que no descuenta en cada venta (ML Ads, Full y otros cargos); por eso, desde esa fecha, ML Ads no se suma en Publicidad. Los pagos y transferencias hechos desde MercadoPago pueden repetir algo de Pagos a proveedores si se pagó desde ahí. Antes de esa fecha, Mercado Libre se estima con la facturación neta del scorecard corrida por el plazo de liberación. Tienda Nube: lo cobrado con Pago Nube sale del reporte importado (cada cobro el día que queda disponible, menos devoluciones y contracargos) y, para las ventas que todavía no están en un reporte, se calcula desde las órdenes con las tasas del último reporte (al día siguiente en transferencias, a los 7 días con tarjeta; diferencia medida en octubre: 0,1 % en Pret, 0,8 % en Laván); lo demás y los días que el reporte no cubre, facturación neta corrida por el plazo de liberación, sin lo pagado con Mercado Pago (ya figura en "Otros cobros") ni las ventas "offline", que son las del local (ya figuran en "Local (cobrado)"); días sin neta, ventas × % neto (ML Pret ${pctNeto('pret_ml')}, ML Laván ${pctNeto('lavan_ml')}, TN Pret ${pctNeto('pret_tn')}). Los costos de Costos se toman como pagados en su mes; los adelantos salen el día que se dan. Lo que viene: lo que MercadoPago ya agendó para liberar (o el promedio diario, si es mayor), costos recurrentes y adelantos cargados; el resto, promedio diario de ${BASE.map(nom).join(', ') || 'los meses completos'}. El saldo de cierre proyectado parte del saldo de hoy de todas las cuentas cargadas: si faltan Pago Nube o bancos, queda corto.</p>`;
 
   $('#pml').onchange = (e) => { plazoML = Math.max(0, Math.min(60, Math.round(+e.target.value || 0))); guardarNum('cf_plazo_ml', plazoML); pintar(); };
   $('#ptn').onchange = (e) => { plazoTN = Math.max(0, Math.min(60, Math.round(+e.target.value || 0))); guardarNum('cf_plazo_tn', plazoTN); pintar(); };
@@ -340,6 +344,7 @@ async function prepararImportPN(archivo) {
   const [cab, ...datos] = leerCSV((await archivo.text()).replace(/^\uFEFF/, ''));
   const col = (n) => cab.findIndex((x) => x.trim() === n);
   const C = { desc: col('Descripción'), num: col('Número de venta'), medio: col('Medio de pago'), fc: col('Fecha de creación'), fd: col('Disponible para transferir'), monto: col('Monto de la venta'), neto: col('Valor neto') };
+  const cCuotas = col('Cantidad de cuotas');   // opcional: con las cuotas, el job calcula los cobros que todavía no están en un reporte
   if (Object.values(C).some((i) => i < 0)) { est.innerHTML = '<span class="err">Ese archivo no es el reporte de movimientos financieros de Pago Nube.</span>'; return; }
   const vistas = {}, filas = [];
   for (const d of datos) {
@@ -347,7 +352,8 @@ async function prepararImportPN(archivo) {
     if (!fc || !Number.isFinite(neto)) { est.innerHTML = `<span class="err">Fila con fecha o monto que no se entiende: ${esc(d.join(' · '))}</span>`; return; }
     const base = [d[C.desc], d[C.num], fc, neto].join('|'); vistas[base] = (vistas[base] || 0) + 1;
     filas.push({ clave: `${base}|${vistas[base]}`, descripcion: d[C.desc].trim(), numero_venta: d[C.num].trim() || null, medio: d[C.medio].trim() || null,
-      fecha_creacion: fc, fecha_disponible: fechaPN(d[C.fd]), monto_venta: Number(d[C.monto]) || null, neto });
+      fecha_creacion: fc, fecha_disponible: fechaPN(d[C.fd]), monto_venta: Number(d[C.monto]) || null, neto,
+      cuotas: cCuotas >= 0 ? Number(d[cCuotas]) || null : null, estimado: false });
   }
   if (!filas.length) { est.innerHTML = '<span class="err">El archivo no tiene movimientos.</span>'; return; }
   // Pret a Home va por la venta 50.000 y Casa Laván por la 900: sirve para proponer la tienda, igual se confirma.

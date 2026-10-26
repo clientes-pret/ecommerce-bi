@@ -9,7 +9,8 @@ Por cada cuenta MercadoPago (la de Pret a Home y la de Casa Laván, las mismas c
   El reporte trae días completos en hora de Argentina; el día de hoy queda parcial y se pisa en la próxima corrida.
 - Lo agendado para liberar (/v1/payments/search por money_release_date futura) → cf_liberaciones_pendientes.
 Y de Tiendanube, los cobros por medio de pago (cf_tn_medios): lo pagado con Mercado Pago ya entra en la cuenta
-MP, así el Cashflow no lo cuenta dos veces en el estimado de Tienda Nube. Pago Nube no tiene API pública.
+MP, así el Cashflow no lo cuenta dos veces en el estimado de Tienda Nube. Pago Nube no tiene API pública: sus cobros
+se calculan desde las órdenes (sync_pagonube_estimado) hasta que se importa su reporte desde el Cashflow.
 
 Uso: python3 -m reposicion.cashflow_sync            (últimos 3 días + pendientes)
      python3 -m reposicion.cashflow_sync --desde 2026-05-01   (carga histórica, un reporte por mes)
@@ -250,16 +251,15 @@ def sync_pendientes(config, key):
 
 # ── Tienda Nube por medio de pago ──────────────────────────────────────────
 
-def sync_tn_medios(config, key, desde):
-    cfg = config["channels"][key]
+def _tn_ordenes(cfg, desde):
+    """Órdenes de Tienda Nube creadas desde una semana antes de `desde` (una orden se puede pagar días después)."""
     base = f"https://api.tiendanube.com/v1/{cfg['store_id']}"
-    suma = defaultdict(lambda: [0.0, 0])
-    page = 1
+    ordenes, page = [], 1
     while True:
         for intento in range(3):
             r = requests.get(f"{base}/orders", headers=core.tn_headers(cfg), timeout=60, params={
                 "per_page": 200, "page": page, "created_at_min": (desde - timedelta(days=7)).isoformat(),
-                "fields": "id,status,payment_status,paid_at,gateway,total"})
+                "fields": "id,number,status,payment_status,paid_at,gateway,total,payment_details"})
             if r.status_code == 200 or r.status_code == 404:
                 break
             time.sleep(5)
@@ -267,23 +267,118 @@ def sync_tn_medios(config, key, desde):
             break
         r.raise_for_status()
         lote = r.json()
-        for o in lote:
-            if o.get("status") == "cancelled" or o.get("payment_status") not in ("paid", "authorized") or not o.get("paid_at"):
-                continue
-            dia = datetime.fromisoformat(o["paid_at"].replace("+0000", "+00:00")).astimezone(AR).date()
-            if dia < desde:
-                continue
-            s = suma[(dia.isoformat(), o.get("gateway") or "otro")]
-            s[0] += _num(o.get("total")); s[1] += 1
+        ordenes.extend(lote)
         if len(lote) < 200:
             break
         page += 1
         time.sleep(0.5)
+    return ordenes
+
+
+def _pagada_el(o):
+    """Día (Argentina) en que se pagó la orden, o None si no cuenta como cobrada."""
+    if o.get("status") == "cancelled" or o.get("payment_status") not in ("paid", "authorized", "partially_refunded") or not o.get("paid_at"):
+        return None
+    return datetime.fromisoformat(o["paid_at"].replace("+0000", "+00:00")).astimezone(AR)
+
+
+def sync_tn_medios(config, key, desde, ordenes):
+    cfg = config["channels"][key]
+    suma = defaultdict(lambda: [0.0, 0])
+    for o in ordenes:
+        pagada = _pagada_el(o)
+        if not pagada or pagada.date() < desde:
+            continue
+        s = suma[(pagada.date().isoformat(), o.get("gateway") or "otro")]
+        s[0] += _num(o.get("total")); s[1] += 1
     ahora = datetime.now(timezone.utc).isoformat()
     filas = [{"fecha": d, "tienda": TIENDAS[key], "medio": m, "total": round(v[0], 2), "cantidad": v[1],
               "actualizado_at": ahora} for (d, m), v in suma.items()]
     db.upsert(config, "cf_tn_medios", filas, "fecha,tienda,medio")
     core.tnlog(f"  ✓ {cfg['label']}: {sum(v[1] for v in suma.values())} órdenes pagas desde {desde}")
+
+
+# ── Pago Nube calculado desde las órdenes ──────────────────────────────────
+# Pago Nube no tiene API, pero cobra con reglas fijas (medido 26/10/2026 sobre 4.213 ventas): la misma tasa para todas
+# las ventas de cada medio de pago, un costo fijo por cantidad de cuotas, retenciones de 0,2–1,2 % según la provincia,
+# y la plata queda disponible al día siguiente en transferencias y a los 7 días con tarjeta. Cada orden pagada con
+# Pago Nube se estima con el descuento (1 − neto/monto) que tuvieron las ventas del mismo medio y cuotas en el último
+# reporte importado; cuando se importa un reporte que trae esa venta, el Cashflow usa la fila real y no la estimada.
+
+MEDIO_PN = {"credit_card": "Tarjeta de crédito", "debit_card": "Tarjeta de débito", "wire_transfer": "Transferencia"}
+DIAS_PN = {"Transferencia": 1}                          # el resto (tarjetas): 7
+
+
+def _mediana(v):
+    v = sorted(v)
+    return v[len(v) // 2] if v else None
+
+
+def descuentos_pagonube(importadas):
+    """Descuento típico por tienda, medio y cuotas, de las ventas reales de los últimos 45 días del último reporte."""
+    por = defaultdict(list)
+    ultima = {}
+    for r in importadas:
+        ultima[r["tienda"]] = max(ultima.get(r["tienda"], ""), r["fecha_creacion"])
+    for r in importadas:
+        monto, neto = _num(r["monto_venta"]), _num(r["neto"])
+        if monto <= 0 or r["fecha_creacion"] < (datetime.fromisoformat(ultima[r["tienda"]]) - timedelta(days=45)).isoformat():
+            continue
+        d = 1 - neto / monto
+        por[(r["tienda"], r["medio"], r["cuotas"])].append(d)
+        por[(r["tienda"], r["medio"], None)].append(d)
+    return {k: _mediana(v) for k, v in por.items()}
+
+
+def _descuento(desc, tienda, medio, cuotas):
+    otra = "lavan" if tienda == "pret" else "pret"
+    for k in ((tienda, medio, cuotas), (otra, medio, cuotas), (tienda, medio, None), (otra, medio, None)):
+        if desc.get(k) is not None:
+            return desc[k]
+    return None
+
+
+def estimar_pagonube(tienda, ordenes, desde, desc, ya_importadas):
+    """Filas estimadas de cf_pagonube_movimientos para las órdenes pagadas con Pago Nube desde `desde`."""
+    filas, sin_tasa = [], 0
+    for o in ordenes:
+        pagada = _pagada_el(o)
+        if o.get("gateway") != "pago-nube" or not pagada or pagada.date() < desde or str(o.get("number")) in ya_importadas:
+            continue
+        if o.get("payment_status") == "refunded":
+            continue
+        pd = o.get("payment_details") or {}
+        medio = MEDIO_PN.get(pd.get("method"))
+        cuotas = int(pd.get("installments") or 1) if medio == "Tarjeta de crédito" else 1
+        d = _descuento(desc, tienda, medio, cuotas) if medio else None
+        if d is None:
+            sin_tasa += 1
+            continue
+        monto = _num(o.get("total"))
+        creada = pagada.replace(tzinfo=None, microsecond=0)
+        filas.append({"tienda": tienda, "clave": f"estimado|{o['number']}", "descripcion": "Venta", "numero_venta": str(o["number"]),
+                      "medio": medio, "cuotas": cuotas, "fecha_creacion": creada.isoformat(),
+                      "fecha_disponible": (creada + timedelta(days=DIAS_PN.get(medio, 7))).isoformat(),
+                      "monto_venta": round(monto, 2), "neto": round(monto * (1 - d), 2), "estimado": True,
+                      "importado_por": None, "importado_at": datetime.now(timezone.utc).isoformat()})
+    return filas, sin_tasa
+
+
+def sync_pagonube_estimado(config, key, desde, ordenes):
+    cfg = config["channels"][key]
+    tienda = TIENDAS[key]
+    importadas = db.select(config, "cf_pagonube_movimientos", {
+        "select": "tienda,numero_venta,medio,cuotas,fecha_creacion,monto_venta,neto",
+        "estimado": "eq.false", "descripcion": "eq.Venta", "order": "tienda,clave"})
+    desc = descuentos_pagonube([r for r in importadas if r["cuotas"] is not None])
+    ya = {r["numero_venta"] for r in importadas if r["tienda"] == tienda}
+    filas, sin_tasa = estimar_pagonube(tienda, ordenes, desde, desc, ya)
+    # Se rehacen las estimadas del período: una orden cancelada o devuelta desde la corrida anterior desaparece.
+    db.delete(config, "cf_pagonube_movimientos", {"tienda": f"eq.{tienda}", "estimado": "eq.true",
+                                                   "fecha_creacion": f"gte.{desde.isoformat()}"})
+    db.insert(config, "cf_pagonube_movimientos", filas)
+    core.tnlog(f"  ✓ {cfg['label']}: {len(filas)} cobros de Pago Nube calculados desde {desde}"
+               + (f" ({sin_tasa} sin tasa conocida, sin calcular)" if sin_tasa else ""))
 
 
 def main():
@@ -305,7 +400,11 @@ def main():
                 core.tnlog(f"  ⚠ {key}: {e}")
     for key in TIENDAS:
         try:
-            sync_tn_medios(config, key, desde)
+            # Pago Nube se recalcula 15 días para atrás: así toma cancelaciones y devoluciones posteriores al pago.
+            desde_pn = min(desde, hasta - timedelta(days=15))
+            ordenes = _tn_ordenes(config["channels"][key], desde_pn)
+            sync_tn_medios(config, key, desde, ordenes)
+            sync_pagonube_estimado(config, key, desde_pn, ordenes)
         except Exception as e:
             errores.append(f"{key}: {e}")
             core.tnlog(f"  ⚠ {key}: {e}")
