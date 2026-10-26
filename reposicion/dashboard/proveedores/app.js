@@ -114,9 +114,38 @@ export function detalleDolar(c, provisorio = c.cotizacion_fecha < c.periodo) {
     ? ` <span class="chip warn" title="Todavía no está el dólar del día 1 de este mes: se usó el del ${f} y se corrige solo cuando aparezca">provisorio</span>` : ` (dólar del ${f})`}</div>`;
 }
 
+// ---- Atribución de costos: de qué marcas, canales y áreas es cada costo ----
+// Si es de varias marcas/canales se reparte por las ventas del mes; si es de varias áreas, en partes iguales
+// (vista v_costos_atribucion).
+export const ATRIB = {
+  marcas: { titulo: 'Marca', ops: { pret: 'Pret a Home', lavan: 'Casa Laván' } },
+  canales: { titulo: 'Canal', ops: { tn: 'Tienda Nube', ml: 'Mercado Libre', local: 'Local' } },
+  areas: { titulo: 'Área', ops: { ventas: 'Ventas', marketing: 'Marketing', operaciones: 'Operaciones', atencion: 'Atención al cliente' } },
+};
+// Casillas de las tres atribuciones (todas tildadas = mix). `p` = prefijo de los ids, para tener dos formularios en la página.
+export function camposAtribucion(c = {}, p = 'at') {
+  return Object.entries(ATRIB).map(([k, a]) => `<fieldset style="border:0;padding:0;margin:0 0 12px"><legend class="small" style="font-weight:600;margin-bottom:6px">${a.titulo}</legend>
+    <div class="row wrapRow" style="gap:6px 16px">${Object.entries(a.ops).map(([v, t]) => `<label style="display:inline-flex;gap:6px;align-items:center;font-weight:400;margin:0"><input type="checkbox" name="${p}-${k}" value="${v}" ${!c[k] || c[k].includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div></fieldset>`).join('');
+}
+// Lee las casillas; devuelve { marcas, canales, areas } o { error }.
+export function leerAtribucion(p = 'at') {
+  const out = {};
+  for (const [k, a] of Object.entries(ATRIB)) {
+    out[k] = $$(`input[name="${p}-${k}"]:checked`).map((i) => i.value);
+    if (!out[k].length) return { error: `Elegí al menos una opción en ${a.titulo}.` };
+  }
+  return out;
+}
+// "Pret a Home · TN + ML · Marketing"; lo que está en todas se omite. '' si es mix en las tres.
+export function textoAtribucion(c) {
+  const corto = { tn: 'TN', ml: 'ML' };
+  return Object.entries(ATRIB).filter(([k, a]) => c[k] && c[k].length < Object.keys(a.ops).length)
+    .map(([k, a]) => c[k].map((v) => corto[v] || a.ops[v]).join(' + ')).join(' · ');
+}
+
 // Guarda un costo: si se repite, crea el costo recurrente y carga sus meses hasta el mes en curso.
-export async function guardarCosto({ tipo, categoria, concepto, monto, mes, nota, moneda = 'ARS' }) {
-  const rep = $('#rep').value, hasta = $('#repHasta').value, m = montoEn(moneda, monto);
+export async function guardarCosto({ tipo, categoria, concepto, monto, mes, nota, moneda = 'ARS', atrib = {} }) {
+  const rep = $('#rep').value, hasta = $('#repHasta').value, m = { ...montoEn(moneda, monto), ...atrib };
   if (rep === 'no') return sb.from('cc_costos').insert({ tipo, categoria, concepto, ...m, periodo: mes + '-01', nota });
   if (rep === 'hasta' && (!hasta || hasta < mes)) return { error: { message: 'El último mes tiene que ser igual o posterior al mes de inicio.' } };
   const { error } = await sb.from('cc_costos_recurrentes').insert({ tipo, categoria, concepto, ...m, desde: mes + '-01', hasta: rep === 'hasta' ? hasta + '-01' : null, nota });
