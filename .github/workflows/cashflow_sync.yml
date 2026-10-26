@@ -1,0 +1,26 @@
+name: Cashflow — MercadoPago diario
+
+on:
+  schedule:
+    - cron: "30 9 * * *"  # 06:30 AR (UTC-3) — GitHub suele arrancarlo horas tarde
+  workflow_dispatch:
+    inputs:
+      desde:
+        description: "Carga histórica desde (YYYY-MM-DD). Vacío = últimos 3 días"
+        required: false
+        default: ""
+
+jobs:
+  cashflow_sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r reposicion/requirements.txt
+      - run: python3 -m reposicion.cashflow_sync ${DESDE:+--desde "$DESDE"}
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          DESDE: ${{ github.event.inputs.desde }}

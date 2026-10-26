@@ -11,13 +11,20 @@
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-// Cashflow (percibido): plata que entra y sale por mes. Todavía sin saldos de bancos ni liberaciones reales:
-// - Entradas ML/TN: facturación neta del scorecard corrida por el plazo de liberación (editable). Días sin neta:
-//   ventas × % neto promedio del canal (TN Laván no tiene neta: usa el % de TN Pret).
-// - Local: lo cobrado (ventas del local). Salidas: pagos a proveedores (cc_movimientos), envíos TN, publicidad,
-//   costos de Costos (se asumen pagados en su mes), adelantos de sueldo y gastos pagados con la caja del local.
-// - Meses futuros: costos que se repiten + adelantos ya cargados; el resto, promedio de los últimos meses completos.
-import { sb, $, guard, nav, peso0, leerTodo, sumarMes } from './app.js';
+// Cashflow (percibido): plata que entra y sale por mes, y saldo de las cuentas.
+// - MercadoPago (Pret y Laván): movimientos reales de la cuenta por día (cf_liberaciones, lo carga
+//   reposicion/cashflow_sync.py desde el reporte de dinero liberado), saldo real (cf_saldos) y lo ya agendado
+//   para liberar (cf_liberaciones_pendientes). Días anteriores a esos datos: estimado como antes (neta del
+//   scorecard corrida por el plazo de liberación).
+// - Tienda Nube: Pago Nube no tiene API, se importa su reporte de movimientos financieros (cf_pagonube_movimientos):
+//   cobros por fecha de disponible, devoluciones y retiros. Lo demás (y los días sin reporte): neta del scorecard
+//   corrida por el plazo, sin la parte ya real (pagado con Mercado Pago o con Pago Nube importado, según cf_tn_medios).
+//   Saldos de Pago Nube y bancos: cargados a mano (cf_saldos).
+// - Local: lo cobrado. Salidas: proveedores (cc_movimientos), envíos TN, publicidad, Costos (pagados en su mes),
+//   adelantos, caja del local y lo que sale de MercadoPago. Los retiros de MP a bancos no son salida.
+// - Lo que viene: liberaciones agendadas en MP (o el promedio diario, lo que sea mayor), costos recurrentes,
+//   adelantos cargados; el resto, promedio diario de los últimos meses completos.
+import { sb, $, esc, guard, nav, peso0, leerTodo, sumarMes, hoy, parseMonto, fecha as fFecha, fechaHora } from './app.js';
 import { corto as cortoM, MESN, activarTooltips } from './analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'cashflow');
@@ -27,31 +34,65 @@ const nom = (ym) => `${MESN[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
 const etq = (ym) => { const n = MESN[Number(ym.slice(5)) - 1]; return n.charAt(0).toUpperCase() + n.slice(1, 3) + ' ' + ym.slice(2, 4); };
 const masDias = (s, n) => new Date(Date.parse(s + 'T00:00:00Z') + n * DAY).toISOString().slice(0, 10);
 const diasMes = (ym) => new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7), 0)).getUTCDate();
+const finMes = (ym) => `${ym}-${String(diasMes(ym)).padStart(2, '0')}`;
+const dm = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
 const leerNum = (k, def) => { try { const v = Number(localStorage.getItem(k)); return Number.isFinite(v) && localStorage.getItem(k) !== null ? v : def; } catch { return def; } };
-let plazoML = leerNum('cf_plazo_ml', 7), plazoTN = leerNum('cf_plazo_tn', 7);
+const guardarNum = (k, v) => { try { localStorage.setItem(k, String(v)); } catch {} };
+let plazoML = leerNum('cf_plazo_ml', 7), plazoTN = leerNum('cf_plazo_tn', 7), cajaMin = leerNum('cf_caja_min', 0);
+
+const CUENTAS = {
+  mp_pret: { nombre: 'MercadoPago · Pret', auto: true }, mp_lavan: { nombre: 'MercadoPago · Laván', auto: true },
+  pago_nube_pret: { nombre: 'Pago Nube · Pret' }, pago_nube_lavan: { nombre: 'Pago Nube · Laván' }, bancos: { nombre: 'Bancos' },
+};
+const MP_DE = { pret: 'mp_pret', lavan: 'mp_lavan' };
 
 await sb.rpc('cc_costos_al_dia');
 const desde = '2026-05-01';
-const [filas, ads, movs, costos, reglas, adelantos] = await Promise.all([
-  leerTodo('scorecard_canal_dia', 'fecha,marca,canal,ventas,facturacion_neta,costo_envio,local_gastado', ['fecha', 'marca', 'canal'], (q) => q.gte('fecha', desde)),
-  leerTodo('scorecard_ads_dia', 'fecha,marca,plataforma,inversion', ['fecha', 'marca', 'plataforma'], (q) => q.gte('fecha', desde)),
-  leerTodo('cc_movimientos', 'id,fecha,pago', ['fecha', 'id'], (q) => q.eq('tipo', 'pago').gte('fecha', desde)),
-  leerTodo('cc_costos', 'id,tipo,monto,periodo,recurrente_id', ['periodo', 'id'], (q) => q.gte('periodo', desde)),
-  leerTodo('cc_costos_recurrentes', 'id,tipo,monto,desde,hasta', ['id']),
-  leerTodo('cc_adelantos_sueldo', 'id,fecha,monto,descuenta_mes', ['id']),
-]);
-const ultimo = filas.filter((f) => f.ventas != null).reduce((m, f) => (f.fecha > m ? f.fecha : m), '');
-const ACTUAL = ultimo.slice(0, 7);
-// Meses completos: los anteriores al actual en que Mercado Libre Pret tiene todos los días cargados.
+const HOY = hoy(), ACTUAL = HOY.slice(0, 7);
+let filas, ads, movs, costos, reglas, adelantos, lib, pend, saldos, egresos, medios, pn;
+async function cargar() {
+  [filas, ads, movs, costos, reglas, adelantos, lib, pend, saldos, egresos, medios, pn] = await Promise.all([
+    leerTodo('scorecard_canal_dia', 'fecha,marca,canal,ventas,facturacion_neta,costo_envio,local_gastado', ['fecha', 'marca', 'canal'], (q) => q.gte('fecha', desde)),
+    leerTodo('scorecard_ads_dia', 'fecha,marca,plataforma,inversion', ['fecha', 'marca', 'plataforma'], (q) => q.gte('fecha', desde)),
+    leerTodo('cc_movimientos', 'id,fecha,pago', ['fecha', 'id'], (q) => q.eq('tipo', 'pago').gte('fecha', desde)),
+    // El historial cargado de la planilla de pagos no entra: esos pagos ya los ven MercadoPago o los costos recurrentes.
+    leerTodo('cc_costos', 'id,tipo,monto,periodo,recurrente_id', ['periodo', 'id'], (q) => q.gte('periodo', desde).or('origen.is.null,origen.neq.planilla_historial')),
+    leerTodo('cc_costos_recurrentes', 'id,tipo,monto,desde,hasta', ['id']),
+    leerTodo('cc_adelantos_sueldo', 'id,fecha,monto,descuenta_mes', ['id']),
+    leerTodo('cf_liberaciones', 'fecha,cuenta,categoria,credito,debito', ['fecha', 'cuenta', 'categoria'], (q) => q.gte('fecha', desde)),
+    leerTodo('cf_liberaciones_pendientes', 'fecha,cuenta,monto,actualizado_at', ['fecha', 'cuenta']),
+    leerTodo('cf_saldos', 'fecha,cuenta,saldo,fuente,hora,actualizado_at', ['fecha', 'cuenta']),
+    leerTodo('cf_mp_egresos', 'cuenta,movimiento,fecha,categoria,monto,descripcion', ['fecha', 'cuenta', 'movimiento'], (q) => q.gte('fecha', desde)),
+    leerTodo('cf_tn_medios', 'fecha,tienda,medio,total', ['fecha', 'tienda', 'medio'], (q) => q.gte('fecha', desde)),
+    leerTodo('cf_pagonube_movimientos', 'tienda,descripcion,fecha_creacion,fecha_disponible,neto,importado_at', ['tienda', 'clave'], (q) => q.gte('fecha_creacion', desde)),
+  ]);
+}
+await cargar();
+
+// Meses completos: los anteriores al actual en que Mercado Libre Pret tiene todos los días cargados en el scorecard.
 const diasML = {}; for (const f of filas) if (f.marca === 'pret' && f.canal === 'ml' && f.ventas != null) diasML[f.fecha.slice(0, 7)] = (diasML[f.fecha.slice(0, 7)] || 0) + 1;
 const completos = Object.keys(diasML).filter((m) => m < ACTUAL && diasML[m] >= diasMes(m)).sort();
 const BASE = completos.slice(-3);
 const MESES = [...completos.slice(-2), ACTUAL, sumarMes(ACTUAL, 1), sumarMes(ACTUAL, 2), sumarMes(ACTUAL, 3)];
 const proyectado = (m) => m > ACTUAL;
+const FIN = finMes(MESES[MESES.length - 1]);
+
+const ENT = ['Mercado Libre · Pret', 'Mercado Libre · Laván', 'Otros cobros en MercadoPago', 'Tienda Nube · Pret', 'Tienda Nube · Laván', 'Local (cobrado)'];
+const SAL = ['Pagos a proveedores', 'Envíos Tienda Nube', 'Publicidad', 'Factura de Mercado Libre', 'Cuotas de Mercado Crédito', 'Pagos y transferencias desde MercadoPago',
+  'Costos fijos', 'Costos variables', 'Adelantos de sueldo', 'Adelantos descontados del sueldo', 'Gastos pagados con la caja del local'];
+const CAT_MP = { ventas_ml: null, otros_cobros: 'Otros cobros en MercadoPago', deudas_ml: 'Factura de Mercado Libre', credito: 'Cuotas de Mercado Crédito', pagos_mp: 'Pagos y transferencias desde MercadoPago' };
+// Las líneas que salen día a día (para el promedio diario de lo que viene); costos y adelantos van aparte.
+const DIARIAS = [...ENT, 'Pagos a proveedores', 'Envíos Tienda Nube', 'Publicidad', 'Factura de Mercado Libre', 'Cuotas de Mercado Crédito', 'Pagos y transferencias desde MercadoPago', 'Gastos pagados con la caja del local'];
 
 function calcular() {
-  const fila = () => Object.fromEntries(MESES.map((m) => [m, 0]));
-  const sumar = (obj, ym, v) => { if (ym in obj) obj[ym] += v; };
+  // Primer día con datos reales de cada cuenta MercadoPago: desde ahí, lo de MP es real y no se estima.
+  const mpDesde = {}; for (const l of lib) if (!mpDesde[l.cuenta] || l.fecha < mpDesde[l.cuenta]) mpDesde[l.cuenta] = l.fecha;
+  const esReal = (cuenta, dia) => mpDesde[cuenta] && dia >= mpDesde[cuenta];
+  // Por día: dia -> línea -> monto (solo hasta hoy; lo de después es proyección).
+  const real = {};
+  const sumar = (dia, linea, v) => { if (dia > HOY) return; (real[dia] ??= {})[linea] = (real[dia][linea] || 0) + v; };
+  const retiros = {};
+
   // % neto por canal (neta / ventas en los días que tienen neta) para estimar los días sin neta.
   const ratio = {};
   for (const k of ['pret_ml', 'pret_tn', 'lavan_ml', 'lavan_tn']) {
@@ -59,90 +100,274 @@ function calcular() {
     ratio[k] = v > 0 ? n / v : null;
   }
   ratio.lavan_tn ??= ratio.pret_tn; ratio.lavan_ml ??= ratio.pret_ml;
-  const ent = { 'Mercado Libre · Pret': fila(), 'Mercado Libre · Laván': fila(), 'Tienda Nube · Pret': fila(), 'Tienda Nube · Laván': fila(), 'Local (cobrado)': fila() };
-  const sal = { 'Pagos a proveedores': fila(), 'Envíos Tienda Nube': fila(), 'Publicidad': fila(), 'Costos fijos': fila(), 'Costos variables': fila(), 'Adelantos de sueldo': fila(), 'Adelantos descontados del sueldo': fila(), 'Gastos pagados con la caja del local': fila() };
+  // Pago Nube importado: días de venta que cubre el reporte de cada tienda; cobros ya disponibles = real, el resto agendado.
+  const pnRango = {}, pendPN = {};
+  for (const r of pn) {
+    const dc = r.fecha_creacion.slice(0, 10), dia = (r.fecha_disponible || r.fecha_creacion).slice(0, 10), x = (pnRango[r.tienda] ??= { desde: dc, hasta: dc });
+    if (dc < x.desde) x.desde = dc; if (dc > x.hasta) x.hasta = dc;
+    if (r.descripcion === 'Retiro') { if (dia <= HOY) retiros[dia.slice(0, 7)] = (retiros[dia.slice(0, 7)] || 0) + Number(r.neto); continue; }
+    if (dia <= HOY) sumar(dia, r.tienda === 'pret' ? 'Tienda Nube · Pret' : 'Tienda Nube · Laván', Number(r.neto));
+    else (pendPN[dia] ??= {})[r.tienda] = (pendPN[dia][r.tienda] || 0) + Number(r.neto);
+  }
+  const pnCubre = (tienda, diaVenta) => pnRango[tienda] && diaVenta >= pnRango[tienda].desde && diaVenta <= pnRango[tienda].hasta;
+  // Parte de lo vendido por Tienda Nube que ya figura en otra línea: las órdenes "offline" son las ventas del local (están
+  // en "Local (cobrado)"), lo pagado con Mercado Pago entra a la cuenta MP ("otros cobros") y lo de Pago Nube, en los días
+  // que cubre el reporte importado, ya es real.
+  const porDia = {}, porTienda = {};
+  for (const m of medios) {
+    const k = `${m.tienda}|${m.fecha}`; porDia[k] ??= {}; porTienda[m.tienda] ??= {};
+    for (const o of [porDia[k], porTienda[m.tienda]]) { o.total = (o.total || 0) + Number(m.total); o[m.medio] = (o[m.medio] || 0) + Number(m.total); }
+  }
+  const parteReal = (tienda, diaVenta, llega) => {
+    // Sin datos de medios de pago: si el reporte de Pago Nube cubre ese día, se toma todo como real (no se estima encima).
+    const d = porDia[`${tienda}|${diaVenta}`] || porTienda[tienda]; if (!d?.total) return pnCubre(tienda, diaVenta) ? 1 : 0;
+    return ((d.offline || 0) + (esReal(MP_DE[tienda], llega) ? d['mercado-pago'] || 0 : 0) + (pnCubre(tienda, diaVenta) ? d['pago-nube'] || 0 : 0)) / d.total;
+  };
+
   const NOMBRE = { pret_ml: 'Mercado Libre · Pret', lavan_ml: 'Mercado Libre · Laván', pret_tn: 'Tienda Nube · Pret', lavan_tn: 'Tienda Nube · Laván' };
   for (const f of filas) {
     const k = `${f.marca}_${f.canal}`;
     if (f.canal === 'local') {
-      if (f.ventas != null) sumar(ent['Local (cobrado)'], f.fecha.slice(0, 7), Number(f.ventas));
-      if (f.local_gastado != null) sumar(sal['Gastos pagados con la caja del local'], f.fecha.slice(0, 7), -Number(f.local_gastado));
+      if (f.ventas != null) sumar(f.fecha, 'Local (cobrado)', Number(f.ventas));
+      if (f.local_gastado != null) sumar(f.fecha, 'Gastos pagados con la caja del local', -Number(f.local_gastado));
       continue;
     }
+    if (f.canal === 'tn' && f.costo_envio != null) sumar(f.fecha, 'Envíos Tienda Nube', -Number(f.costo_envio));
     const neta = f.facturacion_neta != null ? Number(f.facturacion_neta) : f.ventas != null && ratio[k] != null ? Number(f.ventas) * ratio[k] : null;
-    if (neta != null) sumar(ent[NOMBRE[k]], masDias(f.fecha, f.canal === 'ml' ? plazoML : plazoTN).slice(0, 7), neta);
-    if (f.canal === 'tn' && f.costo_envio != null) sumar(sal['Envíos Tienda Nube'], f.fecha.slice(0, 7), -Number(f.costo_envio));
+    if (neta == null) continue;
+    const llega = masDias(f.fecha, f.canal === 'ml' ? plazoML : plazoTN);
+    if (f.canal === 'ml') { if (!esReal(MP_DE[f.marca], llega)) sumar(llega, NOMBRE[k], neta); }
+    else sumar(llega, NOMBRE[k], neta * (1 - parteReal(f.marca, f.fecha, llega)));
   }
-  for (const a of ads) if (a.inversion != null) sumar(sal['Publicidad'], a.fecha.slice(0, 7), -Number(a.inversion));
-  for (const m of movs) sumar(sal['Pagos a proveedores'], m.fecha.slice(0, 7), -Number(m.pago));
-  for (const c of costos) if (!proyectado(c.periodo.slice(0, 7))) sumar(sal[c.tipo === 'fijo' ? 'Costos fijos' : 'Costos variables'], c.periodo.slice(0, 7), -Number(c.monto));
-  for (const a of adelantos) { sumar(sal['Adelantos de sueldo'], a.fecha.slice(0, 7), -Number(a.monto)); sumar(sal['Adelantos descontados del sueldo'], a.descuenta_mes.slice(0, 7), Number(a.monto)); }
+  for (const l of lib) {
+    const v = Number(l.credito) - Number(l.debito);
+    if (l.categoria === 'retiros') { retiros[l.fecha.slice(0, 7)] = (retiros[l.fecha.slice(0, 7)] || 0) + v; continue; }
+    sumar(l.fecha, CAT_MP[l.categoria] || (l.cuenta === 'mp_pret' ? 'Mercado Libre · Pret' : 'Mercado Libre · Laván'), v);
+  }
+  // ML Ads lo cobra Mercado Libre en su factura, del saldo de MercadoPago: donde MP es real ya está en "Factura de Mercado Libre".
+  for (const a of ads) if (a.inversion != null && !(a.plataforma === 'ml' && esReal(MP_DE[a.marca], a.fecha))) sumar(a.fecha, 'Publicidad', -Number(a.inversion));
+  for (const m of movs) sumar(m.fecha, 'Pagos a proveedores', -Number(m.pago));
 
-  // Meses futuros: costos que se repiten (y adelantos ya cargados, sumados arriba); el resto, promedio de los meses completos.
-  const promNoRec = (t) => (BASE.length ? BASE.reduce((a, m) => a - costos.filter((c) => c.tipo === t && !c.recurrente_id && c.periodo.slice(0, 7) === m).reduce((x, c) => x + Number(c.monto), 0), 0) / BASE.length : 0);
-  const baseProm = {};
-  for (const [nombre, obj] of [...Object.entries(ent), ...Object.entries(sal)]) baseProm[nombre] = BASE.length ? BASE.reduce((a, m) => a + (obj[m] ?? 0), 0) / BASE.length : 0;
-  for (const m of MESES.filter(proyectado)) {
-    for (const [nombre, obj] of [...Object.entries(ent), ...Object.entries(sal)]) {
-      if (nombre.startsWith('Adelantos')) continue;
-      if (nombre === 'Costos fijos' || nombre === 'Costos variables') {
-        const t = nombre === 'Costos fijos' ? 'fijo' : 'variable', d = m + '-01';
-        const rec = reglas.filter((r) => r.tipo === t && r.desde <= d && (!r.hasta || r.hasta >= d)).reduce((a, r) => a + Number(r.monto), 0);
-        obj[m] = -rec + promNoRec(t);
-      } else obj[m] = baseProm[nombre];
-    }
+  // Mensual: lo real hasta hoy.
+  const fila = () => Object.fromEntries(MESES.map((m) => [m, 0]));
+  const lin = Object.fromEntries([...ENT, ...SAL].map((n) => [n, fila()]));
+  for (const [dia, o] of Object.entries(real)) for (const [n, v] of Object.entries(o)) if (dia.slice(0, 7) in lin[n]) lin[n][dia.slice(0, 7)] += v;
+  // Costos: se toman como pagados en su mes (el mes en curso entero); meses futuros, los que se repiten + promedio.
+  for (const c of costos) { const m = c.periodo.slice(0, 7); if (!proyectado(m) && m in lin['Costos fijos']) lin[c.tipo === 'fijo' ? 'Costos fijos' : 'Costos variables'][m] -= Number(c.monto); }
+  for (const a of adelantos) {
+    if (a.fecha.slice(0, 7) in lin['Adelantos de sueldo']) lin['Adelantos de sueldo'][a.fecha.slice(0, 7)] -= Number(a.monto);
+    if (a.descuenta_mes.slice(0, 7) in lin['Adelantos descontados del sueldo']) lin['Adelantos descontados del sueldo'][a.descuenta_mes.slice(0, 7)] += Number(a.monto);
   }
-  const total = (grupo) => Object.fromEntries(MESES.map((m) => [m, Object.values(grupo).reduce((a, o) => a + o[m], 0)]));
+
+  // Promedio diario de cada línea en los meses completos.
+  const diasBase = BASE.reduce((a, m) => a + diasMes(m), 0);
+  const promDia = {};
+  for (const n of DIARIAS) { let s = 0; for (const [dia, o] of Object.entries(real)) if (BASE.includes(dia.slice(0, 7))) s += o[n] || 0; promDia[n] = diasBase ? s / diasBase : 0; }
+  const pendDia = {}; for (const p of pend) (pendDia[p.fecha] ??= {})[p.cuenta] = Number(p.monto);
+  const promNoRec = (t) => (BASE.length ? BASE.reduce((a, m) => a - costos.filter((c) => c.tipo === t && !c.recurrente_id && c.periodo.slice(0, 7) === m).reduce((x, c) => x + Number(c.monto), 0), 0) / BASE.length : 0);
+  const costoMes = (t, m) => { const d = m + '-01'; return -reglas.filter((r) => r.tipo === t && r.desde <= d && (!r.hasta || r.hasta >= d)).reduce((a, r) => a + Number(r.monto), 0) + promNoRec(t); };
+
+  // Lo que viene, día por día desde mañana: entradas y salidas por día (para el saldo y los próximos 30 días).
+  const futuro = {};   // dia -> { ent, sal, agendado }
+  for (let d = masDias(HOY, 1); d <= FIN; d = masDias(d, 1)) {
+    const m = d.slice(0, 7), o = { ent: 0, sal: 0, agendado: 0 };
+    for (const n of DIARIAS) {
+      let v = promDia[n];
+      for (const [marca, cuenta] of Object.entries(MP_DE)) {
+        if (n !== (marca === 'pret' ? 'Mercado Libre · Pret' : 'Mercado Libre · Laván') || !esReal(cuenta, HOY)) continue;
+        const ag = pendDia[d]?.[cuenta] || 0; o.agendado += ag; v = Math.max(ag, promDia[n]);
+      }
+      for (const tienda of ['pret', 'lavan']) {
+        if (n !== (tienda === 'pret' ? 'Tienda Nube · Pret' : 'Tienda Nube · Laván') || !pnRango[tienda]) continue;
+        const ag = pendPN[d]?.[tienda] || 0; o.agendado += ag; v = Math.max(ag, promDia[n]);
+      }
+      lin[n][m] += v;   // en el mes en curso se suma a lo real hasta hoy
+      v >= 0 ? (o.ent += v) : (o.sal += v);
+    }
+    for (const t of ['fijo', 'variable']) { if (!proyectado(m)) continue; const v = costoMes(t, m) / diasMes(m); o.sal += v; }
+    for (const a of adelantos) { if (a.fecha === d) o.sal -= Number(a.monto); if (a.descuenta_mes.slice(0, 7) === m && d === m + '-01') o.ent += Number(a.monto); }
+    futuro[d] = o;
+  }
+  for (const m of MESES.filter(proyectado)) { lin['Costos fijos'][m] = costoMes('fijo', m); lin['Costos variables'][m] = costoMes('variable', m); }
+
+  const ent = Object.fromEntries(ENT.map((n) => [n, lin[n]])), sal = Object.fromEntries(SAL.map((n) => [n, lin[n]]));
+  const total = (g) => Object.fromEntries(MESES.map((m) => [m, Object.values(g).reduce((a, o) => a + o[m], 0)]));
   const totEnt = total(ent), totSal = total(sal);
   const neto = Object.fromEntries(MESES.map((m) => [m, totEnt[m] + totSal[m]]));
-  let acum = 0; const acumulado = Object.fromEntries(MESES.map((m) => [m, (acum += neto[m])]));
-  return { ent, sal, totEnt, totSal, neto, acumulado, ratio };
+
+  // Saldos: el último de cada cuenta hasta una fecha.
+  const saldoAl = (dia) => {
+    const ult = {}; for (const s of saldos) if (s.fecha <= dia && (!ult[s.cuenta] || s.fecha > ult[s.cuenta].fecha)) ult[s.cuenta] = s;
+    return ult;
+  };
+  const ultHoy = saldoAl(HOY);
+  const saldoHoy = Object.values(ultHoy).reduce((a, s) => a + Number(s.saldo), 0);
+  // Saldo de cierre: meses pasados, el de las cuentas registradas a fin de mes; desde hoy, saldo de hoy + lo que viene.
+  let corrido = saldoHoy, minimo = { v: saldoHoy, d: HOY };
+  const cierre = {};
+  for (const m of MESES) if (m < ACTUAL) cierre[m] = Object.keys(saldoAl(finMes(m))).length ? Object.values(saldoAl(finMes(m))).reduce((a, s) => a + Number(s.saldo), 0) : null;
+  for (const [d, o] of Object.entries(futuro)) {
+    corrido += o.ent + o.sal;
+    if (corrido < minimo.v) minimo = { v: corrido, d };
+    if (d === finMes(d.slice(0, 7))) cierre[d.slice(0, 7)] = corrido;
+  }
+  if (!(ACTUAL in cierre)) cierre[ACTUAL] = corrido;
+  const inicial = Object.fromEntries(MESES.map((m) => { const prev = sumarMes(m, -1); return [m, prev in cierre ? cierre[prev] : (Object.keys(saldoAl(finMes(prev))).length ? Object.values(saldoAl(finMes(prev))).reduce((a, s) => a + Number(s.saldo), 0) : null)]; }));
+  const prox = Object.entries(futuro).slice(0, 30);
+  const p30 = { ent: prox.reduce((a, [, o]) => a + o.ent, 0), sal: prox.reduce((a, [, o]) => a + o.sal, 0), agendado: prox.reduce((a, [, o]) => a + o.agendado, 0) };
+  return { ent, sal, totEnt, totSal, neto, cierre, inicial, retiros, ultHoy, saldoHoy, minimo, p30, ratio, mpDesde, pnRango, pendPN };
 }
 
 function pintar() {
   const r = calcular();
-  const fmt = (v) => (Math.abs(v) < 0.5 ? '—' : peso0(v));
+  const fmt = (v) => (v == null ? '—' : Math.abs(v) < 0.5 ? '—' : peso0(v));
+  const bajo = (v) => cajaMin > 0 && v != null && v < cajaMin;
   const celda = (m, v, extra = '') => `<td class="r num" style="${proyectado(m) ? 'background:#F3F5FC;' : ''}${extra}">${fmt(v)}</td>`;
   const grupo = (titulo) => `<tr><th scope="rowgroup" colspan="${MESES.length + 1}" style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding-top:18px">${titulo}</th></tr>`;
   const linea = (nombre, obj) => (MESES.some((m) => Math.abs(obj[m]) >= 0.5) ? `<tr><th scope="row" style="font-weight:400;padding-left:40px">${nombre}</th>${MESES.map((m) => celda(m, obj[m])).join('')}</tr>` : '');
   const tot = (nombre, obj, estilo = '') => `<tr class="total"><th scope="row">${nombre}</th>${MESES.map((m) => celda(m, obj[m], `font-weight:700;${estilo}`)).join('')}</tr>`;
-  const netoFila = `<tr class="total"><th scope="row">Neto del mes</th>${MESES.map((m) => celda(m, r.neto[m], `font-weight:700;${r.neto[m] < 0 ? 'color:var(--bad);' : ''}`)).join('')}</tr>`;
-  const acumFila = `<tr><th scope="row" style="font-weight:500;color:var(--muted)">Neto acumulado desde ${etq(MESES[0])}</th>${MESES.map((m) => celda(m, r.acumulado[m], 'color:var(--muted);')).join('')}</tr>`;
-  const mx = Math.max(1, ...MESES.map((m) => Math.abs(r.neto[m])));
-  const W = 720, H = 200, pl = 56, pb = 26, mid = (H - pb) / 2, bw = (W - pl) / MESES.length;
-  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Neto por mes"><line class="ax" x1="${pl}" x2="${W}" y1="${mid}" y2="${mid}"/>`;
-  svg += `<text x="${pl - 6}" y="14" text-anchor="end">${cortoM(mx)}</text><text x="${pl - 6}" y="${mid + 4}" text-anchor="end">$0</text><text x="${pl - 6}" y="${H - pb}" text-anchor="end">-${cortoM(mx)}</text>`;
-  MESES.forEach((m, i) => {
-    const v = r.neto[m], h = Math.abs(v) / mx * (mid - 8), x = pl + i * bw + bw * 0.2;
-    svg += `<rect x="${x}" y="${v >= 0 ? mid - h : mid}" width="${bw * 0.6}" height="${Math.max(1, h)}" rx="2" fill="${v < 0 ? '#B42318' : '#2449B8'}" opacity="${proyectado(m) ? 0.4 : 1}"/>`;
-    svg += `<text x="${x + bw * 0.3}" y="${H - 8}" text-anchor="middle">${etq(m)}${m === ACTUAL ? ' *' : ''}</text>`;
-    svg += `<rect class="hit" x="${pl + i * bw}" y="0" width="${bw}" height="${H - pb}" data-t="${nom(m)}${proyectado(m) ? ' (proyectado)' : ''}|Entra: ${peso0(r.totEnt[m])}|Sale: ${peso0(-r.totSal[m])}|Neto: ${peso0(v)}"/>`;
-  });
-  svg += '</svg>';
-  const fut = MESES.filter(proyectado), netoFut = fut.reduce((a, m) => a + r.neto[m], 0);
-  const peor = fut.reduce((p, m) => (r.neto[m] < r.neto[p] ? m : p), fut[0]);
-  const pctNeto = (k) => (r.ratio[k] == null ? '—' : (r.ratio[k] * 100).toFixed(0) + '%');
+  const netoFila = `<tr class="total"><th scope="row">Flujo neto</th>${MESES.map((m) => celda(m, r.neto[m], `font-weight:700;${r.neto[m] < 0 ? 'color:var(--bad);' : ''}`)).join('')}</tr>`;
+  const cierreFila = `<tr class="total"><th scope="row">Saldo de cierre</th>${MESES.map((m) => celda(m, r.cierre[m], `font-weight:700;border-top:1px solid var(--line-strong);${bajo(r.cierre[m]) ? 'background:#FDE7D6;color:#9A3A06;' : ''}`)).join('')}</tr>`;
+  const inicialFila = `<tr><th scope="row" style="font-weight:500;color:var(--muted)">Saldo inicial</th>${MESES.map((m) => celda(m, r.inicial[m], 'color:var(--muted);')).join('')}</tr>`;
+  const retirosFila = MESES.some((m) => r.retiros[m]) ? `<tr><th scope="row" style="font-weight:400;padding-left:40px;color:var(--muted)">Retiros a bancos (MercadoPago y Pago Nube)</th>${MESES.map((m) => celda(m, r.retiros[m] || 0, 'color:var(--muted);')).join('')}</tr>` : '';
 
-  $('#app').innerHTML = `<div class="cabecera"><div><h1>Cashflow</h1><p>Plata que entra y sale por mes · Pret a Home + Casa Laván · estimado desde las ventas, sin saldos de bancos todavía</p></div>
-    <div class="row wrapRow"><label for="pml" style="margin:0">Liberación ML</label><input id="pml" type="number" min="0" max="60" value="${plazoML}" style="width:80px"><span class="muted small">días</span>
-    <label for="ptn" style="margin:0 0 0 8px">Liberación TN</label><input id="ptn" type="number" min="0" max="60" value="${plazoTN}" style="width:80px"><span class="muted small">días</span></div></div>
+  // Gráfico: saldo de cierre por mes, con la caja mínima.
+  const vals = MESES.map((m) => r.cierre[m]);
+  const mx = Math.max(1, cajaMin, ...vals.filter((v) => v != null)), mn = Math.min(0, ...vals.filter((v) => v != null));
+  const W = 720, H = 210, pl = 56, pb = 26, alto = H - pb - 14, y = (v) => 14 + (mx - v) / (mx - mn) * alto, bw = (W - pl) / MESES.length;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Saldo de cierre por mes"><line class="ax" x1="${pl}" x2="${W}" y1="${y(0)}" y2="${y(0)}"/>`;
+  svg += `<text x="${pl - 6}" y="${y(mx) + 4}" text-anchor="end">${cortoM(mx)}</text><text x="${pl - 6}" y="${y(0) + 4}" text-anchor="end">$0</text>`;
+  MESES.forEach((m, i) => {
+    const v = r.cierre[m], x = pl + i * bw + bw * 0.2;
+    if (v != null) {
+      svg += `<rect x="${x}" y="${Math.min(y(v), y(0))}" width="${bw * 0.6}" height="${Math.max(1, Math.abs(y(v) - y(0)))}" rx="2" fill="${bajo(v) || v < 0 ? '#E8935A' : m >= ACTUAL ? '#A9BBEB' : '#2449B8'}"/>`;
+      svg += `<text x="${x + bw * 0.3}" y="${Math.min(y(v), y(0)) - 4}" text-anchor="middle" style="font-weight:600">${cortoM(v)}</text>`;
+    }
+    svg += `<text x="${x + bw * 0.3}" y="${H - 8}" text-anchor="middle">${etq(m)}${m === ACTUAL ? ' *' : ''}</text>`;
+    svg += `<rect class="hit" x="${pl + i * bw}" y="0" width="${bw}" height="${H - pb}" data-t="${nom(m)}${m > ACTUAL ? ' (proyectado)' : m === ACTUAL ? ' (en curso)' : ''}|Saldo de cierre: ${fmt(v)}|Entra: ${peso0(r.totEnt[m])}|Sale: ${peso0(-r.totSal[m])}"/>`;
+  });
+  if (cajaMin > 0) svg += `<line x1="${pl}" x2="${W}" y1="${y(cajaMin)}" y2="${y(cajaMin)}" stroke="#B54708" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+  svg += '</svg>';
+
+  // Saldos por cuenta.
+  const pendCuenta = {}; for (const p of pend) pendCuenta[p.cuenta] = (pendCuenta[p.cuenta] || 0) + Number(p.monto);
+  for (const o of Object.values(r.pendPN)) for (const [t, v] of Object.entries(o)) pendCuenta['pago_nube_' + t] = (pendCuenta['pago_nube_' + t] || 0) + v;
+  const ultImport = {}; for (const x of pn) if (!ultImport[x.tienda] || x.importado_at > ultImport[x.tienda]) ultImport[x.tienda] = x.importado_at;
+  const estadoPN = ['pret', 'lavan'].map((t) => `${t === 'pret' ? 'Pret' : 'Laván'}: ${r.pnRango[t] ? `ventas del ${fFecha(r.pnRango[t].desde)} al ${fFecha(r.pnRango[t].hasta)} (importado ${fechaHora(ultImport[t])})` : 'sin importar'}`).join(' · ');
+  const manualTot = Object.entries(r.ultHoy).filter(([c]) => !CUENTAS[c]?.auto).reduce((a, [, s]) => a + Number(s.saldo), 0);
+  const mpTot = Object.entries(r.ultHoy).filter(([c]) => CUENTAS[c]?.auto).reduce((a, [, s]) => a + Number(s.saldo), 0);
+  const faltan = Object.entries(CUENTAS).filter(([c, x]) => !x.auto && !r.ultHoy[c]).map(([, x]) => x.nombre);
+  const filasSaldo = Object.entries(CUENTAS).map(([c, x]) => {
+    const s = r.ultHoy[c];
+    const cuando = s ? (x.auto ? `${fFecha(s.fecha)}${s.hora ? ' · último movimiento ' + fechaHora(s.hora).split(', ')[1] : ''}` : `${fFecha(s.fecha)} · cargado a mano`) : '—';
+    const viejo = s && !x.auto && (Date.parse(HOY) - Date.parse(s.fecha)) / DAY > 7;
+    return `<tr><th scope="row" style="font-weight:500">${x.nombre}</th><td class="r num">${s ? peso0(s.saldo) : '<span class="muted">sin cargar</span>'}</td>
+      <td class="small ${viejo ? 'warn-t' : 'muted'}">${cuando}${viejo ? ' (hace más de una semana)' : ''}</td>
+      <td class="r num muted">${pendCuenta[c] ? peso0(pendCuenta[c]) : x.auto || c.startsWith('pago_nube') ? '—' : ''}</td>
+      <td class="r">${x.auto ? '<span class="small muted">automático</span>' : `<form class="row" data-cuenta="${c}" style="justify-content:flex-end;gap:6px"><label class="sr" for="s_${c}" style="position:absolute;left:-9999px">Saldo de hoy de ${x.nombre}</label><input id="s_${c}" inputmode="decimal" placeholder="Saldo de hoy" style="width:150px;min-height:36px;padding:6px 10px"><button class="btn sm" type="submit">Guardar</button></form>`}</td></tr>`;
+  }).join('');
+  const ultActualizado = pend.reduce((m, p) => (p.actualizado_at > m ? p.actualizado_at : m), '');
+
+  // Salidas desde MercadoPago del mes en curso (para ver qué fue cada una).
+  const egMes = egresos.filter((e) => e.fecha.slice(0, 7) === ACTUAL && Number(e.monto) > 0).sort((a, b) => b.monto - a.monto).slice(0, 12);
+  const pctNeto = (k) => (r.ratio[k] == null ? '—' : (r.ratio[k] * 100).toFixed(0) + '%');
+  const mpInicio = Object.values(r.mpDesde).sort()[0];
+  const alerta = cajaMin > 0 && r.minimo.v < cajaMin
+    ? `<div class="card" role="status" style="background:#FDF0E6;border-color:#F3C9A6;color:#5A2A06;margin-top:0"><strong>El ${fFecha(r.minimo.d)} el saldo proyectado (${peso0(r.minimo.v)}) queda debajo de la caja mínima (${peso0(cajaMin)}).</strong></div>` : '';
+
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Cashflow</h1><p>Plata que entra y sale · Pret a Home + Casa Laván · MercadoPago real, Tienda Nube estimado</p></div>
+    <div class="row wrapRow"><label for="cmin" style="margin:0">Caja mínima</label><input id="cmin" inputmode="decimal" value="${cajaMin ? cajaMin.toLocaleString('es-AR') : ''}" placeholder="sin definir" style="width:140px">
+    <label for="pml" style="margin:0 0 0 8px">Liberación ML</label><input id="pml" type="number" min="0" max="60" value="${plazoML}" style="width:72px"><span class="muted small">días</span>
+    <label for="ptn" style="margin:0 0 0 8px">Liberación TN</label><input id="ptn" type="number" min="0" max="60" value="${plazoTN}" style="width:72px"><span class="muted small">días</span></div></div>
+  ${alerta}
   <div class="centro-comando">
-    <div class="cc-card"><div class="cc-label">Entró en ${nom(ACTUAL)} (hasta el ${ultimo.slice(8, 10)}/${ultimo.slice(5, 7)})</div><div class="cc-valor num">${peso0(r.totEnt[ACTUAL])}</div><div class="cc-sub">ventas liberadas + cobrado en el local</div></div>
-    <div class="cc-card"><div class="cc-label">Salió en ${nom(ACTUAL)}</div><div class="cc-valor num">${peso0(-r.totSal[ACTUAL])}</div><div class="cc-sub">${peso0(-r.sal['Pagos a proveedores'][ACTUAL])} a proveedores</div></div>
-    <div class="cc-card ${r.neto[ACTUAL] < 0 ? 'alerta' : ''}"><div class="cc-label">Neto de ${nom(ACTUAL)} hasta hoy</div><div class="cc-valor num">${peso0(r.neto[ACTUAL])}</div><div class="cc-sub">mes en curso</div></div>
-    <div class="cc-card ${netoFut < 0 ? 'alerta' : 'destacada'}"><div class="cc-label">Proyección próximos 3 meses</div><div class="cc-valor num">${peso0(netoFut)}</div><div class="cc-sub">mes más flojo: ${nom(peor)} (${peso0(r.neto[peor])})</div></div>
+    <div class="cc-card"><div class="cc-label">Saldo hoy</div><div class="cc-valor num">${peso0(r.saldoHoy)}</div><div class="cc-sub">MercadoPago ${peso0(mpTot)}${manualTot ? ` · Pago Nube y bancos ${peso0(manualTot)}` : ''}${faltan.length ? ` · falta cargar ${faltan.join(', ')}` : ''}</div></div>
+    <div class="cc-card"><div class="cc-label">Entra en los próximos 30 días</div><div class="cc-valor num">${peso0(r.p30.ent)}</div><div class="cc-sub">${peso0(r.p30.agendado)} ya agendado en MercadoPago y Pago Nube</div></div>
+    <div class="cc-card"><div class="cc-label">Sale en los próximos 30 días</div><div class="cc-valor num">${peso0(-r.p30.sal)}</div><div class="cc-sub">promedio de ${BASE.map((m) => etq(m)).join(', ') || 'los últimos meses'} + costos recurrentes</div></div>
+    <div class="cc-card ${cajaMin > 0 && r.minimo.v < cajaMin ? 'alerta' : ''}"><div class="cc-label">Punto más bajo hasta ${nom(MESES[MESES.length - 1])}</div><div class="cc-valor num">${peso0(r.minimo.v)}</div><div class="cc-sub">${r.minimo.d === HOY ? 'hoy' : fFecha(r.minimo.d)}${cajaMin > 0 ? ` · mínimo ${peso0(cajaMin)}` : ' · definí la caja mínima arriba'}</div></div>
   </div>
-  <section class="card chart"><div class="row between wrapRow"><h2 style="margin:0">Neto por mes</h2><span class="leyenda" style="margin:0"><span><i style="background:#2449B8"></i>Real</span><span><i style="background:#2449B8;opacity:.4"></i>Proyectado</span><span><i style="background:#B42318"></i>Negativo</span></span></div>${svg}
-    <div class="cc-nota">* ${nom(ACTUAL)} está en curso: datos hasta el ${ultimo.slice(8, 10)}/${ultimo.slice(5, 7)}.</div></section>
-  <section class="card tabla"><div class="cab"><div><h2>Entradas y salidas por categoría</h2><span class="muted">Columnas en celeste: proyectado</span></div></div>
+  <section class="card tabla"><div class="cab"><div><h2>Saldos de las cuentas</h2><span class="muted">MercadoPago se actualiza solo todos los días${ultActualizado ? ` (última vez ${fechaHora(ultActualizado)})` : ''}. Pago Nube y bancos: cargá el saldo de hoy.</span></div></div>
+    <div class="row wrapRow" style="gap:8px 12px;padding:0 24px 12px">
+      <label for="pnArchivo" class="btn sm" style="cursor:pointer">Importar reporte de Pago Nube</label>
+      <input id="pnArchivo" type="file" accept=".csv,text/csv" style="position:absolute;left:-9999px">
+      <span id="pnEstado" class="small muted">${estadoPN}</span>
+    </div>
+    <div class="scroll"><table><thead><tr><th scope="col">Cuenta</th><th scope="col" class="r">Saldo disponible</th><th scope="col">Al</th><th scope="col" class="r">A liberar</th><th scope="col" class="r"><span style="position:absolute;left:-9999px">Acción</span></th></tr></thead>
+    <tbody>${filasSaldo}<tr class="total"><th scope="row">Total</th><td class="r num">${peso0(r.saldoHoy)}</td><td></td><td class="r num">${peso0(Object.values(pendCuenta).reduce((a, b) => a + b, 0))}</td><td></td></tr></tbody></table></div></section>
+  <section class="card chart"><div class="row between wrapRow"><h2 style="margin:0">Saldo de cierre por mes</h2><span class="leyenda" style="margin:0"><span><i style="background:#2449B8"></i>Real</span><span><i style="background:#A9BBEB"></i>Proyectado</span>${cajaMin > 0 ? '<span><i style="background:#B54708;height:2px"></i>Caja mínima</span>' : ''}</span></div>${svg}
+    <div class="cc-nota">* ${nom(ACTUAL)}: real hasta hoy (${dm(HOY)}) y proyectado el resto. Meses pasados: saldo de las cuentas registradas a fin de mes.</div></section>
+  <section class="card tabla"><div class="cab"><div><h2>Entradas y salidas por categoría</h2><span class="muted">Columnas en celeste: proyectado · ${nom(ACTUAL)}: real hasta hoy + lo que falta</span></div></div>
     <div class="scroll"><table style="min-width:900px"><thead><tr><th scope="col">Categoría</th>${MESES.map((m) => `<th scope="col" class="r" style="${proyectado(m) ? 'background:#F3F5FC;' : ''}">${etq(m)}<div class="small" style="font-weight:400">${proyectado(m) ? 'proyectado' : m === ACTUAL ? 'en curso' : 'real'}</div></th>`).join('')}</tr></thead>
-    <tbody>${grupo('Entradas')}${Object.entries(r.ent).map(([n, o]) => linea(n, o)).join('')}${tot('Total entradas', r.totEnt)}
+    <tbody>${inicialFila}${grupo('Entradas')}${Object.entries(r.ent).map(([n, o]) => linea(n, o)).join('')}${tot('Total entradas', r.totEnt)}
     ${grupo('Salidas')}${Object.entries(r.sal).map(([n, o]) => linea(n, o)).join('')}${tot('Total salidas', r.totSal)}
-    ${netoFila}${acumFila}</tbody></table></div></section>
-  <p class="muted small" style="line-height:1.6">Estimado, no son movimientos de cuentas. Entradas de Mercado Libre y Tienda Nube: facturación neta del scorecard, corrida por el plazo de liberación de arriba (el que cargues queda guardado en este navegador). Días sin facturación neta cargada: ventas × % neto promedio del canal (ML Pret ${pctNeto('pret_ml')}, ML Laván ${pctNeto('lavan_ml')}, TN Pret ${pctNeto('pret_tn')}; TN Laván usa el de TN Pret). Los costos cargados en Costos se toman como pagados en su mes; los adelantos de sueldo salen el día que se dan y se descuentan del sueldo del mes elegido. Meses proyectados: costos que se repiten y adelantos ya cargados; el resto, promedio de ${BASE.map(nom).join(', ') || 'los meses completos'}. Falta conectar MercadoPago y Pago Nube para usar liberaciones y saldos reales.</p>`;
-  const guardarPlazo = (k, v) => { try { localStorage.setItem(k, String(v)); } catch {} };
-  $('#pml').onchange = (e) => { plazoML = Math.max(0, Math.min(60, Math.round(+e.target.value || 0))); guardarPlazo('cf_plazo_ml', plazoML); pintar(); };
-  $('#ptn').onchange = (e) => { plazoTN = Math.max(0, Math.min(60, Math.round(+e.target.value || 0))); guardarPlazo('cf_plazo_tn', plazoTN); pintar(); };
+    ${netoFila}${cierreFila}${retirosFila ? grupo('Entre cuentas propias (no suma)') + retirosFila : ''}</tbody></table></div></section>
+  ${egMes.length ? `<section class="card tabla"><div class="cab"><div><h2>Salidas desde MercadoPago en ${nom(ACTUAL)}</h2><span class="muted">Las más grandes, sin retiros a bancos</span></div></div>
+    <div class="scroll"><table><thead><tr><th scope="col">Fecha</th><th scope="col">Cuenta</th><th scope="col">Qué fue</th><th scope="col" class="r">Monto</th></tr></thead><tbody>
+    ${egMes.map((e) => `<tr><td>${fFecha(e.fecha)}</td><td>${CUENTAS[e.cuenta].nombre}</td><td>${esc(e.descripcion || '')}</td><td class="r num">${peso0(e.monto)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
+  <p class="muted small" style="line-height:1.6">MercadoPago${mpInicio ? ` (desde el ${fFecha(mpInicio)})` : ''}: movimientos reales de las cuentas de Pret y Laván. "Mercado Libre" es lo liberado de las ventas, ya neto de comisiones, impuestos, envíos, reclamos y devoluciones. "Otros cobros" es lo demás que entra a la cuenta: Tienda Nube pagado con Mercado Pago, transferencias recibidas, QR, rendimientos. "Factura de Mercado Libre" son los cobros automáticos que ML hace del saldo por lo que no descuenta en cada venta (ML Ads, Full y otros cargos); por eso, desde esa fecha, ML Ads no se suma en Publicidad. Los pagos y transferencias hechos desde MercadoPago pueden repetir algo de Pagos a proveedores si se pagó desde ahí. Antes de esa fecha, Mercado Libre se estima con la facturación neta del scorecard corrida por el plazo de liberación. Tienda Nube: lo cobrado con Pago Nube sale del reporte importado (cada cobro el día que queda disponible, menos devoluciones y contracargos); lo demás y los días que el reporte no cubre, facturación neta corrida por el plazo de liberación, sin lo pagado con Mercado Pago (ya figura en "Otros cobros") ni las ventas "offline", que son las del local (ya figuran en "Local (cobrado)"); días sin neta, ventas × % neto (ML Pret ${pctNeto('pret_ml')}, ML Laván ${pctNeto('lavan_ml')}, TN Pret ${pctNeto('pret_tn')}). Los costos de Costos se toman como pagados en su mes; los adelantos salen el día que se dan. Lo que viene: lo que MercadoPago ya agendó para liberar (o el promedio diario, si es mayor), costos recurrentes y adelantos cargados; el resto, promedio diario de ${BASE.map(nom).join(', ') || 'los meses completos'}. El saldo de cierre proyectado parte del saldo de hoy de todas las cuentas cargadas: si faltan Pago Nube o bancos, queda corto.</p>`;
+
+  $('#pml').onchange = (e) => { plazoML = Math.max(0, Math.min(60, Math.round(+e.target.value || 0))); guardarNum('cf_plazo_ml', plazoML); pintar(); };
+  $('#ptn').onchange = (e) => { plazoTN = Math.max(0, Math.min(60, Math.round(+e.target.value || 0))); guardarNum('cf_plazo_tn', plazoTN); pintar(); };
+  $('#cmin').onchange = (e) => { const v = parseMonto(e.target.value || '0'); cajaMin = Number.isFinite(v) && v > 0 ? v : 0; guardarNum('cf_caja_min', cajaMin); pintar(); };
+  $('#pnArchivo').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) prepararImportPN(f); };
+  for (const f of document.querySelectorAll('form[data-cuenta]')) f.onsubmit = async (e) => {
+    e.preventDefault();
+    const v = parseMonto(f.querySelector('input').value);
+    if (!Number.isFinite(v)) { f.querySelector('input').focus(); return; }
+    const btn = f.querySelector('button'); btn.disabled = true;
+    const { error } = await sb.from('cf_saldos').upsert({ fecha: HOY, cuenta: f.dataset.cuenta, saldo: v, fuente: 'manual', actualizado_at: new Date().toISOString() }, { onConflict: 'fecha,cuenta' });
+    if (error) { btn.disabled = false; alert('No se pudo guardar: ' + error.message); return; }
+    await cargar(); pintar();
+  };
+}
+// Importación del reporte "movimientos financieros" de Pago Nube (CSV con ; que se exporta desde el admin de Tiendanube).
+function leerCSV(texto) {
+  const filas = []; let fila = [], campo = '', comillas = false;
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i];
+    if (comillas) { if (c === '"' && texto[i + 1] === '"') { campo += '"'; i++; } else if (c === '"') comillas = false; else campo += c; }
+    else if (c === '"') comillas = true;
+    else if (c === ';') { fila.push(campo); campo = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && texto[i + 1] === '\n') i++; fila.push(campo); filas.push(fila); fila = []; campo = ''; }
+    else campo += c;
+  }
+  if (campo || fila.length) { fila.push(campo); filas.push(fila); }
+  return filas.filter((f) => f.some((x) => x !== ''));
+}
+const fechaPN = (s) => { const m = /^(\d{2})-(\d{2})-(\d{4}) (\d{2}:\d{2}:\d{2})$/.exec((s || '').trim()); return m ? `${m[3]}-${m[2]}-${m[1]}T${m[4]}` : null; };
+async function prepararImportPN(archivo) {
+  const est = $('#pnEstado');
+  const [cab, ...datos] = leerCSV((await archivo.text()).replace(/^\uFEFF/, ''));
+  const col = (n) => cab.findIndex((x) => x.trim() === n);
+  const C = { desc: col('Descripción'), num: col('Número de venta'), medio: col('Medio de pago'), fc: col('Fecha de creación'), fd: col('Disponible para transferir'), monto: col('Monto de la venta'), neto: col('Valor neto') };
+  if (Object.values(C).some((i) => i < 0)) { est.innerHTML = '<span class="err">Ese archivo no es el reporte de movimientos financieros de Pago Nube.</span>'; return; }
+  const vistas = {}, filas = [];
+  for (const d of datos) {
+    const fc = fechaPN(d[C.fc]), neto = Number(d[C.neto]);
+    if (!fc || !Number.isFinite(neto)) { est.innerHTML = `<span class="err">Fila con fecha o monto que no se entiende: ${esc(d.join(' · '))}</span>`; return; }
+    const base = [d[C.desc], d[C.num], fc, neto].join('|'); vistas[base] = (vistas[base] || 0) + 1;
+    filas.push({ clave: `${base}|${vistas[base]}`, descripcion: d[C.desc].trim(), numero_venta: d[C.num].trim() || null, medio: d[C.medio].trim() || null,
+      fecha_creacion: fc, fecha_disponible: fechaPN(d[C.fd]), monto_venta: Number(d[C.monto]) || null, neto });
+  }
+  if (!filas.length) { est.innerHTML = '<span class="err">El archivo no tiene movimientos.</span>'; return; }
+  // Pret a Home va por la venta 50.000 y Casa Laván por la 900: sirve para proponer la tienda, igual se confirma.
+  const maxNum = Math.max(0, ...filas.map((f) => Number(f.numero_venta) || 0));
+  const fechas = filas.map((f) => f.fecha_creacion).sort();
+  const neto = filas.filter((f) => f.descripcion !== 'Retiro').reduce((a, f) => a + f.neto, 0);
+  est.innerHTML = `<span class="row wrapRow" style="gap:8px">${filas.length} movimientos del ${fFecha(fechas[0].slice(0, 10))} al ${fFecha(fechas[fechas.length - 1].slice(0, 10))} · neto ${peso0(neto)} ·
+    <label for="pnTienda" style="margin:0">Tienda</label><select id="pnTienda" style="width:auto;min-height:36px;padding:4px 8px"><option value="pret" ${maxNum > 5000 ? 'selected' : ''}>Pret a Home</option><option value="lavan" ${maxNum > 5000 ? '' : 'selected'}>Casa Laván</option></select>
+    <button class="btn sm primary" id="pnOk" type="button">Importar</button><button class="btn sm" id="pnNo" type="button">Cancelar</button></span>`;
+  $('#pnNo').onclick = () => pintar();
+  $('#pnOk').onclick = async () => {
+    const tienda = $('#pnTienda').value;
+    $('#pnOk').disabled = true; $('#pnNo').disabled = true;
+    const ahora = new Date().toISOString();
+    for (let i = 0; i < filas.length; i += 500) {
+      const { error } = await sb.from('cf_pagonube_movimientos').upsert(filas.slice(i, i + 500).map((f) => ({ ...f, tienda, importado_at: ahora })), { onConflict: 'tienda,clave' });
+      if (error) { est.innerHTML = `<span class="err">No se pudo importar: ${esc(error.message)}</span>`; return; }
+    }
+    await cargar(); pintar();
+  };
 }
 activarTooltips();
 pintar();

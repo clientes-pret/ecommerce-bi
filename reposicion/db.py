@@ -108,3 +108,13 @@ def patch(config, table, params, body):
                         params=params, json=body, timeout=30)
     if r.status_code not in (200, 204):
         raise RuntimeError(f"Patch falló en {table}: {r.status_code} {r.text[:300]}")
+
+
+def delete(config, table, params):
+    """DELETE con filtros PostgREST (ej: {'cuenta': 'eq.mp_pret'}). Sin filtros no borra nada."""
+    if not params:
+        raise ValueError("delete sin filtros")
+    r = requests.delete(_url(config, table), headers=_headers(config, prefer="return=minimal"),
+                        params=params, timeout=30)
+    if r.status_code not in (200, 204):
+        raise RuntimeError(f"Delete falló en {table}: {r.status_code} {r.text[:300]}")
