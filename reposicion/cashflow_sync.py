@@ -49,6 +49,7 @@ def _pedir_reporte(token, desde, hasta):
     end = min(datetime.combine(hasta, datetime.max.time(), AR), datetime.now(AR) - timedelta(minutes=5)).astimezone(timezone.utc)
     pedido = datetime.now(timezone.utc)
     cerrado = hasta < _hoy()
+    fin_dia = datetime.combine(hasta, datetime.max.time(), AR).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     begin_iso = begin.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def pedir():
@@ -76,12 +77,14 @@ def _pedir_reporte(token, desde, hasta):
             lista = requests.get(f"{MP}/v1/account/release_report/list", headers=H, timeout=60)
             if lista.status_code != 200:
                 continue
-            # Un tramo ya cerrado no cambia: sirve cualquier reporte de ese mismo período generado después de que terminó.
+            # Un tramo ya cerrado no cambia: sirve cualquier reporte del MISMO período (inicio y fin) generado después
+            # de que terminó. Solo el inicio no alcanza: el 26/10 tomó uno del 1 al 2/10 y borró el resto del tramo.
             # (date_created viene en UTC aunque diga -04:00, por eso se compara contra UTC.)
             creado = lambda x: datetime.fromisoformat(x["date_created"][:19]).replace(tzinfo=timezone.utc)
             candidatos = [x for x in lista.json() if x.get("begin_date") == begin_iso and (
                 creado(x) >= pedido - timedelta(minutes=2)
-                or (cerrado and datetime.fromisoformat(x["end_date"].replace("Z", "+00:00")) < creado(x)))]
+                or (cerrado and x.get("end_date") == fin_dia
+                    and datetime.fromisoformat(x["end_date"].replace("Z", "+00:00")) < creado(x)))]
             if not candidatos:
                 continue
             archivo = max(candidatos, key=lambda x: x["date_created"])["file_name"]
@@ -183,6 +186,12 @@ def sync_reportes(config, key, desde, hasta):
             core.tnlog(f"  ⚠ {cfg['label']} {a}→{b}: {e}")
             continue
         lib, egr, sal = procesar_reporte(texto, cuenta, token)
+        # Antes de borrar el tramo: el reporte tiene que arrancar el primer día y no pasarse del último.
+        lineas = texto.splitlines()
+        if len(lineas) < 2 or lineas[1][:10] != a.isoformat() or any(f["fecha"] > b.isoformat() for f in lib):
+            errores.append(f"El reporte {a}→{b} no cubre ese período")
+            core.tnlog(f"  ⚠ {cfg['label']} {a}→{b}: el reporte descargado no cubre el período, no se toca nada")
+            continue
         # Se reemplaza el tramo entero: si cambia la clasificación, no quedan filas viejas de otra categoría.
         rango = {"cuenta": f"eq.{cuenta}", "and": f"(fecha.gte.{a},fecha.lte.{b})"}
         db.delete(config, "cf_liberaciones", rango)
