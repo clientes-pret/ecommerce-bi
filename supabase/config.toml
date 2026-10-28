@@ -4,3 +4,7 @@
 # traiga un JWT de Supabase válido, antes de que nuestro código corra.
 [functions.reposicion-api]
 verify_jwt = false
+
+# Misma contraseña compartida (armado de pedidos, reposicion/dashboard/armado.html).
+[functions.armado-api]
+verify_jwt = false

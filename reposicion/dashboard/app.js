@@ -242,6 +242,7 @@ const NAV_LINKS = [
   { href: "historial_pedidos.html", label: "📋 Pedidos", key: "pedidos" },
   { href: "historial_quiebres.html", label: "🕳️ Quiebres", key: "quiebres" },
   { href: "analisis_stock.html", label: "📊 Análisis de stock", key: "analisis" },
+  { href: "armado.html", label: "✅ Armado de pedidos", key: "armado" },
 ];
 
 function renderNav(activeKey) {

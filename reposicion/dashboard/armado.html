@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1512">
+<title>Armado de pedidos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800&family=Barlow:wght@400;500;600;700&display=swap">
+<style>
+  /* Pantalla para el celular de quien arma: escanear la etiqueta y confirmar producto por producto.
+     Siempre clara (se usa en el depósito, con luz), con texto grande. */
+  :root {
+    --bg: #f6f7f4; --card: #ffffff; --ink: #17201b; --soft: #6b766f; --line: #e1e5df;
+    --ok: #1d9a5b; --ok-soft: #dcf3e6; --no: #d8443b; --no-soft: #fbe3e1;
+    --warn: #f2b632; --warn-soft: #fff3d2; --cam: #0f1512;
+    --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+    --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  [hidden] { display: none !important; }
+  .vista { position: fixed; inset: 0; display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+
+  /* Barra superior */
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 10px; }
+  .bar b { font-family: var(--display); font-size: 24px; font-weight: 800; }
+  .bar small { color: var(--soft); font-size: 13px; text-align: right; line-height: 1.2; }
+  .link { background: none; border: none; padding: 6px 0; color: var(--soft); font-size: 14px; text-decoration: underline; }
+
+  /* Escanear */
+  #vScan { background: var(--cam); color: #fff; }
+  #vScan .bar small, #vScan .link { color: #c8d0cb; }
+  .cam { position: relative; flex: 1; overflow: hidden; display: grid; place-items: center; }
+  .cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .mira { position: relative; width: min(68vw, 300px); aspect-ratio: 1; border: 4px solid var(--ok); border-radius: 18px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,.45); }
+  .cam-tip { position: absolute; top: 16px; left: 16px; right: 16px; text-align: center; font-weight: 600; font-size: 17px; text-shadow: 0 1px 3px #000; }
+  .cam-msg { position: absolute; bottom: 16px; left: 16px; right: 16px; text-align: center; background: rgba(0,0,0,.7);
+    border-radius: 12px; padding: 10px 12px; font-size: 15px; }
+  .cam-msg.error { background: var(--no); }
+  .manual { padding: 12px 16px 16px; display: grid; gap: 10px; }
+  .manual form { display: flex; gap: 8px; }
+  .manual input { flex: 1; min-width: 0; font: inherit; font-size: 20px; padding: 12px 14px; border-radius: 12px; border: 2px solid #3a443e;
+    background: #1b231f; color: #fff; }
+  .manual input::placeholder { color: #8d9891; font-size: 16px; }
+  .manual .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .pill { background: #2a332e; border: none; border-radius: 999px; padding: 8px 14px; font-size: 14px; color: #fff; }
+
+  /* Botones grandes */
+  .cta { border: none; border-radius: 14px; padding: 15px; font-weight: 700; font-size: 17px; background: var(--ink); color: #fff; width: 100%; }
+  .cta.ok { background: var(--ok); }
+  .cta.no { background: var(--no); }
+  .cta.ghost { background: transparent; color: var(--ink); border: 2px solid var(--line); }
+  .cta:disabled { opacity: .5; }
+  .cta.chico { width: auto; padding: 12px 18px; font-size: 16px; }
+
+  /* Avisos */
+  .avisos { display: grid; gap: 8px; padding: 0 16px; }
+  .aviso { display: flex; gap: 10px; align-items: flex-start; border-radius: 12px; padding: 10px 12px; font-weight: 600; font-size: 15px; line-height: 1.3; }
+  .aviso.rojo { background: var(--no); color: #fff; }
+  .aviso.amarillo { background: var(--warn-soft); border: 2px solid var(--warn); }
+  .aviso::before { content: "!"; flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+    font-weight: 800; font-size: 14px; background: #fff; color: var(--no); }
+  .aviso.amarillo::before { background: var(--warn); color: var(--ink); }
+
+  /* Resumen inicial / elegir pedido */
+  .scroll { flex: 1; overflow-y: auto; padding-bottom: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .cabecera { padding: 0 16px; display: grid; gap: 4px; }
+  .cabecera h1 { margin: 0; font-family: var(--display); font-size: 40px; line-height: 1; font-weight: 800; }
+  .cabecera p { margin: 0; color: var(--soft); font-size: 16px; }
+  .tienda { display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 6px; background: var(--ink); color: #fff; justify-self: start; }
+  .tienda.lavan { background: #6b4e8e; }
+  .lista { display: grid; gap: 8px; padding: 0 16px; }
+  .fila { display: grid; grid-template-columns: 52px 1fr auto; gap: 10px; align-items: center; background: var(--card);
+    border-radius: 14px; padding: 8px 10px; border: 2px solid transparent; text-align: left; width: 100%; }
+  button.fila { border-color: var(--line); }
+  .fila img, .fila .sinfoto { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: var(--line); }
+  .fila .t { font-size: 15px; line-height: 1.2; font-weight: 600; min-width: 0; }
+  .fila .t small { display: block; color: var(--soft); font-weight: 500; font-size: 14px; }
+  .fila .t small.why { color: var(--no); font-weight: 600; }
+  .fila .q { font-family: var(--display); font-weight: 800; font-size: 24px; }
+  .mark { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; }
+  .mark.ok { background: var(--ok); }
+  .mark.no { background: var(--no); }
+  .pie { padding: 12px 16px 16px; display: grid; gap: 10px; flex: none; }
+
+  /* Tarjetas */
+  .dots { display: flex; gap: 5px; padding: 0 16px 10px; }
+  .dots i { flex: 1; height: 6px; border-radius: 3px; background: var(--line); }
+  .dots i.ok { background: var(--ok); }
+  .dots i.no { background: var(--no); }
+  .dots i.busca { background: var(--warn); }
+  .dots i.now { background: var(--ink); }
+  #parecido { margin: 0 16px 8px; }
+  .deck { position: relative; flex: 1; margin: 0 16px; min-height: 0; }
+  .card { position: absolute; inset: 0; background: var(--card); border-radius: 22px; box-shadow: 0 10px 28px -16px rgba(0,0,0,.45);
+    overflow: hidden; display: flex; flex-direction: column; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .card.volando { transition: transform .25s ease-out, opacity .25s ease-out; }
+  .photo { position: relative; flex: 1; min-height: 0; background: #eceeea; }
+  .photo img { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; }
+  .qty { position: absolute; right: 12px; top: 12px; background: var(--ink); color: #fff; border-radius: 16px; padding: 6px 14px 8px; text-align: center; line-height: 1; }
+  .qty span { display: block; font-size: 12px; letter-spacing: .1em; font-weight: 700; margin-bottom: 2px; }
+  .qty strong { font-family: var(--display); font-size: 52px; font-weight: 800; }
+  .info { padding: 12px 16px 16px; display: grid; gap: 8px; flex: none; }
+  .nombre { font-weight: 600; font-size: 17px; line-height: 1.2; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-family: var(--display); font-weight: 800; font-size: 30px; line-height: 1; text-transform: uppercase;
+    background: var(--bg); border: 2.5px solid var(--ink); border-radius: 10px; padding: 4px 10px 6px; }
+  .sku { font-size: 13px; color: var(--soft); letter-spacing: .03em; word-break: break-all; }
+  .stamp { position: absolute; top: 28px; font-family: var(--display); font-weight: 800; font-size: 34px; padding: 2px 12px; border: 4px solid;
+    border-radius: 10px; background: rgba(255,255,255,.9); z-index: 2; opacity: 0; pointer-events: none; }
+  .stamp.ok { left: 18px; color: var(--ok); transform: rotate(-14deg); }
+  .stamp.no { right: 18px; color: var(--no); transform: rotate(12deg); }
+  .acciones { display: flex; justify-content: center; gap: 40px; padding: 14px 0 6px; flex: none; }
+  .btn { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; background: var(--card); border: 3px solid;
+    box-shadow: 0 6px 16px -8px rgba(0,0,0,.4); font-size: 32px; font-weight: 800; }
+  .btn.no { border-color: var(--no); color: var(--no); }
+  .btn.ok { border-color: var(--ok); color: var(--ok); }
+  .hint { text-align: center; font-size: 13px; color: var(--soft); padding-bottom: 12px; flex: none; }
+
+  /* Hoja de motivos */
+  .velo { position: fixed; inset: 0; background: rgba(15,21,18,.5); z-index: 20; display: flex; align-items: flex-end; }
+  .hoja { width: 100%; background: var(--card); border-radius: 22px 22px 0 0; padding: 12px 16px calc(18px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 10px; }
+  .hoja h3 { margin: 4px 0; font-family: var(--display); font-size: 26px; font-weight: 800; }
+  .opt { border: 2px solid var(--line); background: var(--card); border-radius: 14px; padding: 15px 14px; font-weight: 700; font-size: 17px;
+    display: flex; justify-content: space-between; align-items: center; text-align: left; }
+  .opt small { color: var(--soft); font-weight: 500; font-size: 14px; }
+  .opt.rojo { border-color: var(--no); color: var(--no); }
+
+  /* Resultado */
+  .veredicto { margin: 0 16px; border-radius: 18px; padding: 16px; display: grid; gap: 4px; color: #fff; }
+  .veredicto.no { background: var(--no); }
+  .veredicto.ok { background: var(--ok); text-align: center; }
+  .veredicto b { font-family: var(--display); font-size: 32px; line-height: 1; font-weight: 800; }
+  .veredicto span { font-size: 15px; }
+  .cargando { padding: 40px 16px; text-align: center; color: var(--soft); }
+  .vacio { padding: 24px 16px; color: var(--soft); text-align: center; }
+  .quien { padding: 0 16px; display: grid; gap: 12px; }
+  .quien input { font: inherit; font-size: 22px; padding: 14px; border-radius: 12px; border: 2px solid var(--line); }
+  @media (prefers-reduced-motion: reduce) { .card.volando { transition: none; } }
+</style>
+</head>
+<body>
+
+<!-- 1. Escanear -->
+<section class="vista" id="vScan">
+  <div class="bar"><b>Armado de pedidos</b><button class="link" id="btnQuien" type="button"></button></div>
+  <div class="cam">
+    <video id="video" playsinline muted></video>
+    <div class="cam-tip">Apuntá al QR de la etiqueta</div>
+    <div class="mira"></div>
+    <div class="cam-msg" id="camMsg" hidden></div>
+  </div>
+  <div class="manual">
+    <form id="formManual" autocomplete="off">
+      <input id="inpNumero" inputmode="numeric" placeholder="O escribí el número de venta" aria-label="Número de venta">
+      <button class="cta ok chico" type="submit">Buscar</button>
+    </form>
+    <div class="row">
+      <button class="pill" id="btnFaltantes" type="button">Pedidos con faltante</button>
+      <button class="link" id="btnCamara" type="button" hidden>Reintentar cámara</button>
+    </div>
+  </div>
+</section>
+
+<!-- Quién arma -->
+<section class="vista" id="vQuien" hidden>
+  <div class="bar"><b>¿Quién arma?</b></div>
+  <form class="quien" id="formQuien">
+    <p style="margin:0;color:var(--soft)">Tu nombre queda guardado en cada pedido que revisás.</p>
+    <input id="inpQuien" autocomplete="given-name" placeholder="Tu nombre" aria-label="Tu nombre">
+    <button class="cta" type="submit">Listo</button>
+  </form>
+</section>
+
+<!-- Buscando / elegir / resumen inicial / resultado / faltantes: se dibujan en esta vista -->
+<section class="vista" id="vPanel" hidden></section>
+
+<!-- Tarjetas -->
+<section class="vista" id="vCartas" hidden>
+  <div class="bar"><b id="cTitulo"></b><small id="cPaso"></small></div>
+  <div class="dots" id="cDots"></div>
+  <div class="aviso amarillo" id="parecido" hidden></div>
+  <div class="deck" id="deck"></div>
+  <div class="acciones">
+    <button class="btn no" id="btnNo" type="button" aria-label="No lo tengo">✕</button>
+    <button class="btn ok" id="btnOk" type="button" aria-label="Lo tengo">✓</button>
+  </div>
+  <div class="hint">← No lo tengo · Lo tengo →</div>
+</section>
+
+<div class="velo" id="velo" hidden>
+  <div class="hoja">
+    <h3>¿Qué pasó con este producto?</h3>
+    <button class="opt rojo" type="button" data-motivo="no_hay">No hay en el depósito</button>
+    <button class="opt" type="button" data-motivo="buscando">Sigo buscando <small>Vuelve al final</small></button>
+    <button class="opt" type="button" data-motivo="volver">Me equivoqué <small>Volver</small></button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+// ─── API ────────────────────────────────────────────────────────────────────
+// Misma contraseña que el tablero; la función es armado-api (al lado de reposicion-api).
+const ARMADO_API = new URLSearchParams(location.search).get("api")
+  || window.REPOSICION_API_URL.replace("reposicion-api", "armado-api");
+
+async function armadoFetch(path, body) {
+  if (!getPassword() || !getUser()) await waitForLogin();
+  const hacer = () => fetch(ARMADO_API + path, {
+    method: body ? "POST" : "GET",
+    headers: { "Content-Type": "application/json", "X-App-Password": getPassword() },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let r = await hacer();
+  if (r.status === 401) {
+    sessionStorage.removeItem("repo_app_password");
+    showLoginError();
+    await waitForLogin();
+    r = await hacer();
+  }
+  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+// ─── Estado ─────────────────────────────────────────────────────────────────
+const QUIEN_KEY = "armado_quien";
+let quien = "";
+try { quien = localStorage.getItem(QUIEN_KEY) || ""; } catch {}
+
+let pedido = null;        // el que se está armando
+let codigoLeido = "";
+let inicio = null;
+let lineas = [];          // [{...item, estado: null|'ok'|'no_hay'|'buscando', confirmado_at}]
+let cola = [];            // índices de líneas pendientes, en el orden en que se muestran
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function mostrar(id) {
+  for (const v of ["vScan", "vQuien", "vPanel", "vCartas"]) $(v).hidden = v !== id;
+  if (id === "vScan") iniciarCamara(); else detenerCamara();
+}
+
+function vibrar(ms) { try { navigator.vibrate?.(ms); } catch {} }
+let audio;
+function pitido(frec = 880, dur = 0.12) {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = frec; o.connect(g); g.connect(audio.destination);
+    g.gain.setValueAtTime(0.15, audio.currentTime);
+    o.start(); o.stop(audio.currentTime + dur);
+  } catch {}
+}
+
+// Pantalla siempre encendida mientras se usa
+async function pedirWakeLock() {
+  try { await navigator.wakeLock?.request("screen"); } catch {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pedirWakeLock(); });
+
+// ─── Quién arma ─────────────────────────────────────────────────────────────
+function pintarQuien() { $("btnQuien").textContent = quien ? `Arma: ${quien}` : "¿Quién arma?"; }
+$("btnQuien").onclick = () => { $("inpQuien").value = quien; mostrar("vQuien"); $("inpQuien").focus(); };
+$("formQuien").onsubmit = (e) => {
+  e.preventDefault();
+  const v = $("inpQuien").value.trim();
+  if (!v) return;
+  quien = v;
+  try { localStorage.setItem(QUIEN_KEY, v); } catch {}
+  pintarQuien();
+  mostrar("vScan");
+};
+
+// ─── Cámara y QR ────────────────────────────────────────────────────────────
+let stream = null, loopId = null, detector = null, leyendo = false;
+const canvas = document.createElement("canvas");
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+function mensajeCamara(txt, error = false) {
+  $("camMsg").hidden = !txt;
+  $("camMsg").textContent = txt || "";
+  $("camMsg").classList.toggle("error", error);
+}
+
+async function iniciarCamara() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    mensajeCamara("Este navegador no permite usar la cámara. Escribí el número de venta.", true);
+    return;
+  }
+  if (stream) return;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
+    const v = $("video");
+    v.srcObject = stream;
+    await v.play();
+    $("btnCamara").hidden = true;
+    if ("BarcodeDetector" in window) {
+      try { detector = new BarcodeDetector({ formats: ["qr_code"] }); } catch { detector = null; }
+    }
+    leyendo = false;
+    loopId = setInterval(leerCuadro, 180);
+  } catch (err) {
+    stream = null;
+    $("btnCamara").hidden = false;
+    mensajeCamara("No se pudo abrir la cámara. Dale permiso al navegador o escribí el número de venta.", true);
+  }
+}
+
+function detenerCamara() {
+  clearInterval(loopId); loopId = null;
+  if (stream) { for (const t of stream.getTracks()) t.stop(); stream = null; }
+}
+
+async function leerCuadro() {
+  const v = $("video");
+  if (leyendo || !v.videoWidth) return;
+  leyendo = true;
+  try {
+    let texto = null;
+    if (detector) {
+      const r = await detector.detect(v);
+      texto = r[0]?.rawValue || null;
+    } else if (window.jsQR) {
+      // Se lee solo el centro de la imagen (donde está la mira), achicado para que sea rápido.
+      const lado = Math.min(v.videoWidth, v.videoHeight) * 0.8;
+      const escala = Math.min(1, 640 / lado);
+      canvas.width = canvas.height = Math.round(lado * escala);
+      ctx.drawImage(v, (v.videoWidth - lado) / 2, (v.videoHeight - lado) / 2, lado, lado, 0, 0, canvas.width, canvas.height);
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      texto = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" })?.data || null;
+    }
+    if (texto) {
+      pitido(); vibrar(60);
+      await buscar(texto);
+      return; // buscar() cambia de pantalla y apaga la cámara
+    }
+  } catch {}
+  leyendo = false;
+}
+
+$("btnCamara").onclick = () => iniciarCamara();
+$("formManual").onsubmit = (e) => {
+  e.preventDefault();
+  const v = $("inpNumero").value.trim();
+  if (v) buscar(v);
+};
+
+// ─── Buscar el pedido ───────────────────────────────────────────────────────
+function panel(html) { $("vPanel").innerHTML = html; mostrar("vPanel"); }
+
+async function buscar(codigo) {
+  codigoLeido = codigo;
+  mensajeCamara("");
+  panel(`<div class="bar"><b>Buscando…</b></div><div class="cargando">Buscando el pedido</div>`);
+  try {
+    const r = await armadoFetch("/buscar", { codigo });
+    if (!r.pedidos.length) return noEncontrado(r.motivo || "No encontré el pedido.");
+    if (r.pedidos.length === 1) return resumenInicial(r.pedidos[0]);
+    elegirPedido(r.pedidos);
+  } catch (err) {
+    console.error(err);
+    noEncontrado("No se pudo buscar el pedido. Revisá la conexión y probá de nuevo.");
+  }
+}
+
+function noEncontrado(motivo) {
+  pitido(220, 0.25); vibrar([80, 60, 80]);
+  $("inpNumero").value = "";
+  mostrar("vScan");
+  mensajeCamara(motivo, true);
+}
+
+const nombreTienda = (t) => (t === "lavan" ? "Casa Laván" : "Pret a Home");
+const unidades = (items) => items.reduce((s, i) => s + i.cantidad, 0);
+const fotoHTML = (src) => src ? `<img src="${esc(src)}" alt="" loading="lazy">` : `<div class="sinfoto"></div>`;
+
+function elegirPedido(pedidos) {
+  panel(`
+    <div class="bar"><b>¿Cuál es?</b><small>Hay ${pedidos.length} pedidos con ese número</small></div>
+    <div class="scroll"><div class="lista">
+      ${pedidos.map((p, i) => `
+        <button class="fila" type="button" data-i="${i}">
+          ${fotoHTML(p.items[0]?.imagen)}
+          <div class="t">${nombreTienda(p.tienda)} · #${esc(p.pedido)}<small>${esc(p.envio_tipo || "")} · ${unidades(p.items)} unidades</small></div>
+          <span class="q">›</span>
+        </button>`).join("")}
+    </div></div>
+    <div class="pie"><button class="cta ghost" type="button" id="btnVolverScan">Volver a escanear</button></div>`);
+  for (const b of $("vPanel").querySelectorAll("[data-i]")) b.onclick = () => resumenInicial(pedidos[+b.dataset.i]);
+  $("btnVolverScan").onclick = () => mostrar("vScan");
+}
+
+function avisosHTML(avisos) {
+  return avisos.length ? `<div class="avisos">${avisos.map((a) => `<div class="aviso ${a.nivel}">${esc(a.texto)}</div>`).join("")}</div>` : "";
+}
+
+function resumenInicial(p) {
+  pedido = p;
+  const hayRojo = p.avisos.some((a) => a.nivel === "rojo");
+  if (hayRojo) { pitido(220, 0.35); vibrar([120, 80, 120]); }
+  const u = unidades(p.items);
+  panel(`
+    <div class="bar"><b>Pedido encontrado</b><small>${esc(p.envio_tipo || "")}</small></div>
+    <div class="scroll">
+      <div class="cabecera">
+        <span class="tienda ${p.tienda}">${nombreTienda(p.tienda)}</span>
+        <h1>#${esc(p.pedido)}</h1>
+        <p>${p.items.length} producto${p.items.length === 1 ? "" : "s"} · ${u} unidad${u === 1 ? "" : "es"}</p>
+      </div>
+      ${avisosHTML(p.avisos)}
+      <div class="lista">
+        ${p.items.map((i) => `
+          <div class="fila">${fotoHTML(i.imagen)}
+            <div class="t">${esc(i.nombre)}<small>${esc(i.variante.join(" · "))}</small></div>
+            <span class="q">×${i.cantidad}</span></div>`).join("")}
+      </div>
+    </div>
+    <div class="pie">
+      <button class="cta ${hayRojo ? "no" : ""}" type="button" id="btnEmpezar">${hayRojo ? "Armar igual" : "Empezar a armar"}</button>
+      <button class="cta ghost" type="button" id="btnVolverScan">Volver a escanear</button>
+    </div>`);
+  $("btnEmpezar").onclick = empezar;
+  $("btnVolverScan").onclick = () => mostrar("vScan");
+}
+
+// ─── Tarjetas ───────────────────────────────────────────────────────────────
+function empezar() {
+  inicio = new Date().toISOString();
+  lineas = pedido.items.map((i) => ({ ...i, estado: null, confirmado_at: null }));
+  cola = lineas.map((_, i) => i);
+  $("cTitulo").textContent = `#${pedido.pedido}`;
+  mostrar("vCartas");
+  pintarCarta();
+}
+
+function pintarDots(actual) {
+  $("cDots").innerHTML = lineas.map((l, i) =>
+    `<i class="${i === actual ? "now" : l.estado === "ok" ? "ok" : l.estado === "no_hay" ? "no" : l.estado === "buscando" ? "busca" : ""}"></i>`).join("");
+}
+
+function pintarCarta() {
+  if (!cola.length) return resultado();
+  const idx = cola[0];
+  const l = lineas[idx];
+  const hechos = lineas.filter((x) => x.estado === "ok" || x.estado === "no_hay").length;
+  $("cPaso").textContent = l.estado === "buscando" ? "Lo estabas buscando" : `Producto ${hechos + 1} de ${lineas.length}`;
+  pintarDots(idx);
+
+  // Aviso cuando el pedido lleva el mismo producto en otra variante
+  const hermanos = lineas.filter((x) => x.grupo === l.grupo);
+  if (hermanos.length > 1 && l.variante.length) {
+    $("parecido").hidden = false;
+    $("parecido").textContent = `Este pedido lleva ${hermanos.length} variantes de este producto. Fijate que sea ${l.variante.join(" · ").toUpperCase()}.`;
+  } else {
+    $("parecido").hidden = true;
+  }
+
+  $("deck").innerHTML = `
+    <div class="card" id="carta">
+      <div class="stamp ok" id="sOk">LO TENGO</div>
+      <div class="stamp no" id="sNo">NO LO TENGO</div>
+      <div class="photo">${l.imagen ? `<img src="${esc(l.imagen)}" alt="${esc(l.nombre)}" draggable="false">` : ""}
+        ${l.cantidad > 1 ? `<div class="qty"><span>LLEVA</span><strong>${l.cantidad}</strong></div>` : ""}</div>
+      <div class="info">
+        <div class="nombre">${esc(l.nombre)}</div>
+        ${l.variante.length ? `<div class="chips">${l.variante.map((v) => `<span class="chip">${esc(v)}</span>`).join("")}</div>` : ""}
+        ${l.sku ? `<div class="sku">${esc(l.sku)}</div>` : ""}
+      </div>
+    </div>`;
+  activarArrastre($("carta"));
+}
+
+function activarArrastre(card) {
+  let x0 = null, dx = 0;
+  const umbral = () => Math.min(110, window.innerWidth * 0.25);
+  const mover = () => {
+    card.style.transform = `translateX(${dx}px) rotate(${dx / 18}deg)`;
+    $("sOk").style.opacity = Math.max(0, Math.min(1, dx / umbral()));
+    $("sNo").style.opacity = Math.max(0, Math.min(1, -dx / umbral()));
+  };
+  card.addEventListener("pointerdown", (e) => { x0 = e.clientX; dx = 0; card.setPointerCapture(e.pointerId); card.classList.remove("volando"); });
+  card.addEventListener("pointermove", (e) => { if (x0 === null) return; dx = e.clientX - x0; mover(); });
+  const soltar = () => {
+    if (x0 === null) return;
+    x0 = null;
+    if (dx > umbral()) return decidir("ok");
+    if (dx < -umbral()) return decidir("no");
+    card.classList.add("volando"); dx = 0; mover();
+  };
+  card.addEventListener("pointerup", soltar);
+  card.addEventListener("pointercancel", soltar);
+}
+
+function sacarCarta(direccion) {
+  const card = $("carta");
+  if (!card) return Promise.resolve();
+  card.classList.add("volando");
+  card.style.transform = `translateX(${direccion * window.innerWidth}px) rotate(${direccion * 20}deg)`;
+  card.style.opacity = "0";
+  return new Promise((r) => setTimeout(r, 220));
+}
+
+let decidiendo = false;
+async function decidir(que) {
+  const idx = cola[0];
+  if (idx === undefined || decidiendo) return;
+  if (que === "ok") {
+    decidiendo = true;
+    vibrar(40);
+    await sacarCarta(1);
+    lineas[idx].estado = "ok";
+    lineas[idx].confirmado_at = new Date().toISOString();
+    cola.shift();
+    decidiendo = false;
+    pintarCarta();
+  } else {
+    $("sNo").style.opacity = 1;
+    $("velo").hidden = false;
+  }
+}
+
+$("btnOk").onclick = () => decidir("ok");
+$("btnNo").onclick = () => decidir("no");
+
+for (const b of document.querySelectorAll("#velo [data-motivo]")) {
+  b.onclick = async () => {
+    $("velo").hidden = true;
+    const idx = cola[0];
+    const motivo = b.dataset.motivo;
+    if (motivo === "volver") return pintarCarta();
+    vibrar(80);
+    await sacarCarta(-1);
+    cola.shift();
+    if (motivo === "no_hay") {
+      lineas[idx].estado = "no_hay";
+      lineas[idx].confirmado_at = new Date().toISOString();
+    } else {
+      // Sigo buscando: pasa al final y vuelve a aparecer antes de cerrar
+      lineas[idx].estado = "buscando";
+      cola.push(idx);
+    }
+    pintarCarta();
+  };
+}
+$("velo").onclick = (e) => { if (e.target === $("velo")) { $("velo").hidden = true; pintarCarta(); } };
+
+// ─── Resultado ──────────────────────────────────────────────────────────────
+function resultado() {
+  const faltan = lineas.filter((l) => l.estado === "no_hay");
+  const ok = !faltan.length;
+  if (ok) { pitido(660, 0.1); setTimeout(() => pitido(990, 0.15), 120); vibrar([40, 40, 40]); }
+  else { pitido(220, 0.35); vibrar([120, 80, 120]); }
+  panel(`
+    <div class="bar"><b>#${esc(pedido.pedido)}</b><small>Revisión final</small></div>
+    <div class="scroll">
+      ${ok
+        ? `<div class="veredicto ok"><b>Pedido completo</b><span>${lineas.length} producto${lineas.length === 1 ? "" : "s"} · ${unidades(lineas)} unidades. Cerrá la caja.</span></div>`
+        : `<div class="veredicto no"><b>Falta${faltan.length === 1 ? "" : "n"} ${faltan.length} producto${faltan.length === 1 ? "" : "s"}. No cierres la caja.</b><span>Dejalo aparte: queda en "Pedidos con faltante".</span></div>`}
+      ${avisosHTML(pedido.avisos.filter((a) => a.nivel === "rojo"))}
+      <div class="lista">
+        ${lineas.map((l) => `
+          <div class="fila">${fotoHTML(l.imagen)}
+            <div class="t">${esc(l.nombre)}${l.cantidad > 1 ? ` ×${l.cantidad}` : ""}
+              <small class="${l.estado === "no_hay" ? "why" : ""}">${l.estado === "no_hay" ? "No hay en el depósito" : esc(l.variante.join(" · "))}</small></div>
+            <span class="mark ${l.estado === "ok" ? "ok" : "no"}">${l.estado === "ok" ? "✓" : "✕"}</span></div>`).join("")}
+      </div>
+      <div class="cabecera" id="guardando"><p>Guardando…</p></div>
+    </div>
+    <div class="pie">
+      <button class="cta ${ok ? "ok" : ""}" type="button" id="btnSiguiente" disabled>Escanear el siguiente pedido</button>
+      ${ok ? "" : `<button class="cta ghost" type="button" id="btnRevisar">Volver a revisar lo que falta</button>`}
+    </div>`);
+  $("btnSiguiente").onclick = () => mostrar("vScan");
+  if (!ok) $("btnRevisar").onclick = () => {
+    for (const l of lineas) if (l.estado === "no_hay") { l.estado = null; l.confirmado_at = null; }
+    cola = lineas.map((l, i) => (l.estado === "ok" ? -1 : i)).filter((i) => i >= 0);
+    mostrar("vCartas");
+    pintarCarta();
+  };
+  guardar();
+}
+
+async function guardar() {
+  const estado = $("guardando");
+  try {
+    await armadoFetch("/controles", {
+      canal: pedido.canal, tienda: pedido.tienda, pedido: pedido.pedido, envio: pedido.envio,
+      codigo_leido: codigoLeido, armado_por: quien, inicio_at: inicio,
+      items: lineas.map((l) => ({ sku: l.sku, nombre: l.nombre, variante: l.variante, cantidad: l.cantidad, estado: l.estado, confirmado_at: l.confirmado_at })),
+    });
+    estado.innerHTML = `<p>Guardado${quien ? ` · armó ${esc(quien)}` : ""}.</p>`;
+    $("btnSiguiente").disabled = false;
+  } catch (err) {
+    console.error(err);
+    estado.innerHTML = `<div class="aviso rojo">No se pudo guardar el control. Revisá la conexión.</div>
+      <button class="cta ghost" type="button" id="btnReintentar" style="margin-top:8px">Reintentar</button>`;
+    $("btnReintentar").onclick = () => { estado.innerHTML = "<p>Guardando…</p>"; guardar(); };
+    $("btnSiguiente").disabled = false;
+    $("btnSiguiente").textContent = "Seguir sin guardar";
+  }
+}
+
+// ─── Pedidos con faltante ───────────────────────────────────────────────────
+async function verFaltantes() {
+  panel(`<div class="bar"><b>Con faltante</b></div><div class="cargando">Cargando</div>`);
+  try {
+    const { faltantes } = await armadoFetch("/faltantes");
+    panel(`
+      <div class="bar"><b>Con faltante</b><small>Últimos 14 días</small></div>
+      <div class="scroll">
+        ${faltantes.length ? `<div class="lista">${faltantes.map((c) => `
+          <div class="fila" style="grid-template-columns:1fr">
+            <div class="t">${nombreTienda(c.tienda)} · #${esc(c.pedido)}
+              <small>${fmtFechaHora(c.creado_at)}${c.armado_por ? ` · ${esc(c.armado_por)}` : ""}</small>
+              ${c.armado_items.map((i) => `<small class="why">Falta: ${esc(i.nombre)}${i.variante ? ` (${esc(i.variante)})` : ""}${i.cantidad > 1 ? ` ×${i.cantidad}` : ""}</small>`).join("")}
+            </div>
+          </div>`).join("")}</div>
+          <p class="vacio">Cuando llegue lo que falta, escaneá el pedido de nuevo y confirmalo completo: sale de esta lista.</p>`
+        : `<p class="vacio">No hay pedidos con faltante.</p>`}
+      </div>
+      <div class="pie"><button class="cta" type="button" id="btnVolverScan">Volver a escanear</button></div>`);
+  } catch (err) {
+    console.error(err);
+    panel(`<div class="bar"><b>Con faltante</b></div><p class="vacio">No se pudo cargar la lista.</p>
+      <div class="pie"><button class="cta" type="button" id="btnVolverScan">Volver</button></div>`);
+  }
+  $("btnVolverScan").onclick = () => mostrar("vScan");
+}
+$("btnFaltantes").onclick = verFaltantes;
+
+// ─── Arranque ───────────────────────────────────────────────────────────────
+(async () => {
+  pintarQuien();
+  if (!getPassword() || !getUser()) await waitForLogin();
+  pedirWakeLock();
+  if (!quien) { mostrar("vQuien"); $("inpQuien").focus(); }
+  else mostrar("vScan");
+})();
+</script>
+</body>
+</html>
