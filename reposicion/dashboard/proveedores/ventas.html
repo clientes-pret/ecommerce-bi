@@ -157,6 +157,11 @@ const ddmmaa = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}`;
 function periodosSc(marcas) {
   const dias = [...new Set(marcas.flatMap((m) => Object.keys(fila[`${m}_${sc.canal}`] || {})))].filter((d) => d <= ref).sort().reverse();
   if (sc.gran === 'dia') return dias.map((d) => ({ et: ddmmaa(d), dias: [d] }));
+  if (sc.gran === 'mes') {
+    const mm = {}; for (const d of dias) (mm[primeroMes(d)] ??= []).push(d);
+    // Solo se cargan ~10 meses de historia: el más viejo puede venir cortado, y el último está en curso.
+    return Object.keys(mm).sort().reverse().map((p) => ({ et: `${MESN[+p.slice(5, 7) - 1]} ${p.slice(0, 4)}${p === primeroMes(ref) ? ' (en curso)' : p < desde ? ' (parcial)' : ''}`, dias: mm[p] }));
+  }
   const sem = {}; for (const d of dias) (sem[lunes(d)] ??= []).push(d);
   return Object.keys(sem).sort().reverse().map((l) => ({ et: `${ddmmaa(l)} al ${ddmmaa(masDias(l, 6))}`, dias: sem[l] }));
 }
@@ -217,11 +222,11 @@ function pintar() {
     <tbody>${filasEval}</tbody></table></div></section>
   <section class="card tabla"><div class="cab"><div><h2>Último día · ${ddmmaa(ref)}</h2><span class="muted">${nombreMarca}, por canal. Rentabilidad s/ads = neta − costo de productos − envío (en ML el envío ya viene dentro de la neta)</span></div></div>
     <div class="scroll"><table style="min-width:1000px"><thead>${cabSc('tn', 'Canal', true)}</thead><tbody>${filaUltimo}</tbody></table></div></section>
-  <section class="card tabla"><div class="cab"><div><h2>Scorecard por canal</h2><span class="muted">${nombreMarca} · por día o por semana (lunes a domingo)</span></div>
-      <div class="row wrapRow" style="gap:8px">${segSc('canal', [['tn', 'Tienda Nube'], ['ml', 'Mercado Libre']])}${segSc('gran', [['dia', 'Por día'], ['semana', 'Por semana']])}</div></div>
-    <div class="scroll"><table style="min-width:1100px"><thead>${cabSc(sc.canal, sc.gran === 'dia' ? 'Fecha' : 'Semana')}</thead><tbody>${filasSc || `<tr><td colspan="11" class="muted">Sin datos todavía.</td></tr>`}</tbody></table></div>
+  <section class="card tabla"><div class="cab"><div><h2>Scorecard por canal</h2><span class="muted">${nombreMarca} · por día, por semana (lunes a domingo) o por mes</span></div>
+      <div class="row wrapRow" style="gap:8px">${segSc('canal', [['tn', 'Tienda Nube'], ['ml', 'Mercado Libre']])}${segSc('gran', [['dia', 'Por día'], ['semana', 'Por semana'], ['mes', 'Por mes']])}</div></div>
+    <div class="scroll"><table style="min-width:1100px"><thead>${cabSc(sc.canal, { dia: 'Fecha', semana: 'Semana', mes: 'Mes' }[sc.gran])}</thead><tbody>${filasSc || `<tr><td colspan="11" class="muted">Sin datos todavía.</td></tr>`}</tbody></table></div>
     <div class="row between" style="padding:12px 24px 4px"><button class="btn sm" type="button" id="scMas" ${sc.pag <= 0 ? 'disabled' : ''}>← Más recientes</button>
-      <span class="small muted">Página ${sc.pag + 1} de ${paginas} · ${periodos.length} ${sc.gran === 'dia' ? 'días' : 'semanas'}</span>
+      <span class="small muted">Página ${sc.pag + 1} de ${paginas} · ${periodos.length} ${{ dia: 'días', semana: 'semanas', mes: 'meses' }[sc.gran]}</span>
       <button class="btn sm" type="button" id="scMenos" ${sc.pag >= paginas - 1 ? 'disabled' : ''}>Más antiguos →</button></div></section>
   <div class="row between wrapRow" style="align-items:baseline;margin-top:28px"><h2 style="margin:0">Inversión publicitaria · ${MESN[+ref.slice(5, 7) - 1]} ${ref.slice(0, 4)}</h2><span class="muted small">${nombreMarca}</span></div>
   <div class="centro-comando" style="margin-top:12px">${tarjetasAds}</div>
