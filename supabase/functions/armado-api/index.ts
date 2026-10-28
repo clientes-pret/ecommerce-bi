@@ -95,6 +95,7 @@ type Pedido = {
 
 type Codigo =
   | { tipo: "ml_envio"; envio: string; sender?: string }
+  | { tipo: "ml_venta"; venta: string }
   | { tipo: "zeta"; token: string }
   | { tipo: "seguimiento"; ref: string }
   | { tipo: "numero"; ref: string };
@@ -117,7 +118,9 @@ function interpretarCodigo(raw: string): Codigo | null {
 
   const limpio = txt.replace(/^#/, "").replace(/\s+/g, "");
   if (/^\d+$/.test(limpio)) {
-    // Los envíos de ML tienen 11 dígitos; los números de venta de TN, hasta 6.
+    // Ventas de ML (orden o carrito): 16 dígitos que empiezan con 2000, impresas como "Venta:" en la etiqueta.
+    // Envíos de ML: 11 dígitos (el número bajo el código de barras). Números de venta de TN: hasta 6.
+    if (limpio.length >= 15 && limpio.startsWith("2000")) return { tipo: "ml_venta", venta: limpio };
     if (limpio.length >= 10) return { tipo: "ml_envio", envio: limpio };
     return { tipo: "numero", ref: limpio };
   }
@@ -280,16 +283,32 @@ async function mlPedidoPorEnvio(envio: string, sender?: string): Promise<Pedido 
     } else if (estado === "shipped" || estado === "delivered") {
       avisos.push({ nivel: "amarillo", texto: "Mercado Libre ya lo figura como enviado." });
     }
-    const ordenes = [...new Set(lineas.map((l) => String(l.order_id)).filter(Boolean))];
+    // Se muestra el número de venta que imprime la etiqueta: el del carrito (pack) si lo hay, si no el de la orden.
+    const ordenIds = [...new Set(lineas.map((l) => String(l.order_id)).filter(Boolean))];
+    const ordenes = [...new Set(await Promise.all(ordenIds.map(async (id) => {
+      const o = await mlGet(tienda, `/orders/${id}`);
+      return String(o.body?.pack_id ?? id);
+    })))];
     return {
       canal: "ml",
       tienda,
       pedido: ordenes.join(", ") || envio,
       envio,
-      envio_tipo: envioRes.body?.logistic_type === "self_service" ? "Mercado Libre Flex" : "Mercado Libre",
+      envio_tipo: `Mercado Libre ${LOGISTICA_ML[envioRes.body?.logistic_type] ?? ""}`.trim(),
       avisos,
       items,
     };
+  }
+  return null;
+}
+
+/** Número de venta de ML (orden suelta o carrito) → su envío. */
+async function mlEnvioDeVenta(venta: string): Promise<string | null> {
+  for (const tienda of TIENDAS.filter((t) => CRED.ml?.[t])) {
+    const orden = await mlGet(tienda, `/orders/${venta}`);
+    if (orden.status === 200 && orden.body?.shipping?.id) return String(orden.body.shipping.id);
+    const pack = await mlGet(tienda, `/packs/${venta}`);
+    if (pack.status === 200 && pack.body?.shipment?.id) return String(pack.body.shipment.id);
   }
   return null;
 }
@@ -329,10 +348,11 @@ async function postBuscar(req: Request) {
   let pedidos: Pedido[] = [];
   let motivo = "";
 
-  if (c.tipo === "ml_envio") {
-    const p = await mlPedidoPorEnvio(c.envio, c.sender);
+  if (c.tipo === "ml_envio" || c.tipo === "ml_venta") {
+    const envio = c.tipo === "ml_envio" ? c.envio : await mlEnvioDeVenta(c.venta);
+    const p = envio ? await mlPedidoPorEnvio(envio, c.tipo === "ml_envio" ? c.sender : undefined) : null;
     if (p) pedidos = [p];
-    else motivo = "Mercado Libre no encontró ese envío.";
+    else motivo = c.tipo === "ml_venta" ? "Mercado Libre no encontró esa venta." : "Mercado Libre no encontró ese envío.";
   } else {
     let ref = c.tipo === "zeta" ? "" : c.ref;
     if (c.tipo === "zeta") {
