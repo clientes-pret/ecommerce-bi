@@ -108,6 +108,8 @@ function interpretarCodigo(raw: string): Codigo | null {
     try {
       const o = JSON.parse(txt);
       if (o.id && o.sender_id) return { tipo: "ml_envio", envio: String(o.id), sender: String(o.sender_id) };
+      // Colecta: {"id": envío, "t": "lm"}, sin la cuenta → se prueban las dos
+      if (o.id && /^\d{10,}$/.test(String(o.id))) return { tipo: "ml_envio", envio: String(o.id) };
       if (o.did) return { tipo: "zeta", token: `${o.did}${ZETA_TOKEN_SUFIJO}` };
       if (o.internalID) return { tipo: "seguimiento", ref: String(o.internalID) };
     } catch { /* no era JSON: sigue abajo */ }
