@@ -32,7 +32,10 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
+// La gente del depósito entra con su propia contraseña (secret ARMADO_PASSWORD) y su nombre;
+// la del tablero (APP_SHARED_PASSWORD) también sirve, para el dueño.
 const APP_PASSWORD = Deno.env.get("APP_SHARED_PASSWORD") ?? "";
+const DEPOSITO_PASSWORD = Deno.env.get("ARMADO_PASSWORD") ?? "";
 
 type Tienda = "pret" | "lavan";
 const TIENDAS: Tienda[] = ["pret", "lavan"];
@@ -62,8 +65,9 @@ function json(body: unknown, status = 200) {
 }
 
 function checkPassword(req: Request): boolean {
-  if (!APP_PASSWORD) return true;
-  return req.headers.get("x-app-password") === APP_PASSWORD;
+  if (!APP_PASSWORD && !DEPOSITO_PASSWORD) return true;
+  const p = req.headers.get("x-app-password");
+  return !!p && (p === APP_PASSWORD || p === DEPOSITO_PASSWORD);
 }
 
 // ─── Tipos de respuesta ─────────────────────────────────────────────────────
@@ -617,6 +621,7 @@ Deno.serve(async (req) => {
   const path = url.pathname.replace(/^\/armado-api/, "") || "/";
 
   try {
+    if (req.method === "GET" && path === "/ingresar") return json({ ok: true }); // solo valida la contraseña
     if (req.method === "POST" && path === "/buscar") return await postBuscar(req);
     if (req.method === "POST" && path === "/controles") return await postControl(req);
     if (req.method === "GET" && path === "/faltantes") return await getFaltantes();

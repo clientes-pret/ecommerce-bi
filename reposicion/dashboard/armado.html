@@ -256,13 +256,15 @@
   </div>
 </section>
 
-<!-- Quién arma -->
+<!-- Ingreso: nombre + contraseña del depósito -->
 <section class="vista" id="vQuien" hidden>
-  <div class="bar"><b>¿Quién arma?</b></div>
-  <form class="quien" id="formQuien">
-    <p style="margin:0;color:var(--soft)">Tu nombre queda guardado en cada pedido que revisás.</p>
+  <form class="quien" id="formQuien" style="flex:1;align-content:center">
+    <h1 style="margin:0;font-family:var(--display);font-size:40px;line-height:1">Depósito</h1>
+    <p style="margin:0;color:var(--soft)">Tu nombre queda guardado en cada pedido que revisás o buscás.</p>
     <input id="inpQuien" autocomplete="given-name" placeholder="Tu nombre" aria-label="Tu nombre">
-    <button class="cta" type="submit">Listo</button>
+    <input id="inpClave" type="password" autocomplete="current-password" placeholder="Contraseña" aria-label="Contraseña">
+    <div class="aviso rojo" id="loginError" hidden></div>
+    <button class="cta" type="submit" id="btnEntrar">Entrar</button>
   </form>
 </section>
 
@@ -307,32 +309,28 @@
 <script src="app.js"></script>
 <script>
 // ─── API ────────────────────────────────────────────────────────────────────
-// Misma contraseña que el tablero; la función es armado-api (al lado de reposicion-api).
+// Login propio del depósito (nombre + contraseña del depósito, distinta de la del tablero).
+// Queda guardado en el celular hasta tocar "Salir". La función es armado-api (al lado de reposicion-api).
 const ARMADO_API = new URLSearchParams(location.search).get("api")
   || window.REPOSICION_API_URL.replace("reposicion-api", "armado-api");
 
+const QUIEN_KEY = "armado_quien", CLAVE_KEY = "armado_clave";
+let quien = "", clave = "";
+try { quien = localStorage.getItem(QUIEN_KEY) || ""; clave = localStorage.getItem(CLAVE_KEY) || ""; } catch {}
+
 async function armadoFetch(path, body) {
-  if (!getPassword() || !getUser()) await waitForLogin();
-  const hacer = () => fetch(ARMADO_API + path, {
+  const r = await fetch(ARMADO_API + path, {
     method: body ? "POST" : "GET",
-    headers: { "Content-Type": "application/json", "X-App-Password": getPassword() },
+    headers: { "Content-Type": "application/json", "X-App-Password": clave },
     body: body ? JSON.stringify(body) : undefined,
   });
-  let r = await hacer();
   if (r.status === 401) {
-    sessionStorage.removeItem("repo_app_password");
-    showLoginError();
-    await waitForLogin();
-    r = await hacer();
+    salir("La contraseña cambió o no es correcta. Volvé a entrar.");
+    throw new Error("401");
   }
   if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
   return r.json();
 }
-
-// ─── Estado ─────────────────────────────────────────────────────────────────
-const QUIEN_KEY = "armado_quien";
-let quien = "";
-try { quien = localStorage.getItem(QUIEN_KEY) || ""; } catch {}
 
 let pedido = null;        // el que se está armando
 let codigoLeido = "";
@@ -367,23 +365,50 @@ async function pedirWakeLock() {
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pedirWakeLock(); });
 
-// ─── Quién arma ─────────────────────────────────────────────────────────────
+// ─── Ingreso ────────────────────────────────────────────────────────────────
 function pintarQuien() {
-  const txt = quien ? `Arma: ${quien}` : "¿Quién arma?";
+  const txt = quien ? `${quien} · Salir` : "";
   $("btnQuien").textContent = txt;
   $("btnQuien2").textContent = txt;
 }
-const cambiarQuien = () => { $("inpQuien").value = quien; mostrar("vQuien"); $("inpQuien").focus(); };
-$("btnQuien").onclick = cambiarQuien;
-$("btnQuien2").onclick = cambiarQuien;
-$("formQuien").onsubmit = (e) => {
+
+function salir(motivo = "") {
+  clave = "";
+  try { localStorage.removeItem(CLAVE_KEY); } catch {}
+  $("inpQuien").value = quien;
+  $("inpClave").value = "";
+  $("loginError").hidden = !motivo;
+  $("loginError").textContent = motivo;
+  mostrar("vQuien");
+  (quien ? $("inpClave") : $("inpQuien")).focus();
+}
+$("btnQuien").onclick = () => salir();
+$("btnQuien2").onclick = () => salir();
+
+$("formQuien").onsubmit = async (e) => {
   e.preventDefault();
-  const v = $("inpQuien").value.trim();
-  if (!v) return;
-  quien = v;
-  try { localStorage.setItem(QUIEN_KEY, v); } catch {}
-  pintarQuien();
-  mostrar("vInicio");
+  const nombre = $("inpQuien").value.trim();
+  const pass = $("inpClave").value;
+  if (!nombre || !pass) {
+    $("loginError").hidden = false;
+    $("loginError").textContent = !nombre ? "Escribí tu nombre." : "Escribí la contraseña.";
+    return;
+  }
+  $("btnEntrar").disabled = true;
+  try {
+    const r = await fetch(ARMADO_API + "/ingresar", { headers: { "X-App-Password": pass } });
+    if (r.status === 401) throw new Error("clave");
+    if (!r.ok) throw new Error("red");
+    quien = nombre; clave = pass;
+    try { localStorage.setItem(QUIEN_KEY, quien); localStorage.setItem(CLAVE_KEY, clave); } catch {}
+    $("loginError").hidden = true;
+    pintarQuien();
+    mostrar("vInicio");
+  } catch (err) {
+    $("loginError").hidden = false;
+    $("loginError").textContent = err.message === "clave" ? "Contraseña incorrecta." : "No se pudo conectar. Revisá la conexión.";
+  }
+  $("btnEntrar").disabled = false;
 };
 
 // ─── Qué vas a hacer hoy ────────────────────────────────────────────────────
@@ -1180,9 +1205,8 @@ function vistaFalta() {
 // ─── Arranque ───────────────────────────────────────────────────────────────
 (async () => {
   pintarQuien();
-  if (!getPassword() || !getUser()) await waitForLogin();
   pedirWakeLock();
-  if (!quien) { mostrar("vQuien"); $("inpQuien").focus(); }
+  if (!quien || !clave) salir();
   else mostrar("vInicio");
 })();
 </script>
