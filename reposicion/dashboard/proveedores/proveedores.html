@@ -23,7 +23,7 @@ let orden = 'saldo', dir = -1;
 const conSaldo = rows.filter((r) => r.saldo > 1);
 const olvidados = conSaldo.filter((r) => (r.dPago ?? 999) > 60);
 $('#app').innerHTML = `<div class="cabecera"><div><h1>Proveedores</h1><p>Cuánto le debés a cada uno · al ${fecha(H)}</p></div>
-  <div class="row wrapRow"><a class="btn" href="nuevo.html?tipo=comprobante">Cargar factura</a><a class="btn primary" href="nuevo.html?tipo=pago">Registrar pago</a></div></div>
+  <div class="row wrapRow"><a class="btn" href="nuevo.html?tipo=comprobante">Cargar factura</a><a class="btn" href="agenda.html?nuevo=1">Agendar pago</a><a class="btn primary" href="nuevo.html?tipo=pago">Registrar pago</a></div></div>
 <div class="centro-comando">
   <div class="cc-card"><div class="cc-label">Deuda total</div><div class="cc-valor num">${peso0(conSaldo.reduce((a, r) => a + r.saldo, 0))}</div><div class="cc-sub">${conSaldo.length} proveedores con saldo, de ${rows.filter((r) => r.activo).length} activos</div></div>
   <div class="cc-card ${olvidados.length ? 'alerta' : ''}"><div class="cc-label">Sin pagar hace +60 días</div><div class="cc-valor num">${peso0(olvidados.reduce((a, r) => a + r.saldo, 0))}</div><div class="cc-sub">${olvidados.length} proveedores con deuda</div></div>

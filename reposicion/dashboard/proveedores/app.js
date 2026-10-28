@@ -161,7 +161,7 @@ export function nav(perfil, activa) {
   el.setAttribute('aria-label', 'Panel de control');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Panel de control</div></div>' +
     it('admin.html', 'Inicio', 'inicio') + it('ventas.html', 'Ventas', 'ventas') +
-    '<div class="grupo">Gestión</div>' + it('proveedores.html', 'Proveedores', 'prov') + it('costos.html', 'Costos', 'costos') +
+    '<div class="grupo">Gestión</div>' + it('proveedores.html', 'Proveedores', 'prov') + it('agenda.html', 'Agenda de pagos', 'agenda', 'sub') + it('costos.html', 'Costos', 'costos') +
     [['software', 'Software'], ['sueldos', 'Sueldos'], ['servicios', 'Servicios'], ['publicidad', 'Publicidad']]
       .map(([k, t]) => it(`costos.html?rubro=${k}`, t, 'costos-' + k, 'sub')).join('') +
     it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +

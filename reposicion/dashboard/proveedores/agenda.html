@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agenda de pagos a proveedores · Panel de control</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=11">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Agenda de pagos a proveedores (cf_compromisos): cheques, e-cheqs y transferencias programadas, cada uno con la fecha
+// en que sale la plata; cuando se debita se marca pagado (o anulado). El Cashflow usa los pendientes para proyectar.
+// Los cheques emitidos se cargaron de la planilla "CASH FLOW PH". ?proveedor=ID filtra por proveedor; ?nuevo=1 abre el
+// formulario (con ese proveedor elegido): así se llega desde Proveedores y desde la ficha de cada proveedor.
+import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy, fecha as fFecha } from './app.js';
+import { MESN } from './analisis.js?v=5';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'agenda');
+
+const DAY = 864e5;
+const HOY = hoy();
+const masDias = (s, n) => new Date(Date.parse(s + 'T00:00:00Z') + n * DAY).toISOString().slice(0, 10);
+const lunes = (s) => { const dow = new Date(s + 'T00:00:00Z').getUTCDay(); return masDias(s, dow === 0 ? -6 : 1 - dow); };
+const dm = (s) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+const IMPUTACION = { mercaderia: 'Mercadería', prestamo: 'Préstamo', impuestos: 'Impuestos', alquiler: 'Alquiler', sueldos: 'Sueldos', servicios: 'Servicios', otro: 'Otro' };
+const MEDIO = { echeq: 'E-cheq', cheque: 'Cheque', transferencia: 'Transferencia', debito: 'Débito automático', efectivo: 'Efectivo', otro: 'Otro' };
+const opciones = (obj, sel) => Object.entries(obj).map(([k, t]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${t}</option>`).join('');
+
+let items = [], provs = [], filtro = 'pendiente', busca = '', editId = null, msg = '', formAbierto = qs('nuevo') === '1';
+let soloProv = qs('proveedor') ? Number(qs('proveedor')) : null;
+async function cargar() {
+  const out = [];
+  for (let i = 0; ; i += 1000) {
+    const { data, error } = await sb.from('cf_compromisos').select('*').order('fecha').order('id').range(i, i + 999);
+    if (error) throw error;
+    out.push(...data); if (data.length < 1000) break;
+  }
+  items = out.map((x) => ({ ...x, monto: Number(x.monto) }));
+}
+await Promise.all([cargar(), sb.from('cc_proveedores').select('id,nombre,activo').order('nombre').then(({ data }) => (provs = data || []))]);
+const nombreProv = (id) => provs.find((p) => p.id === id)?.nombre;
+
+function pintar() {
+  const base = soloProv ? items.filter((x) => x.proveedor_id === soloProv) : items;
+  const pend = base.filter((x) => x.estado === 'pendiente');
+  const suma = (xs) => xs.reduce((a, x) => a + x.monto, 0);
+  const finSemana = masDias(lunes(HOY), 6), en30 = masDias(HOY, 30);
+  const vencidos = pend.filter((x) => x.fecha < HOY), semana = pend.filter((x) => x.fecha >= HOY && x.fecha <= finSemana), prox30 = pend.filter((x) => x.fecha >= HOY && x.fecha <= en30);
+  const vis = base.filter((x) => (filtro === 'todos' || x.estado === filtro) && (!busca || (x.beneficiario + ' ' + (x.nota || '')).toLowerCase().includes(busca.toLowerCase())));
+  // Agrupado por semana (lunes a domingo); los pendientes vencidos van primero, aparte.
+  const grupos = new Map();
+  for (const x of vis) {
+    const k = x.estado === 'pendiente' && x.fecha < HOY ? 'vencidos' : lunes(x.fecha);
+    if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(x);
+  }
+  const titulo = (k) => k === 'vencidos' ? 'Con fecha pasada: confirmá si ya se debitaron'
+    : `Semana del ${dm(k)} al ${dm(masDias(k, 6))}${k === lunes(HOY) ? ' · esta semana' : ''}`;
+  const fila = (x) => {
+    const acciones = x.estado === 'pendiente'
+      ? `<button class="btn sm" data-pagado="${x.id}">✓ Pagado</button> <button class="btn sm danger" data-anular="${x.id}">Anular</button> <button class="btn sm" data-editar="${x.id}">Editar</button>`
+      : `<span class="chip ${x.estado === 'pagado' ? 'ok' : ''}">${x.estado === 'pagado' ? 'Pagado' : 'Anulado'}${x.estado_fecha ? ' el ' + dm(x.estado_fecha) : ''}</span> <button class="btn sm" data-reabrir="${x.id}">Volver a pendiente</button>`;
+    return `<tr><td class="num" style="white-space:nowrap">${DIAS[new Date(x.fecha + 'T00:00:00Z').getUTCDay()]} ${dm(x.fecha)}${x.fecha.slice(0, 4) !== HOY.slice(0, 4) ? '/' + x.fecha.slice(2, 4) : ''}</td>
+      <td>${x.proveedor_id ? `<a href="proveedor.html?id=${x.proveedor_id}"><b>${esc(x.beneficiario)}</b></a>` : `<b>${esc(x.beneficiario)}</b> <span class="chip" title="No está vinculado a un proveedor del panel: tocá Editar para elegirlo">sin vincular</span>`}${x.imputacion !== 'mercaderia' ? ` <span class="chip info">${IMPUTACION[x.imputacion] || x.imputacion}</span>` : ''}${x.nota ? `<div class="small muted">${esc(x.nota)}</div>` : ''}</td>
+      <td style="white-space:nowrap">${MEDIO[x.medio] || x.medio}${x.banco ? ' · ' + esc(x.banco) : ''}${x.cheque_nro ? ' · N° ' + esc(x.cheque_nro) : ''}</td>
+      <td class="r num"><b>${peso0(x.monto)}</b></td><td class="r" style="white-space:nowrap">${acciones}</td></tr>`;
+  };
+  const tabla = [...grupos.entries()].map(([k, xs]) => `<tr><th colspan="3" scope="rowgroup" style="padding-top:18px;${k === 'vencidos' ? 'color:var(--warn)' : ''}">${titulo(k)}</th>
+      <th class="r num" style="padding-top:18px">${peso0(suma(xs))}</th><th></th></tr>${xs.map(fila).join('')}`).join('');
+  const e = editId ? items.find((x) => x.id === editId) : null;
+  const seg = [['pendiente', 'Pendientes'], ['pagado', 'Pagados'], ['anulado', 'Anulados'], ['todos', 'Todos']]
+    .map(([k, t]) => `<button type="button" data-filtro="${k}" aria-pressed="${filtro === k}">${t}</button>`).join('');
+  // Próximos meses: lo agendado pendiente por mes.
+  const porMes = {}; for (const x of pend) { const m = x.fecha < HOY ? HOY.slice(0, 7) : x.fecha.slice(0, 7); porMes[m] = (porMes[m] || 0) + x.monto; }
+  const meses = Object.keys(porMes).sort().slice(0, 6);
+
+  $('#app').innerHTML = `<p class="small"><a href="proveedores.html">← Proveedores</a></p>
+  <div class="cabecera"><div><h1>Agenda de pagos${soloProv ? ' · ' + esc(nombreProv(soloProv) || '') : ' a proveedores'}</h1><p>Cheques, e-cheqs y transferencias programadas · lo pendiente entra en la proyección del Cashflow${soloProv ? ` · <a href="#" id="todos">ver todos los proveedores</a>` : ''}</p></div>
+    <button class="btn primary" id="nuevo">＋ Agendar pago</button></div>
+  <div class="centro-comando">
+    <div class="cc-card ${semana.length ? 'destacada' : ''}"><div class="cc-label">Sale esta semana (hasta el ${dm(finSemana)})</div><div class="cc-valor num">${peso0(suma(semana))}</div><div class="cc-sub">${semana.length} pagos</div></div>
+    <div class="cc-card"><div class="cc-label">Próximos 30 días</div><div class="cc-valor num">${peso0(suma(prox30))}</div><div class="cc-sub">${prox30.length} pagos, hasta el ${dm(en30)}</div></div>
+    <div class="cc-card"><div class="cc-label">Total pendiente</div><div class="cc-valor num">${peso0(suma(pend))}</div><div class="cc-sub">${pend.length} pagos${pend.length ? `, el último el ${fFecha(pend[pend.length - 1].fecha)}` : ''}</div></div>
+    <div class="cc-card ${vencidos.length ? 'alerta' : ''}"><div class="cc-label">Con fecha pasada sin confirmar</div><div class="cc-valor num">${peso0(suma(vencidos))}</div><div class="cc-sub">${vencidos.length ? `${vencidos.length} pagos: marcalos como pagados o anulados` : 'nada pendiente'}</div></div>
+  </div>
+  ${meses.length ? `<section class="card tabla"><div class="cab"><div><h2>Por mes</h2><span class="muted">Pendiente de debitar (lo de fecha pasada cuenta en el mes en curso)</span></div></div>
+    <div class="scroll"><table><thead><tr>${meses.map((m) => `<th scope="col" class="r">${MESN[+m.slice(5) - 1]} ${m.slice(0, 4)}</th>`).join('')}</tr></thead><tbody><tr>${meses.map((m) => `<td class="r num"><b>${peso0(porMes[m])}</b></td>`).join('')}</tr></tbody></table></div></section>` : ''}
+  <section class="card" id="form" ${formAbierto || e ? '' : 'hidden'}><h2 style="margin-top:0">${e ? 'Editar pago' : 'Agendar un pago a un proveedor'}</h2>
+    ${e && !e.proveedor_id ? `<p class="cc-nota">En la planilla figura como "${esc(e.beneficiario)}": elegí a qué proveedor corresponde.</p>` : ''}
+    <div class="campos">
+      <div><label for="f_prov">Proveedor</label><select id="f_prov"><option value="">Elegí un proveedor</option>${provs.filter((p) => p.activo || p.id === (e?.proveedor_id ?? soloProv)).map((p) => `<option value="${p.id}" ${p.id === (e ? e.proveedor_id : soloProv) ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select></div>
+      <div><label for="f_fecha">Fecha en que sale la plata</label><input type="date" id="f_fecha" value="${e?.fecha || HOY}"></div>
+      <div><label for="f_monto">Importe</label><input id="f_monto" inputmode="decimal" placeholder="1.250.000,00" value="${e ? String(e.monto).replace('.', ',') : ''}"></div>
+      <div><label for="f_medio">Medio</label><select id="f_medio">${opciones(MEDIO, e?.medio || 'echeq')}</select></div>
+      <div><label for="f_banco">Banco (opcional)</label><input id="f_banco" value="${esc(e?.banco || '')}"></div>
+      <div><label for="f_nro">N° de cheque (opcional)</label><input id="f_nro" value="${esc(e?.cheque_nro || '')}"></div>
+      ${e ? '' : `<div><label for="f_rep">Repetir</label><select id="f_rep"><option value="1">Una sola vez</option>${[2, 3, 4, 6, 9, 12, 18, 24].map((n) => `<option value="${n}">Todos los meses, ${n} veces</option>`).join('')}</select></div>`}
+      <div class="ancho"><label for="f_nota">Nota (opcional)</label><input id="f_nota" value="${esc(e?.nota || '')}"></div>
+    </div>
+    <div class="pie"><p class="err">${esc(msg)}</p><button class="btn" id="cancelar">Cancelar</button><button class="btn primary" id="guardar">${e ? 'Guardar cambios' : 'Agendar'}</button></div>
+  </section>
+  <section class="card tabla"><div class="cab"><div class="seg" role="group" aria-label="Estado">${seg}</div>
+      <div style="min-width:220px"><label for="busca" style="position:absolute;left:-9999px">Buscar</label><input id="busca" placeholder="Buscar proveedor o nota" value="${esc(busca)}"></div></div>
+    <div class="scroll"><table style="min-width:860px"><thead><tr><th scope="col">Fecha</th><th scope="col">Proveedor</th><th scope="col">Medio</th><th scope="col" class="r">Importe</th><th scope="col" class="r"><span style="position:absolute;left:-9999px">Acciones</span></th></tr></thead>
+    <tbody>${tabla || '<tr><td colspan="5" class="muted">No hay pagos para mostrar.</td></tr>'}</tbody></table></div></section>
+  <p class="muted small" style="line-height:1.6">Los cheques y e-cheqs emitidos se cargaron de la planilla "CASH FLOW PH" (hoja "Cheques x Proveedor"). Marcar un pago como pagado lo saca de la proyección del Cashflow; lo pagado de verdad se sigue registrando con "Registrar pago" en Proveedores. Los e-cheqs de préstamos que trae la planilla quedan con la marca "Préstamo" y en el Cashflow van en su propia línea.</p>`;
+
+  $$('[data-filtro]').forEach((b) => (b.onclick = () => { filtro = b.dataset.filtro; pintar(); }));
+  $('#busca').oninput = (ev) => { busca = ev.target.value; const pos = ev.target.selectionStart; pintar(); const i = $('#busca'); i.focus(); i.setSelectionRange(pos, pos); };
+  $('#nuevo').onclick = () => { formAbierto = true; editId = null; msg = ''; pintar(); $('#form').scrollIntoView({ behavior: 'smooth' }); $('#f_prov').focus(); };
+  const td = $('#todos'); if (td) td.onclick = (ev) => { ev.preventDefault(); soloProv = null; history.replaceState(null, '', 'agenda.html'); pintar(); };
+  $('#cancelar').onclick = () => { formAbierto = false; editId = null; msg = ''; pintar(); };
+  $('#guardar').onclick = guardar;
+  const cambiar = async (id, campos) => { const { error } = await sb.from('cf_compromisos').update(campos).eq('id', id); if (error) alert('No se pudo guardar: ' + error.message); await cargar(); pintar(); };
+  $$('[data-pagado]').forEach((b) => (b.onclick = () => cambiar(+b.dataset.pagado, { estado: 'pagado', estado_fecha: HOY })));
+  $$('[data-anular]').forEach((b) => (b.onclick = () => { if (confirm('¿Anular este pago? Sale de la agenda y de la proyección.')) cambiar(+b.dataset.anular, { estado: 'anulado', estado_fecha: HOY }); }));
+  $$('[data-reabrir]').forEach((b) => (b.onclick = () => cambiar(+b.dataset.reabrir, { estado: 'pendiente', estado_fecha: null })));
+  $$('[data-editar]').forEach((b) => (b.onclick = () => { editId = +b.dataset.editar; msg = ''; pintar(); $('#form').scrollIntoView({ behavior: 'smooth' }); }));
+}
+
+async function guardar() {
+  const v = (id) => ($('#' + id)?.value || '').trim();
+  const monto = parseMonto(v('f_monto')), f = v('f_fecha'), prov = provs.find((p) => p.id === Number(v('f_prov')));
+  if (!prov) { msg = 'Elegí el proveedor.'; return pintar(); }
+  if (!f) { msg = 'Falta la fecha.'; return pintar(); }
+  if (!Number.isFinite(monto) || monto <= 0) { msg = 'El importe tiene que ser un número mayor a cero.'; return pintar(); }
+  const previo = editId ? items.find((x) => x.id === editId) : null;
+  const base = { beneficiario: prov.nombre, proveedor_id: prov.id, imputacion: previo?.imputacion || 'mercaderia', medio: v('f_medio'),
+    banco: v('f_banco') || null, cheque_nro: v('f_nro') || null, monto, nota: v('f_nota') || null };
+  let error;
+  if (editId) ({ error } = await sb.from('cf_compromisos').update({ ...base, fecha: f }).eq('id', editId));
+  else {
+    // "Todos los meses, N veces": mismo día de cada mes (si el mes es más corto, el último día).
+    const n = +v('f_rep') || 1, [y, m, d] = f.split('-').map(Number);
+    const filas = Array.from({ length: n }, (_, i) => {
+      const mm = m - 1 + i, ult = new Date(Date.UTC(y, mm + 1, 0)).getUTCDate();
+      return { ...base, fecha: new Date(Date.UTC(y, mm, Math.min(d, ult))).toISOString().slice(0, 10) };
+    });
+    ({ error } = await sb.from('cf_compromisos').insert(filas));
+  }
+  if (error) { msg = 'No se pudo guardar: ' + error.message; return pintar(); }
+  formAbierto = false; editId = null; msg = '';
+  await cargar(); pintar();
+}
+pintar();
+</script>
+</body>
+</html>
