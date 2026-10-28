@@ -409,6 +409,206 @@ async function getFaltantes() {
   return json({ faltantes });
 }
 
+// ─── Búsqueda de productos ──────────────────────────────────────────────────
+// Lo pendiente de despachar desde el depósito, por línea de pedido:
+//   - Tiendanube: órdenes abiertas, pagas y sin empaquetar.
+//   - Mercado Libre: envíos listos para despachar que no son Full.
+// Lo que marca cada persona va a busqueda_marcas (una fila por SKU por día).
+
+type Linea = {
+  canal: "tn" | "ml";
+  tienda: Tienda;
+  pedido: string;
+  logistica: string | null;
+  sku: string;
+  nombre: string;
+  variante: string[];
+  cantidad: number;
+  imagen: string | null;
+  categoria: string | null;
+  marca: string | null;
+};
+
+const LOGISTICA_ML: Record<string, string> = {
+  self_service: "Flex",
+  cross_docking: "Colecta",
+  xd_drop_off: "Drop off",
+  drop_off: "Drop off",
+};
+
+function hoyAR(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+}
+
+async function enParalelo<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) {
+      const k = i++;
+      out[k] = await fn(items[k]);
+    }
+  }));
+  return out;
+}
+
+async function pendientesTN(tienda: Tienda): Promise<Linea[]> {
+  if (!CRED.tn?.[tienda]) return [];
+  const desde = new Date(Date.now() - 45 * 86400_000).toISOString();
+  const ordenes: Json[] = [];
+  for (let page = 1; page < 20; page++) {
+    const r: Json[] = await tnGet(tienda, "/orders", {
+      status: "open", payment_status: "paid", shipping_status: "unpacked",
+      created_at_min: desde, per_page: "200", page: String(page),
+    });
+    ordenes.push(...r);
+    if (r.length < 200) break;
+  }
+  return ordenes.flatMap((o) => (o.products ?? []).map((p: Json) => ({
+    canal: "tn" as const,
+    tienda,
+    pedido: String(o.number),
+    logistica: o.shipping_option ?? null,
+    sku: String(p.sku ?? ""),
+    nombre: String(p.name_without_variants || p.name || ""),
+    variante: (p.variant_values ?? []).map(String),
+    cantidad: Number(p.quantity) || 1,
+    imagen: p.image?.src ?? null,
+    categoria: null,
+    marca: null,
+  })));
+}
+
+async function pendientesML(tienda: Tienda): Promise<Linea[]> {
+  const c = CRED.ml?.[tienda];
+  if (!c) return [];
+  const ordenes: Json[] = [];
+  for (let offset = 0; offset < 1000; offset += 50) {
+    const r = await mlGet(tienda,
+      `/orders/search?seller=${c.user_id}&order.status=paid&shipping.status=ready_to_ship&sort=date_desc&limit=50&offset=${offset}`);
+    const res: Json[] = r.body?.results ?? [];
+    ordenes.push(...res);
+    if (res.length < 50) break;
+  }
+  // El filtro de logística no existe en la búsqueda de órdenes: se mira cada envío para sacar los de Full.
+  const envioIds = [...new Set(ordenes.map((o) => o.shipping?.id).filter(Boolean).map(String))];
+  const envios = new Map<string, Json>();
+  await enParalelo(envioIds, 12, async (id) => {
+    const r = await mlGet(tienda, `/shipments/${id}`);
+    if (r.body) envios.set(id, r.body);
+  });
+
+  const lineas: (Linea & { _item: string; _var: string | null })[] = [];
+  for (const o of ordenes) {
+    const e = envios.get(String(o.shipping?.id));
+    if (!e || e.status !== "ready_to_ship" || e.logistic_type === "fulfillment") continue;
+    for (const it of o.order_items ?? []) {
+      lineas.push({
+        canal: "ml",
+        tienda,
+        pedido: String(o.pack_id ?? o.id),
+        logistica: LOGISTICA_ML[e.logistic_type] ?? "Mercado Libre",
+        sku: String(it.item?.seller_sku ?? it.item?.seller_custom_field ?? ""),
+        nombre: String(it.item?.title ?? ""),
+        variante: (it.item?.variation_attributes ?? []).map((a: Json) => String(a.value_name)),
+        cantidad: Number(it.quantity) || 1,
+        imagen: null,
+        categoria: null,
+        marca: null,
+        _item: String(it.item?.id),
+        _var: it.item?.variation_id ? String(it.item.variation_id) : null,
+      });
+    }
+  }
+
+  // Fotos: de la variación si tiene, si no la primera de la publicación
+  const ids = [...new Set(lineas.map((l) => l._item))];
+  const pubs = new Map<string, Json>();
+  for (let i = 0; i < ids.length; i += 20) {
+    const r = await mlGet(tienda, `/items?ids=${ids.slice(i, i + 20).join(",")}&attributes=id,pictures,variations`);
+    for (const x of r.body ?? []) if (x.code === 200) pubs.set(String(x.body.id), x.body);
+  }
+  return lineas.map(({ _item, _var, ...l }) => {
+    const pub = pubs.get(_item);
+    const v = (pub?.variations ?? []).find((x: Json) => String(x.id) === _var);
+    const foto = (pub?.pictures ?? []).find((p: Json) => p.id === v?.picture_ids?.[0]) ?? pub?.pictures?.[0];
+    return { ...l, imagen: foto?.secure_url ?? null };
+  });
+}
+
+let cachePendientes: { at: number; lineas: Linea[] } | null = null;
+
+async function getPendientes(url: URL) {
+  const refrescar = url.searchParams.get("refrescar") === "1";
+  // Varias personas abren la búsqueda a la vez: se reusa lo calculado en el último minuto.
+  if (!cachePendientes || refrescar || Date.now() - cachePendientes.at > 60_000) {
+    const partes = await Promise.all([
+      ...TIENDAS.map((t) => pendientesTN(t)),
+      ...TIENDAS.map((t) => pendientesML(t)),
+    ]);
+    const lineas = partes.flat();
+
+    // Tipo de producto y marca (proveedor) del tablero de reposición
+    const skus = [...new Set(lineas.map((l) => l.sku).filter(Boolean))];
+    const info = new Map<string, Json>();
+    for (let i = 0; i < skus.length; i += 200) {
+      const { data, error } = await supabase.from("repo_productos")
+        .select("sku, nombre, categoria_auto, categoria_manual, proveedor_auto, proveedor_manual")
+        .in("sku", skus.slice(i, i + 200));
+      if (error) throw error;
+      for (const r of data ?? []) info.set(r.sku, r);
+    }
+    for (const l of lineas) {
+      const r = info.get(l.sku);
+      l.categoria = r?.categoria_manual || r?.categoria_auto || null;
+      l.marca = r?.proveedor_manual || r?.proveedor_auto || null;
+      if (r?.nombre && l.canal === "ml") l.nombre = r.nombre; // los títulos de ML son largos
+    }
+    cachePendientes = { at: Date.now(), lineas };
+  }
+  return json({ actualizado_at: new Date(cachePendientes.at).toISOString(), fecha: hoyAR(), lineas: cachePendientes.lineas });
+}
+
+/** Marcas del día y quién está buscando en qué. Si viene `por`, registra dónde está esa persona. */
+async function getEstado(url: URL) {
+  const por = url.searchParams.get("por");
+  if (por) {
+    await supabase.from("busqueda_presencia").upsert({
+      por: por.slice(0, 80),
+      categoria: url.searchParams.get("categoria") || null,
+      visto_at: new Date().toISOString(),
+    });
+  }
+  const [marcas, presencia] = await Promise.all([
+    supabase.from("busqueda_marcas").select("sku, estado, requeridas, encontradas, por, marcado_at").eq("fecha", hoyAR()),
+    supabase.from("busqueda_presencia").select("por, categoria")
+      .gte("visto_at", new Date(Date.now() - 120_000).toISOString()).not("categoria", "is", null),
+  ]);
+  if (marcas.error) throw marcas.error;
+  return json({ marcas: marcas.data ?? [], presencia: presencia.data ?? [] });
+}
+
+async function postMarcar(req: Request) {
+  const b = await req.json();
+  const sku = String(b.sku ?? "");
+  if (!sku) return json({ error: "Falta el SKU" }, 400);
+  if (b.estado === "borrar") {
+    const { error } = await supabase.from("busqueda_marcas").delete().eq("fecha", hoyAR()).eq("sku", sku);
+    if (error) throw error;
+    return json({ ok: true });
+  }
+  if (!["ok", "parcial", "no_hay"].includes(b.estado)) return json({ error: "Estado inválido" }, 400);
+  const requeridas = Math.max(0, Number(b.requeridas) || 0);
+  const encontradas = Math.max(0, Math.min(requeridas, Number(b.encontradas) || 0));
+  const { error } = await supabase.from("busqueda_marcas").upsert({
+    fecha: hoyAR(), sku, estado: b.estado, requeridas, encontradas,
+    por: b.por ? String(b.por).slice(0, 80) : null,
+    marcado_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+  return json({ ok: true });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
   if (!checkPassword(req)) return json({ error: "Contraseña inválida" }, 401);
@@ -420,6 +620,9 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && path === "/buscar") return await postBuscar(req);
     if (req.method === "POST" && path === "/controles") return await postControl(req);
     if (req.method === "GET" && path === "/faltantes") return await getFaltantes();
+    if (req.method === "GET" && path === "/busqueda/pendientes") return await getPendientes(url);
+    if (req.method === "GET" && path === "/busqueda/estado") return await getEstado(url);
+    if (req.method === "POST" && path === "/busqueda/marcar") return await postMarcar(req);
     return json({ error: "Ruta no encontrada" }, 404);
   } catch (err) {
     console.error(err);

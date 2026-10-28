@@ -152,6 +152,74 @@
   .tarea span { color: var(--soft); font-size: 16px; }
   .tarea.principal { background: var(--ok); border-color: var(--ok); color: #fff; }
   .tarea.principal span { color: #e6f6ed; }
+  /* ── Búsqueda ── */
+  #bBody { flex: 1; overflow-y: auto; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+  #bBody > * { flex-shrink: 0; }
+  #bBody.centro { justify-content: center; }
+  .grupo { display: grid; gap: 6px; }
+  .grupo > span, .rotulo { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--soft); font-weight: 700; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .seg button { border: 2.5px solid var(--line); background: var(--card); border-radius: 14px; padding: 14px 8px; font-weight: 700; font-size: 16px; }
+  .seg button.on { border-color: var(--ink); background: var(--ink); color: #fff; }
+  .seg button small { display: block; font-weight: 500; font-size: 13px; color: var(--soft); }
+  .seg button.on small { color: #c8d0cb; }
+  .caja { background: var(--card); border-radius: 14px; padding: 14px; display: grid; gap: 2px; }
+  .caja b { font-family: var(--display); font-size: 34px; line-height: 1; }
+  .caja span { font-size: 14px; color: var(--soft); }
+  .cat { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; align-items: center; background: var(--card); border-radius: 14px;
+    padding: 12px 14px; border: none; text-align: left; width: 100%; }
+  .cat b { font-weight: 700; font-size: 16px; }
+  .cat .u { font-family: var(--display); font-size: 28px; font-weight: 800; line-height: 1; }
+  .cat small { color: var(--soft); font-size: 13px; }
+  .cat small.no { color: var(--no); font-weight: 700; }
+  .cat small.ok { color: var(--ok); font-weight: 700; }
+  .cat small .quien { color: var(--ink); font-weight: 700; }
+  .cat.hecha { background: var(--ok-soft); }
+  .barra { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; display: flex; }
+  .barra i { display: block; height: 100%; }
+  .barra i.ok { background: var(--ok); }
+  .barra i.no { background: var(--no); }
+  .marca-h { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    font-weight: 800; color: var(--soft); padding: 6px 2px 0; }
+  .marca-h em { font-style: normal; font-family: var(--display); font-size: 20px; letter-spacing: 0; color: var(--ink); }
+  .slot { position: relative; border-radius: 14px; overflow: hidden; }
+  .slot .fondo { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+    font-family: var(--display); font-weight: 800; font-size: 20px; color: #fff; background: var(--ok); }
+  .slot .fondo.izq { background: var(--no); }
+  .prod { position: relative; display: grid; grid-template-columns: 56px 1fr auto; gap: 10px; align-items: center; background: var(--card);
+    padding: 7px 10px 7px 7px; border-radius: 14px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+  .prod.vuelve { transition: transform .2s ease-out; }
+  .prod img, .prod .sinfoto { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; background: var(--line); pointer-events: none; }
+  .prod .t { min-width: 0; font-size: 14px; font-weight: 600; line-height: 1.2; }
+  .prod .t small { display: block; color: var(--soft); font-weight: 500; font-size: 12.5px; }
+  .prod .t small.no { color: var(--no); font-weight: 700; }
+  .prod .t small.ok { color: var(--ok); font-weight: 700; }
+  .prod .t small.extra { color: #8a5a00; font-weight: 700; }
+  .prod .var { display: block; font-family: var(--display); font-weight: 800; font-size: 19px; text-transform: uppercase; color: var(--ink); }
+  .prod .q { font-family: var(--display); font-weight: 800; font-size: 30px; line-height: 1; text-align: right; }
+  .prod .q small { display: block; font-family: var(--body); font-size: 11.5px; font-weight: 600; color: var(--soft); }
+  .prod.ok { background: var(--ok-soft); }
+  .prod.no { background: var(--no-soft); }
+  .prod .mk { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; }
+  .prod .mk.ok { background: var(--ok); }
+  .prod .mk.no { background: var(--no); }
+  .foto-g { position: relative; height: 38vh; min-height: 180px; border-radius: 18px; overflow: hidden; background: #eceeea; flex: none; }
+  .foto-g img { width: 100%; height: 100%; object-fit: contain; }
+  .ped { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; background: var(--card); border-radius: 12px; padding: 9px 12px; font-size: 14px; }
+  .ped .tag { font-size: 11.5px; font-weight: 800; padding: 3px 7px; border-radius: 6px; background: var(--ink); color: #fff; }
+  .ped .tag.ml { background: #f3d23a; color: var(--ink); }
+  .ped b { font-family: var(--display); font-size: 24px; }
+  .ped small { display: block; color: var(--soft); font-size: 12.5px; }
+  .marcado { font-size: 14px; color: var(--soft); text-align: center; }
+  .stepper { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; gap: 8px; }
+  .stepper button { height: 64px; border-radius: 16px; border: 2.5px solid var(--line); background: var(--card); font-size: 32px; font-weight: 800; }
+  .stepper strong { text-align: center; font-family: var(--display); font-size: 56px; font-weight: 800; line-height: 1; }
+  .stepper strong small { font-size: 24px; color: var(--soft); }
+  .actualizado { font-size: 13px; color: var(--soft); text-align: center; }
+  .falta-item { background: var(--card); border-radius: 14px; padding: 10px 12px; display: grid; gap: 3px; font-size: 14px; }
+  .falta-item .var { font-family: var(--display); font-weight: 800; font-size: 18px; text-transform: uppercase; }
+  .falta-item small { color: var(--soft); font-size: 12.5px; }
+  .falta-item small.no { color: var(--no); font-weight: 700; font-size: 13.5px; }
   @media (prefers-reduced-motion: reduce) { .card.volando { transition: none; } }
 </style>
 </head>
@@ -214,6 +282,17 @@
   <div class="hint">← No lo tengo · Lo tengo →</div>
 </section>
 
+<!-- Búsqueda de productos -->
+<section class="vista" id="vBusq" hidden>
+  <div class="bar"><button class="link" id="bAtras" type="button" style="color:var(--ink);text-decoration:none"><b id="bTitulo">‹ Búsqueda</b></button><small id="bSub"></small></div>
+  <div id="bBody"></div>
+  <div class="pie" id="bPie"></div>
+</section>
+
+<div class="velo" id="veloB" hidden>
+  <div class="hoja" id="hojaB"></div>
+</div>
+
 <div class="velo" id="velo" hidden>
   <div class="hoja">
     <h3>¿Qué pasó con este producto?</h3>
@@ -265,8 +344,9 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function mostrar(id) {
-  for (const v of ["vInicio", "vScan", "vQuien", "vPanel", "vCartas"]) $(v).hidden = v !== id;
+  for (const v of ["vInicio", "vScan", "vQuien", "vPanel", "vCartas", "vBusq"]) $(v).hidden = v !== id;
   if (id === "vScan") iniciarCamara(); else detenerCamara();
+  if (id !== "vBusq") detenerBusqueda();
 }
 
 function vibrar(ms) { try { navigator.vibrate?.(ms); } catch {} }
@@ -307,16 +387,9 @@ $("formQuien").onsubmit = (e) => {
 };
 
 // ─── Qué vas a hacer hoy ────────────────────────────────────────────────────
-// Búsqueda (juntar los productos antes de empaquetar) todavía no está hecha.
 $("btnEmpaquetado").onclick = () => mostrar("vScan");
 $("btnTarea").onclick = () => mostrar("vInicio");
-$("btnBusqueda").onclick = () => {
-  panel(`
-    <div class="bar"><b>Búsqueda</b></div>
-    <div class="scroll"><p class="vacio">Esta parte todavía no está disponible. Por ahora usá Empaquetado.</p></div>
-    <div class="pie"><button class="cta" type="button" id="btnVolverInicio">Volver</button></div>`);
-  $("btnVolverInicio").onclick = () => mostrar("vInicio");
-};
+$("btnBusqueda").onclick = () => abrirBusqueda();
 
 // ─── Cámara y QR ────────────────────────────────────────────────────────────
 let stream = null, loopId = null, detector = null, leyendo = false;
@@ -674,6 +747,435 @@ async function verFaltantes() {
   $("btnVolverScan").onclick = () => mostrar("vScan");
 }
 $("btnFaltantes").onclick = verFaltantes;
+
+// ─── Búsqueda de productos ──────────────────────────────────────────────────
+// Varias personas buscan a la vez: las marcas se guardan en la base (una por SKU por día,
+// gana la última) y cada celular las vuelve a pedir cada pocos segundos.
+const SIN_CAT = "Sin categoría", SIN_MARCA = "Otros";
+const busq = {
+  lineas: [], actualizado: null, cargando: false,
+  filtro: { canal: "todo", tienda: "todo" },
+  vista: "elegir", categoria: null, sku: null,
+  marcas: new Map(), presencia: [], firma: "",
+  pollId: null, refrescoId: null,
+};
+
+function detenerBusqueda() {
+  clearInterval(busq.pollId); busq.pollId = null;
+  clearInterval(busq.refrescoId); busq.refrescoId = null;
+}
+
+async function abrirBusqueda() {
+  busq.vista = "elegir";
+  mostrar("vBusq");
+  pintarBusqueda();
+  await cargarPendientes(false);
+  busq.pollId = setInterval(leerEstado, 5000);
+  busq.refrescoId = setInterval(() => cargarPendientes(false), 3 * 60_000);
+  leerEstado();
+}
+
+async function cargarPendientes(refrescar) {
+  if (busq.cargando) return;
+  busq.cargando = true;
+  if (!busq.lineas.length) pintarBusqueda();
+  try {
+    const r = await armadoFetch(`/busqueda/pendientes${refrescar ? "?refrescar=1" : ""}`);
+    busq.lineas = r.lineas;
+    busq.actualizado = r.actualizado_at;
+  } catch (err) {
+    console.error(err);
+    busq.error = "No se pudieron traer los pedidos. Revisá la conexión.";
+  }
+  busq.cargando = false;
+  pintarBusqueda();
+}
+
+async function leerEstado() {
+  try {
+    const q = new URLSearchParams({ por: quien });
+    if (busq.vista === "lista" || busq.vista === "detalle") q.set("categoria", busq.categoria || "");
+    const r = await armadoFetch(`/busqueda/estado?${q}`);
+    const firma = JSON.stringify(r);
+    if (firma === busq.firma) return;
+    busq.firma = firma;
+    busq.marcas = new Map(r.marcas.map((m) => [m.sku, m]));
+    busq.presencia = r.presencia.filter((p) => p.por !== quien);
+    pintarBusqueda();
+  } catch (err) { console.error(err); }
+}
+
+function lineasFiltradas() {
+  const f = busq.filtro;
+  return busq.lineas.filter((l) => (f.canal === "todo" || l.canal === f.canal) && (f.tienda === "todo" || l.tienda === f.tienda));
+}
+
+/** Un producto por SKU con el total a buscar y sus pedidos. */
+function productos() {
+  const porSku = new Map();
+  for (const l of lineasFiltradas()) {
+    const clave = l.sku || `${l.nombre}|${l.variante.join("|")}`;
+    let p = porSku.get(clave);
+    if (!p) {
+      p = { sku: clave, nombre: l.nombre, variante: l.variante, imagen: l.imagen,
+        categoria: l.categoria || SIN_CAT, marca: l.marca || SIN_MARCA, unidades: 0, pedidos: [] };
+      porSku.set(clave, p);
+    }
+    p.unidades += l.cantidad;
+    p.pedidos.push(l);
+  }
+  return [...porSku.values()];
+}
+
+/** En qué quedó un producto: pendiente, encontrado o con faltante (y si aparecieron unidades nuevas). */
+function estadoDe(p) {
+  const m = busq.marcas.get(p.sku);
+  if (!m) return { tipo: "pend", buscar: p.unidades, encontradas: 0, faltan: 0, m: null };
+  const extra = p.unidades - m.requeridas;
+  if (extra > 0) return { tipo: "pend", buscar: extra, encontradas: m.encontradas, faltan: 0, extra, m };
+  const faltan = Math.min(p.unidades, m.requeridas - m.encontradas);
+  return { tipo: faltan > 0 ? "no" : "ok", buscar: 0, encontradas: Math.min(m.encontradas, p.unidades), faltan, m };
+}
+
+const horaCorta = (iso) => new Date(iso).toLocaleTimeString("es-AR", {
+  hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/Argentina/Buenos_Aires" });
+const sumar = (xs, f) => xs.reduce((s, x) => s + f(x), 0);
+const pl = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+
+function cabecera(titulo, sub, atras) {
+  $("bTitulo").textContent = titulo;
+  $("bSub").innerHTML = sub || "";
+  $("bAtras").onclick = atras;
+}
+
+function pintarBusqueda() {
+  if ($("vBusq").hidden) return;
+  const cuerpo = $("bBody");
+  const scroll = cuerpo.scrollTop;
+  cuerpo.classList.remove("centro");
+  $("bPie").innerHTML = "";
+
+  if (busq.cargando && !busq.lineas.length) {
+    cabecera("‹ Búsqueda", "", () => mostrar("vInicio"));
+    cuerpo.innerHTML = `<div class="cargando">Trayendo los pedidos pendientes…</div>`;
+    return;
+  }
+  if (busq.error && !busq.lineas.length) {
+    cabecera("‹ Búsqueda", "", () => mostrar("vInicio"));
+    cuerpo.innerHTML = `<div class="aviso rojo">${esc(busq.error)}</div>`;
+    $("bPie").innerHTML = `<button class="cta" type="button" id="bReintentar">Reintentar</button>`;
+    $("bReintentar").onclick = () => { busq.error = null; cargarPendientes(true); };
+    return;
+  }
+  ({ elegir: vistaElegir, canal: vistaCanal, cats: vistaCats, lista: vistaLista, detalle: vistaDetalle, falta: vistaFalta })[busq.vista]();
+  if (busq.vista === "lista" || busq.vista === "cats") cuerpo.scrollTop = scroll;
+}
+
+function ir(vista, extra = {}) {
+  Object.assign(busq, { vista }, extra);
+  $("bBody").scrollTop = 0;
+  pintarBusqueda();
+  if (vista === "lista" || vista === "cats") leerEstado();
+}
+
+function resumenPedidos(lineas) {
+  return { pedidos: new Set(lineas.map((l) => `${l.canal}|${l.tienda}|${l.pedido}`)).size, unidades: sumar(lineas, (l) => l.cantidad) };
+}
+
+function vistaElegir() {
+  cabecera("‹ Búsqueda", busq.actualizado ? `Pendientes al<br>${horaCorta(busq.actualizado)}` : "", () => mostrar("vInicio"));
+  const r = resumenPedidos(busq.lineas);
+  $("bBody").classList.add("centro");
+  $("bBody").innerHTML = `
+    <h1 style="margin:0 0 4px;font-family:var(--display);font-size:38px;line-height:1">¿Qué querés buscar?</h1>
+    <button class="tarea principal" type="button" id="bTodo"><b>Todo</b><span>Mercado Libre y Tiendanube, las dos marcas</span>
+      <span style="font-family:var(--display);font-size:22px;font-weight:800;color:#fff">${pl(r.pedidos, "pedido", "pedidos")} · ${pl(r.unidades, "unidad", "unidades")}</span></button>
+    <button class="tarea" type="button" id="bPorCanal"><b>Por canal</b><span>Elegís Mercado Libre o Tiendanube, y Pret a Home o Casa Laván</span></button>`;
+  $("bTodo").onclick = () => { busq.filtro = { canal: "todo", tienda: "todo" }; ir("cats"); };
+  $("bPorCanal").onclick = () => {
+    if (busq.filtro.canal === "todo") busq.filtro = { canal: "ml", tienda: "pret" };
+    ir("canal");
+  };
+}
+
+function vistaCanal() {
+  cabecera("‹ Por canal", "", () => ir("elegir"));
+  const f = busq.filtro;
+  const cuenta = (canal, tienda) => resumenPedidos(busq.lineas.filter((l) => (!canal || l.canal === canal) && (!tienda || l.tienda === tienda))).pedidos;
+  const sel = resumenPedidos(lineasFiltradas());
+  const nombreCanal = f.canal === "ml" ? "Mercado Libre" : "Tiendanube";
+  $("bBody").innerHTML = `
+    <div class="grupo"><span>Canal</span><div class="seg">
+      <button type="button" data-canal="ml" class="${f.canal === "ml" ? "on" : ""}">Mercado Libre<small>${pl(cuenta("ml", f.tienda), "pedido", "pedidos")}</small></button>
+      <button type="button" data-canal="tn" class="${f.canal === "tn" ? "on" : ""}">Tiendanube<small>${pl(cuenta("tn", f.tienda), "pedido", "pedidos")}</small></button>
+    </div></div>
+    <div class="grupo"><span>Marca</span><div class="seg">
+      <button type="button" data-tienda="pret" class="${f.tienda === "pret" ? "on" : ""}">Pret a Home<small>${pl(cuenta(f.canal, "pret"), "pedido", "pedidos")}</small></button>
+      <button type="button" data-tienda="lavan" class="${f.tienda === "lavan" ? "on" : ""}">Casa Laván<small>${pl(cuenta(f.canal, "lavan"), "pedido", "pedidos")}</small></button>
+    </div></div>
+    <div class="caja"><span>${nombreCanal} · ${nombreTienda(f.tienda)}</span><b>${pl(sel.unidades, "unidad", "unidades")}</b>
+      <span>${pl(sel.pedidos, "pedido", "pedidos")} · ${pl(productos().length, "producto distinto", "productos distintos")}</span></div>`;
+  for (const b of $("bBody").querySelectorAll("[data-canal]")) b.onclick = () => { busq.filtro.canal = b.dataset.canal; pintarBusqueda(); };
+  for (const b of $("bBody").querySelectorAll("[data-tienda]")) b.onclick = () => { busq.filtro.tienda = b.dataset.tienda; pintarBusqueda(); };
+  $("bPie").innerHTML = `<button class="cta ok" type="button" id="bEmpezar" ${sel.unidades ? "" : "disabled"}>${sel.unidades ? "Empezar a buscar" : "No hay nada pendiente"}</button>`;
+  $("bEmpezar").onclick = () => ir("cats");
+}
+
+function nombreFiltro() {
+  const f = busq.filtro;
+  if (f.canal === "todo") return "Todo";
+  return `${f.canal === "ml" ? "ML" : "TN"} ${f.tienda === "lavan" ? "Laván" : "Pret"}`;
+}
+
+function vistaCats() {
+  const prods = productos();
+  const total = sumar(prods, (p) => p.unidades);
+  const pend = sumar(prods, (p) => estadoDe(p).buscar);
+  cabecera(`‹ ${nombreFiltro()}`, `${pl(pend, "unidad", "unidades")}<br>por buscar`, () => ir(busq.filtro.canal === "todo" ? "elegir" : "canal"));
+  const cats = new Map();
+  for (const p of prods) {
+    const c = cats.get(p.categoria) || { nombre: p.categoria, prods: [] };
+    c.prods.push(p);
+    cats.set(p.categoria, c);
+  }
+  const lista = [...cats.values()].map((c) => {
+    const u = sumar(c.prods, (p) => p.unidades);
+    const enc = sumar(c.prods, (p) => estadoDe(p).encontradas);
+    const falt = sumar(c.prods, (p) => estadoDe(p).faltan);
+    const pend = sumar(c.prods, (p) => estadoDe(p).buscar);
+    const gente = busq.presencia.filter((x) => x.categoria === c.nombre).map((x) => x.por);
+    return { ...c, u, enc, falt, pend, gente };
+  }).sort((a, b) => b.u - a.u);
+  const totalFalta = sumar(prods, (p) => estadoDe(p).faltan);
+
+  $("bBody").innerHTML = lista.length ? lista.map((c) => {
+    let estado;
+    if (!c.pend && !c.falt) estado = `<small class="ok">✓ Todo encontrado</small>`;
+    else if (!c.pend) estado = `<small class="no">Faltan ${pl(c.falt, "unidad", "unidades")}</small>`;
+    else if (c.enc || c.falt) estado = `<small>${c.u - c.pend} de ${c.u} marcadas${c.falt ? ` · <span style="color:var(--no);font-weight:700">faltan ${c.falt}</span>` : ""}</small>`;
+    else estado = `<small>${pl(c.prods.length, "producto", "productos")}</small>`;
+    const gente = c.gente.length ? ` · <span class="quien">buscando: ${esc(c.gente.join(", "))}</span>` : "";
+    return `<button class="cat ${c.pend ? "" : "hecha"}" type="button" data-cat="${esc(c.nombre)}">
+      <b>${esc(c.nombre)}</b><span class="u">${c.u}</span>
+      ${estado.replace("</small>", `${gente}</small>`)}<span></span>
+      <div class="barra"><i class="ok" style="width:${(c.enc / c.u) * 100}%"></i><i class="no" style="width:${(c.falt / c.u) * 100}%"></i></div>
+    </button>`;
+  }).join("") + `<div class="actualizado">Pedidos al ${busq.actualizado ? horaCorta(busq.actualizado) : "—"} ·
+      <button class="link" type="button" id="bRefrescar">${busq.cargando ? "actualizando…" : "actualizar"}</button></div>`
+    : `<p class="vacio">No hay nada pendiente para buscar.</p>`;
+  for (const b of $("bBody").querySelectorAll("[data-cat]")) b.onclick = () => ir("lista", { categoria: b.dataset.cat });
+  const r = $("bRefrescar");
+  if (r) r.onclick = () => cargarPendientes(true);
+  if (totalFalta) {
+    $("bPie").innerHTML = `<button class="cta ghost" type="button" id="bVerFalta">Ver lo que falta (${totalFalta})</button>`;
+    $("bVerFalta").onclick = () => ir("falta");
+  }
+}
+
+function filaProducto(p) {
+  const e = estadoDe(p);
+  const foto = p.imagen ? `<img src="${esc(p.imagen)}" alt="" loading="lazy">` : `<div class="sinfoto"></div>`;
+  const variante = p.variante.length ? `<span class="var">${esc(p.variante.join(" · "))}</span>` : "";
+  let detalle, lado;
+  if (e.tipo === "pend") {
+    detalle = e.extra ? `<small class="extra">Aparecieron ${e.extra} más</small>` : "";
+    lado = `<div class="q">${e.buscar}<small>${pl(new Set(p.pedidos.map((l) => l.pedido)).size, "pedido", "pedidos")}</small></div>`;
+  } else if (e.tipo === "ok") {
+    detalle = `<small class="ok">${esc(e.m.por || "")} · ${horaCorta(e.m.marcado_at)}</small>`;
+    lado = `<span class="mk ok">✓</span>`;
+  } else {
+    detalle = `<small class="no">${e.encontradas ? `Hay ${e.encontradas} · faltan ${e.faltan}` : `No hay · faltan ${e.faltan}`} · ${esc(e.m.por || "")}</small>`;
+    lado = `<span class="mk no">✕</span>`;
+  }
+  return `<div class="slot"><div class="fondo"><span>✓ LA TENGO</span><span></span></div>
+    <div class="prod ${e.tipo === "pend" ? "" : e.tipo}" data-sku="${esc(p.sku)}">${foto}
+      <div class="t">${esc(p.nombre)}${variante}${detalle}</div>${lado}</div></div>`;
+}
+
+function vistaLista() {
+  const prods = productos().filter((p) => p.categoria === busq.categoria);
+  const pend = sumar(prods, (p) => estadoDe(p).buscar);
+  const gente = busq.presencia.filter((x) => x.categoria === busq.categoria).map((x) => x.por);
+  cabecera(`‹ ${busq.categoria}`, `${pl(pend, "unidad", "unidades")} por buscar${gente.length ? `<br>con ${esc(gente.join(", "))}` : ""}`, () => ir("cats"));
+  const marcas = new Map();
+  for (const p of prods) {
+    const m = marcas.get(p.marca) || [];
+    m.push(p);
+    marcas.set(p.marca, m);
+  }
+  const orden = (p) => (estadoDe(p).tipo === "pend" ? 0 : 1);
+  $("bBody").innerHTML = [...marcas.entries()]
+    .sort((a, b) => sumar(b[1], (p) => p.unidades) - sumar(a[1], (p) => p.unidades))
+    .map(([marca, ps]) => `
+      <div class="marca-h">${esc(marca)} <em>${sumar(ps, (p) => p.unidades)} u.</em></div>
+      ${ps.sort((a, b) => orden(a) - orden(b) || b.unidades - a.unidades).map(filaProducto).join("")}`).join("")
+    + `<div class="hint">← No la tengo · Tocá para ver los pedidos · La tengo →</div>`;
+  for (const el of $("bBody").querySelectorAll(".prod")) activarDeslizar(el);
+}
+
+/** Fila deslizable: a la derecha "la tengo", a la izquierda "no la tengo"; un toque abre el detalle. */
+function activarDeslizar(el) {
+  const p = () => productos().find((x) => x.sku === el.dataset.sku);
+  const fondo = el.previousElementSibling;
+  let x0 = null, y0 = 0, dx = 0, horizontal = null;
+  el.addEventListener("pointerdown", (e) => { x0 = e.clientX; y0 = e.clientY; dx = 0; horizontal = null; el.classList.remove("vuelve"); });
+  el.addEventListener("pointermove", (e) => {
+    if (x0 === null) return;
+    dx = e.clientX - x0;
+    const dy = e.clientY - y0;
+    if (horizontal === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      horizontal = Math.abs(dx) > Math.abs(dy);
+      if (horizontal) try { el.setPointerCapture(e.pointerId); } catch {}
+    }
+    if (!horizontal) return;
+    el.style.transform = `translateX(${dx}px)`;
+    fondo.classList.toggle("izq", dx < 0);
+    fondo.firstElementChild.textContent = dx > 0 ? "✓ LA TENGO" : "";
+    fondo.lastElementChild.textContent = dx < 0 ? "NO LA TENGO ✕" : "";
+  });
+  const soltar = () => {
+    if (x0 === null) return;
+    x0 = null;
+    const umbral = Math.min(100, el.offsetWidth * 0.28);
+    el.classList.add("vuelve");
+    el.style.transform = "";
+    if (horizontal === null) return ir("detalle", { sku: el.dataset.sku });
+    if (!horizontal) return;
+    const prod = p();
+    if (!prod) return;
+    if (dx > umbral) marcarTodas(prod);
+    else if (dx < -umbral) pedirCantidad(prod);
+  };
+  el.addEventListener("pointerup", soltar);
+  el.addEventListener("pointercancel", () => { x0 = null; el.classList.add("vuelve"); el.style.transform = ""; });
+}
+
+async function guardarMarca(p, encontradasNuevas) {
+  const e = estadoDe(p);
+  // Si después de marcar aparecieron unidades nuevas, lo encontrado antes se suma.
+  const base = e.extra ? e.encontradas : 0;
+  const encontradas = base + encontradasNuevas;
+  const estado = encontradas >= p.unidades ? "ok" : encontradas === 0 ? "no_hay" : "parcial";
+  const marca = { sku: p.sku, estado, requeridas: p.unidades, encontradas, por: quien, marcado_at: new Date().toISOString() };
+  busq.marcas.set(p.sku, marca); // se ve al instante; la base confirma en el próximo ciclo
+  vibrar(estado === "ok" ? 40 : 90);
+  pintarBusqueda();
+  try { await armadoFetch("/busqueda/marcar", marca); leerEstado(); }
+  catch (err) { console.error(err); alertaB("No se pudo guardar la marca. Revisá la conexión."); busq.marcas.delete(p.sku); pintarBusqueda(); }
+}
+
+async function desmarcar(p) {
+  busq.marcas.delete(p.sku);
+  pintarBusqueda();
+  try { await armadoFetch("/busqueda/marcar", { sku: p.sku, estado: "borrar" }); }
+  catch (err) { console.error(err); alertaB("No se pudo desmarcar. Revisá la conexión."); }
+}
+
+function alertaB(txt) {
+  const div = document.createElement("div");
+  div.className = "aviso rojo";
+  div.textContent = txt;
+  $("bBody").prepend(div);
+  setTimeout(() => div.remove(), 5000);
+}
+
+function marcarTodas(p) { guardarMarca(p, estadoDe(p).buscar); }
+
+function cerrarHoja() { $("veloB").hidden = true; }
+$("veloB").onclick = (e) => { if (e.target === $("veloB")) cerrarHoja(); };
+
+/** No la tiene (o no todas): si buscaba más de una, pregunta cuántas encontró. */
+function pedirCantidad(p) {
+  const buscar = estadoDe(p).buscar || p.unidades;
+  const titulo = `${esc(p.nombre)}${p.variante.length ? ` · ${esc(p.variante.join(" · "))}` : ""}`;
+  if (buscar <= 1) {
+    $("hojaB").innerHTML = `
+      <h3>¿Qué pasó con este producto?</h3>
+      <div style="font-size:14px;color:var(--soft);margin-top:-6px">${titulo}</div>
+      <button class="opt rojo" type="button" id="hNoHay">No hay en el depósito</button>
+      <button class="opt" type="button" id="hSigo">Sigo buscando <small>Queda pendiente</small></button>
+      <button class="opt" type="button" id="hVolver">Me equivoqué <small>Volver</small></button>`;
+  } else {
+    let n = 0;
+    $("hojaB").innerHTML = `
+      <h3>¿Cuántas encontraste?</h3>
+      <div style="font-size:14px;color:var(--soft);margin-top:-6px">${titulo} · había que buscar ${buscar}</div>
+      <div class="stepper"><button type="button" id="hMenos">−</button><strong id="hN"></strong><button type="button" id="hMas">+</button></div>
+      <button class="cta ok" type="button" id="hGuardar"></button>
+      <button class="opt rojo" type="button" id="hNoHay">No hay ninguna</button>
+      <button class="opt" type="button" id="hSigo">Sigo buscando <small>Queda pendiente</small></button>`;
+    const pintar = () => {
+      $("hN").innerHTML = `${n} <small>de ${buscar}</small>`;
+      $("hGuardar").textContent = n ? `Encontré ${n} · faltan ${buscar - n}` : "Elegí cuántas encontraste";
+      $("hGuardar").disabled = !n;
+    };
+    $("hMenos").onclick = () => { n = Math.max(0, n - 1); pintar(); };
+    $("hMas").onclick = () => { n = Math.min(buscar - 1, n + 1); pintar(); };
+    $("hGuardar").onclick = () => { cerrarHoja(); guardarMarca(p, n); };
+    pintar();
+  }
+  $("hNoHay").onclick = () => { cerrarHoja(); guardarMarca(p, 0); };
+  $("hSigo").onclick = cerrarHoja;
+  const v = $("hVolver");
+  if (v) v.onclick = cerrarHoja;
+  $("veloB").hidden = false;
+}
+
+function vistaDetalle() {
+  const p = productos().find((x) => x.sku === busq.sku);
+  if (!p) return ir("lista");
+  const e = estadoDe(p);
+  cabecera(`‹ ${busq.categoria}`, esc(p.marca), () => ir("lista"));
+  const porPedido = new Map();
+  for (const l of p.pedidos) {
+    const k = `${l.canal}|${l.tienda}|${l.pedido}`;
+    const x = porPedido.get(k) || { ...l, cantidad: 0 };
+    x.cantidad += l.cantidad;
+    porPedido.set(k, x);
+  }
+  const pedidos = [...porPedido.values()].sort((a, b) => b.cantidad - a.cantidad);
+  let marcado = "";
+  if (e.m) {
+    const txt = e.tipo === "ok" ? "Encontrada" : e.tipo === "no" ? (e.encontradas ? `Hay ${e.encontradas}, faltan ${e.faltan}` : "No hay") : `Ya se marcaron ${e.m.requeridas}`;
+    marcado = `<div class="marcado">${txt} · ${esc(e.m.por || "")} · ${horaCorta(e.m.marcado_at)} ·
+      <button class="link" type="button" id="bDesmarcar">desmarcar</button></div>`;
+  }
+  $("bBody").innerHTML = `
+    <div class="foto-g">${p.imagen ? `<img src="${esc(p.imagen)}" alt="${esc(p.nombre)}">` : ""}
+      <div class="qty"><span>BUSCÁ</span><strong>${e.tipo === "pend" ? e.buscar : p.unidades}</strong></div></div>
+    <div class="nombre">${esc(p.nombre)}</div>
+    ${p.variante.length ? `<div class="chips">${p.variante.map((v) => `<span class="chip">${esc(v)}</span>`).join("")}</div>` : ""}
+    <div class="sku">${esc(p.sku)}</div>
+    ${marcado}
+    <div class="grupo"><span>Para ${pl(pedidos.length, "pedido", "pedidos")}</span>
+      ${pedidos.map((l) => `<div class="ped"><span class="tag ${l.canal}">${l.canal.toUpperCase()}</span>
+        <div>${nombreTienda(l.tienda)} · ${l.canal === "tn" ? `#${esc(l.pedido)}` : esc(l.logistica || "")}
+          <small>${l.canal === "tn" ? esc(l.logistica || "") : `Venta ${esc(l.pedido)}`}</small></div><b>×${l.cantidad}</b></div>`).join("")}
+    </div>`;
+  if (e.m) $("bDesmarcar").onclick = () => desmarcar(p);
+  if (e.tipo === "pend") {
+    $("bPie").innerHTML = `<div class="acciones" style="padding:0">
+      <button class="btn no" type="button" id="bNo" aria-label="No la tengo">✕</button>
+      <button class="btn ok" type="button" id="bOk" aria-label="La tengo">✓</button></div>`;
+    $("bOk").onclick = () => { marcarTodas(p); ir("lista"); };
+    $("bNo").onclick = () => pedirCantidad(p);
+  }
+}
+
+function vistaFalta() {
+  cabecera("‹ Lo que falta", "", () => ir("cats"));
+  const prods = productos().filter((p) => estadoDe(p).faltan > 0);
+  $("bBody").innerHTML = prods.length ? `
+    <div class="aviso rojo">Estos pedidos no se van a poder despachar completos.</div>
+    ${prods.map((p) => {
+      const e = estadoDe(p);
+      const peds = [...new Set(p.pedidos.map((l) => `${nombreTienda(l.tienda)} · ${l.canal === "tn" ? "#" + l.pedido : (l.logistica || "ML") + " " + l.pedido}`))];
+      return `<div class="falta-item"><b>${esc(p.nombre)}</b>
+        ${p.variante.length ? `<span class="var">${esc(p.variante.join(" · "))}</span>` : ""}
+        <small class="no">Faltan ${e.faltan} de ${p.unidades}${e.m?.por ? ` · marcó ${esc(e.m.por)}` : ""}</small>
+        ${peds.map((x) => `<small>${esc(x)}</small>`).join("")}</div>`;
+    }).join("")}` : `<p class="vacio">No falta nada.</p>`;
+}
 
 // ─── Arranque ───────────────────────────────────────────────────────────────
 (async () => {
