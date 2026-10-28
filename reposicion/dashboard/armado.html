@@ -154,6 +154,9 @@
   .tarea.principal span { color: #e6f6ed; }
   /* ── Búsqueda ── */
   #bBody { flex: 1; overflow-y: auto; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+  /* El logo del tablero es blanco; sobre fondo claro se invierte a negro */
+  .logo { height: 22px; width: auto; max-width: 60%; display: block; filter: invert(1); }
+  .logo.grande { height: 38px; max-width: 100%; margin-bottom: 20px; }
   #bBody > * { flex-shrink: 0; }
   #bBody.centro { justify-content: center; }
   .grupo { display: grid; gap: 6px; }
@@ -248,7 +251,7 @@
 
 <!-- Qué vas a hacer hoy -->
 <section class="vista" id="vInicio" hidden>
-  <div class="bar"><b>Depósito</b><button class="link" id="btnQuien2" type="button"></button></div>
+  <div class="bar"><img class="logo" src="assets/logo-white.png" alt="Pret a Home"><button class="link" id="btnQuien2" type="button"></button></div>
   <div class="tareas">
     <h1>¿Qué vas a hacer hoy?</h1>
     <button class="tarea" type="button" id="btnBusqueda"><b>Búsqueda</b><span>Juntar los productos de los pedidos</span></button>
@@ -259,6 +262,7 @@
 <!-- Ingreso: nombre + contraseña del depósito -->
 <section class="vista" id="vQuien" hidden>
   <form class="quien" id="formQuien" style="flex:1;align-content:center">
+    <img class="logo grande" src="assets/logo-white.png" alt="Pret a Home">
     <h1 style="margin:0;font-family:var(--display);font-size:40px;line-height:1">Depósito</h1>
     <p style="margin:0;color:var(--soft)">Tu nombre queda guardado en cada pedido que revisás o buscás.</p>
     <input id="inpQuien" autocomplete="given-name" placeholder="Tu nombre" aria-label="Tu nombre">
