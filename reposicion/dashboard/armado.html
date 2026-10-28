@@ -145,6 +145,13 @@
   .vacio { padding: 24px 16px; color: var(--soft); text-align: center; }
   .quien { padding: 0 16px; display: grid; gap: 12px; }
   .quien input { font: inherit; font-size: 22px; padding: 14px; border-radius: 12px; border: 2px solid var(--line); }
+  .tareas { flex: 1; padding: 8px 16px 24px; display: flex; flex-direction: column; gap: 14px; justify-content: center; }
+  .tareas h1 { margin: 0 0 6px; font-family: var(--display); font-size: 40px; line-height: 1; font-weight: 800; }
+  .tarea { display: grid; gap: 4px; text-align: left; background: var(--card); border: 2.5px solid var(--ink); border-radius: 18px; padding: 22px 18px; }
+  .tarea b { font-family: var(--display); font-size: 34px; font-weight: 800; line-height: 1; }
+  .tarea span { color: var(--soft); font-size: 16px; }
+  .tarea.principal { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .tarea.principal span { color: #e6f6ed; }
   @media (prefers-reduced-motion: reduce) { .card.volando { transition: none; } }
 </style>
 </head>
@@ -152,7 +159,7 @@
 
 <!-- 1. Escanear -->
 <section class="vista" id="vScan">
-  <div class="bar"><b>Armado de pedidos</b><button class="link" id="btnQuien" type="button"></button></div>
+  <div class="bar"><button class="link" id="btnTarea" type="button" style="color:#fff;text-decoration:none"><b>‹ Empaquetado</b></button><button class="link" id="btnQuien" type="button"></button></div>
   <div class="cam">
     <video id="video" playsinline muted></video>
     <div class="cam-tip">Apuntá al QR de la etiqueta</div>
@@ -168,6 +175,16 @@
       <button class="pill" id="btnFaltantes" type="button">Pedidos con faltante</button>
       <button class="link" id="btnCamara" type="button" hidden>Reintentar cámara</button>
     </div>
+  </div>
+</section>
+
+<!-- Qué vas a hacer hoy -->
+<section class="vista" id="vInicio" hidden>
+  <div class="bar"><b>Depósito</b><button class="link" id="btnQuien2" type="button"></button></div>
+  <div class="tareas">
+    <h1>¿Qué vas a hacer hoy?</h1>
+    <button class="tarea" type="button" id="btnBusqueda"><b>Búsqueda</b><span>Juntar los productos de los pedidos</span></button>
+    <button class="tarea principal" type="button" id="btnEmpaquetado"><b>Empaquetado</b><span>Escanear la etiqueta y controlar cada paquete</span></button>
   </div>
 </section>
 
@@ -248,7 +265,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function mostrar(id) {
-  for (const v of ["vScan", "vQuien", "vPanel", "vCartas"]) $(v).hidden = v !== id;
+  for (const v of ["vInicio", "vScan", "vQuien", "vPanel", "vCartas"]) $(v).hidden = v !== id;
   if (id === "vScan") iniciarCamara(); else detenerCamara();
 }
 
@@ -271,8 +288,14 @@ async function pedirWakeLock() {
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pedirWakeLock(); });
 
 // ─── Quién arma ─────────────────────────────────────────────────────────────
-function pintarQuien() { $("btnQuien").textContent = quien ? `Arma: ${quien}` : "¿Quién arma?"; }
-$("btnQuien").onclick = () => { $("inpQuien").value = quien; mostrar("vQuien"); $("inpQuien").focus(); };
+function pintarQuien() {
+  const txt = quien ? `Arma: ${quien}` : "¿Quién arma?";
+  $("btnQuien").textContent = txt;
+  $("btnQuien2").textContent = txt;
+}
+const cambiarQuien = () => { $("inpQuien").value = quien; mostrar("vQuien"); $("inpQuien").focus(); };
+$("btnQuien").onclick = cambiarQuien;
+$("btnQuien2").onclick = cambiarQuien;
 $("formQuien").onsubmit = (e) => {
   e.preventDefault();
   const v = $("inpQuien").value.trim();
@@ -280,7 +303,19 @@ $("formQuien").onsubmit = (e) => {
   quien = v;
   try { localStorage.setItem(QUIEN_KEY, v); } catch {}
   pintarQuien();
-  mostrar("vScan");
+  mostrar("vInicio");
+};
+
+// ─── Qué vas a hacer hoy ────────────────────────────────────────────────────
+// Búsqueda (juntar los productos antes de empaquetar) todavía no está hecha.
+$("btnEmpaquetado").onclick = () => mostrar("vScan");
+$("btnTarea").onclick = () => mostrar("vInicio");
+$("btnBusqueda").onclick = () => {
+  panel(`
+    <div class="bar"><b>Búsqueda</b></div>
+    <div class="scroll"><p class="vacio">Esta parte todavía no está disponible. Por ahora usá Empaquetado.</p></div>
+    <div class="pie"><button class="cta" type="button" id="btnVolverInicio">Volver</button></div>`);
+  $("btnVolverInicio").onclick = () => mostrar("vInicio");
 };
 
 // ─── Cámara y QR ────────────────────────────────────────────────────────────
@@ -646,7 +681,7 @@ $("btnFaltantes").onclick = verFaltantes;
   if (!getPassword() || !getUser()) await waitForLogin();
   pedirWakeLock();
   if (!quien) { mostrar("vQuien"); $("inpQuien").focus(); }
-  else mostrar("vScan");
+  else mostrar("vInicio");
 })();
 </script>
 </body>
