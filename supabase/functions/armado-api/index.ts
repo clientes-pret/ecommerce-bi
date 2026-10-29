@@ -13,6 +13,10 @@
 //     (token = did + ZETA_TOKEN_SUFIJO) muestra el número de venta de TN.
 // Si nada de eso encuentra el pedido, la pantalla deja escribir el número a mano.
 //
+// Lo que nadie encuentra (Búsqueda o Empaquetado) pasa a la búsqueda profunda (tabla busqueda_profunda,
+// rutas /profunda): una persona lo busca a fondo y lo cierra como "apareció" o "perdido" (Stock perdido,
+// que se ve en el panel de control, no en la app del depósito).
+//
 // Misma contraseña compartida que reposicion-api (header X-App-Password, secret
 // APP_SHARED_PASSWORD). Credenciales de Tiendanube y Mercado Libre en el secret
 // ARMADO_CREDENCIALES (JSON):
@@ -408,6 +412,26 @@ async function postControl(req: Request) {
     confirmado_at: i.confirmado_at ?? null,
   })));
   if (e2) throw e2;
+
+  // Lo que no hay va a la búsqueda profunda; si este pedido ya había avisado un faltante y ahora está, se retira.
+  const pedidoRef = { canal: b.canal, tienda: b.tienda, pedido: String(b.pedido) };
+  for (const i of items) {
+    if (!i.sku) continue;
+    const clave = `e|${b.tienda}|${b.canal}|${b.pedido}|${i.sku}`;
+    try {
+      if (i.estado === "no_hay") {
+        const cantidad = Number(i.cantidad) || 1;
+        await reportarProfunda(String(i.sku), datosProducto(i), {
+          clave, origen: "empaquetado", faltan: cantidad, pedidos: [{ ...pedidoRef, cantidad }],
+          por: b.armado_por ? String(b.armado_por).slice(0, 80) : null, at: new Date().toISOString(),
+        });
+      } else {
+        await retirarReporte(String(i.sku), clave);
+      }
+    } catch (err) {
+      console.error("búsqueda profunda", err); // el control ya quedó guardado
+    }
+  }
   return json({ id: data.id, resultado });
 }
 
@@ -621,6 +645,7 @@ async function postMarcar(req: Request) {
   if (b.estado === "borrar") {
     const { error } = await supabase.from("busqueda_marcas").delete().eq("fecha", hoyAR()).eq("sku", sku);
     if (error) throw error;
+    await retirarReporte(sku, `b|${hoyAR()}|${sku}`);
     return json({ ok: true });
   }
   if (!["ok", "parcial", "no_hay"].includes(b.estado)) return json({ error: "Estado inválido" }, 400);
@@ -632,7 +657,191 @@ async function postMarcar(req: Request) {
     marcado_at: new Date().toISOString(),
   });
   if (error) throw error;
+  // Lo que falta va a la búsqueda profunda (si falla, la marca ya quedó guardada)
+  const faltan = requeridas - encontradas;
+  try {
+    if (faltan > 0) {
+      await reportarProfunda(sku, datosProducto(b), {
+        clave: `b|${hoyAR()}|${sku}`, origen: "busqueda", faltan, pedidos: pedidosDe(b.pedidos),
+        por: b.por ? String(b.por).slice(0, 80) : null, at: new Date().toISOString(),
+      });
+    } else {
+      await retirarReporte(sku, `b|${hoyAR()}|${sku}`);
+    }
+  } catch (err) {
+    console.error("búsqueda profunda", err);
+  }
   return json({ ok: true });
+}
+
+// ─── Búsqueda profunda ──────────────────────────────────────────────────────
+// Lo que nadie encontró abre un caso por SKU (busqueda_profunda). Cada aviso queda en `reportes` con una clave
+// por origen: volver a marcar en Búsqueda reemplaza el aviso del día, y un pedido que después se empaqueta
+// completo retira el suyo. Así lo mismo reportado dos veces (en Búsqueda y al empaquetar) no se cuenta doble.
+
+type PedidoRef = { canal: string; tienda: string; pedido: string; cantidad: number };
+type Reporte = { clave: string; origen: "busqueda" | "empaquetado"; faltan: number; pedidos: PedidoRef[]; por: string | null; at: string };
+
+function pedidosDe(x: unknown): PedidoRef[] {
+  if (!Array.isArray(x)) return [];
+  return x.slice(0, 100).map((p: Json) => ({
+    canal: String(p.canal ?? ""), tienda: String(p.tienda ?? ""), pedido: String(p.pedido ?? ""),
+    cantidad: Math.max(1, Number(p.cantidad) || 1),
+  })).filter((p) => p.pedido);
+}
+
+function datosProducto(b: Json) {
+  return {
+    nombre: b.nombre ? String(b.nombre).slice(0, 300) : null,
+    variante: Array.isArray(b.variante) ? b.variante.join(" · ") : (b.variante ? String(b.variante) : null),
+    imagen: b.imagen ? String(b.imagen).slice(0, 1000) : null,
+  };
+}
+
+const clavePedido = (p: PedidoRef) => `${p.canal}|${p.tienda}|${p.pedido}`;
+
+/** Unidades que faltan según los avisos: Búsqueda ya cuenta todos los pedidos del SKU; un faltante al
+ *  empaquetar suma solo si su pedido no estaba en lo que contó Búsqueda. */
+function sumarReportes(reportes: Reporte[]) {
+  const deBusqueda = reportes.filter((r) => r.origen === "busqueda");
+  const enBusqueda = new Set(deBusqueda.flatMap((r) => r.pedidos.map(clavePedido)));
+  const reportadas = Math.max(0, ...deBusqueda.map((r) => r.faltan)) +
+    reportes.filter((r) => r.origen === "empaquetado" && !r.pedidos.some((p) => enBusqueda.has(clavePedido(p))))
+      .reduce((s, r) => s + r.faltan, 0);
+  const pedidos = new Map<string, PedidoRef>();
+  for (const p of reportes.flatMap((r) => r.pedidos)) {
+    const k = clavePedido(p);
+    const ya = pedidos.get(k);
+    if (!ya || p.cantidad > ya.cantidad) pedidos.set(k, p);
+  }
+  return { reportadas, pedidos: [...pedidos.values()] };
+}
+
+async function casoPendiente(sku: string) {
+  const { data, error } = await supabase.from("busqueda_profunda").select("*")
+    .eq("sku", sku).eq("estado", "pendiente").maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function guardarReportes(caso: Json, reportes: Reporte[], extra: Json = {}) {
+  const { reportadas, pedidos } = sumarReportes(reportes);
+  const unidades = Math.max(0, reportadas - caso.encontradas);
+  const { error } = await supabase.from("busqueda_profunda").update({
+    ...extra, reportes, reportadas, unidades, pedidos,
+    estado: unidades > 0 ? "pendiente" : "aparecio",
+    ...(unidades > 0 ? {} : { cerrado_at: new Date().toISOString(), cerrado_por: caso.cerrado_por ?? caso.tomado_por }),
+    actualizado_at: new Date().toISOString(),
+  }).eq("id", caso.id);
+  if (error) throw error;
+}
+
+async function reportarProfunda(sku: string, producto: Json, rep: Reporte) {
+  for (let intento = 0; intento < 2; intento++) {
+    const caso = await casoPendiente(sku);
+    if (caso) {
+      const reportes = [...(caso.reportes as Reporte[]).filter((r) => r.clave !== rep.clave), rep];
+      return guardarReportes(caso, reportes, {
+        nombre: caso.nombre ?? producto.nombre, variante: caso.variante ?? producto.variante, imagen: caso.imagen ?? producto.imagen,
+      });
+    }
+    const { reportadas, pedidos } = sumarReportes([rep]);
+    const { error } = await supabase.from("busqueda_profunda").insert({
+      sku, ...producto, reportes: [rep], reportadas, unidades: reportadas, pedidos,
+    });
+    if (!error) return;
+    if (error.code !== "23505") throw error; // otro celular abrió el caso al mismo tiempo: se suma a ese
+  }
+}
+
+/** Ya no falta (se volvió a marcar, se desmarcó, o el pedido se empaquetó completo): se saca ese aviso. */
+async function retirarReporte(sku: string, clave: string) {
+  const caso = await casoPendiente(sku);
+  if (!caso || !(caso.reportes as Reporte[]).some((r) => r.clave === clave)) return;
+  const reportes = (caso.reportes as Reporte[]).filter((r) => r.clave !== clave);
+  if (!reportes.length && !caso.encontradas && !caso.tomado_por) {
+    const { error } = await supabase.from("busqueda_profunda").delete().eq("id", caso.id);
+    if (error) throw error;
+    return;
+  }
+  await guardarReportes(caso, reportes);
+}
+
+/** Variante de Tiendanube por SKU (stock y costo). El depósito es el stock de Pret; si no está, el de Laván. */
+async function varianteTN(sku: string): Promise<{ stock: number | null; costo: number | null } | null> {
+  for (const t of TIENDAS) {
+    if (!CRED.tn?.[t]) continue;
+    const prod: Json = await tnGet(t, `/products/sku/${encodeURIComponent(sku)}`, {});
+    const v = (prod?.variants ?? []).find((x: Json) => x.sku === sku);
+    if (v) {
+      return {
+        stock: v.stock === null || v.stock === undefined ? null : Number(v.stock),
+        costo: v.cost ? Number(v.cost) : null,
+      };
+    }
+  }
+  return null;
+}
+
+let cacheStockTN: { at: number; stock: Map<string, number | null> } = { at: 0, stock: new Map() };
+
+async function getProfunda() {
+  const { data, error } = await supabase.from("busqueda_profunda").select("*")
+    .eq("estado", "pendiente").order("creado_at");
+  if (error) throw error;
+  // Cuánto cree Tiendanube que hay: si dice que hay y nadie lo encuentra, el stock está mal cargado.
+  if (Date.now() - cacheStockTN.at > 60_000) cacheStockTN = { at: Date.now(), stock: new Map() };
+  const falta = (data ?? []).map((c) => c.sku).filter((s) => !cacheStockTN.stock.has(s));
+  await enParalelo(falta, 6, async (sku) => {
+    try { cacheStockTN.stock.set(sku, (await varianteTN(sku))?.stock ?? null); } catch { /* sin dato */ }
+  });
+  return json({ casos: (data ?? []).map((c) => ({ ...c, stock_tn: cacheStockTN.stock.get(c.sku) ?? null })) });
+}
+
+async function postProfundaTomar(req: Request) {
+  const b = await req.json();
+  const por = b.por ? String(b.por).slice(0, 80) : null;
+  const { error } = await supabase.from("busqueda_profunda")
+    .update({ tomado_por: b.soltar ? null : por, tomado_at: b.soltar ? null : new Date().toISOString() })
+    .eq("id", Number(b.id)).eq("estado", "pendiente");
+  if (error) throw error;
+  return json({ ok: true });
+}
+
+async function postProfundaCerrar(req: Request) {
+  const b = await req.json();
+  const { data: caso, error } = await supabase.from("busqueda_profunda").select("*").eq("id", Number(b.id)).maybeSingle();
+  if (error) throw error;
+  if (!caso || caso.estado !== "pendiente") return json({ error: "Este producto ya no está en la búsqueda profunda." }, 409);
+  const por = b.por ? String(b.por).slice(0, 80) : null;
+  const ahora = new Date().toISOString();
+
+  if (b.resultado === "aparecio") {
+    const n = Math.max(1, Math.min(caso.unidades, Number(b.encontradas) || 0));
+    const quedan = caso.unidades - n;
+    const { error: e } = await supabase.from("busqueda_profunda").update({
+      encontradas: caso.encontradas + n, unidades: quedan,
+      donde: b.donde ? String(b.donde).slice(0, 200) : caso.donde,
+      estado: quedan > 0 ? "pendiente" : "aparecio",
+      ...(quedan > 0 ? {} : { cerrado_por: por, cerrado_at: ahora }),
+      actualizado_at: ahora,
+    }).eq("id", caso.id).eq("estado", "pendiente");
+    if (e) throw e;
+    return json({ ok: true, quedan });
+  }
+
+  if (b.resultado === "perdido") {
+    let tn = null;
+    try { tn = await varianteTN(caso.sku); } catch (err) { console.error(err); }
+    const costo = tn?.costo ?? null;
+    const { error: e } = await supabase.from("busqueda_profunda").update({
+      estado: "perdido", perdidas: caso.unidades, cerrado_por: por, cerrado_at: ahora, actualizado_at: ahora,
+      stock_tn: tn?.stock ?? null, costo_unitario: costo, costo_total: costo === null ? null : costo * caso.unidades,
+    }).eq("id", caso.id).eq("estado", "pendiente");
+    if (e) throw e;
+    return json({ ok: true });
+  }
+  return json({ error: "Resultado inválido" }, 400);
 }
 
 Deno.serve(async (req) => {
@@ -650,6 +859,9 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && path === "/busqueda/pendientes") return await getPendientes(url);
     if (req.method === "GET" && path === "/busqueda/estado") return await getEstado(url);
     if (req.method === "POST" && path === "/busqueda/marcar") return await postMarcar(req);
+    if (req.method === "GET" && path === "/profunda") return await getProfunda();
+    if (req.method === "POST" && path === "/profunda/tomar") return await postProfundaTomar(req);
+    if (req.method === "POST" && path === "/profunda/cerrar") return await postProfundaCerrar(req);
     return json({ error: "Ruta no encontrada" }, 404);
   } catch (err) {
     console.error(err);

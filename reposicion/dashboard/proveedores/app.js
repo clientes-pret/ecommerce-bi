@@ -165,6 +165,7 @@ export function nav(perfil, activa) {
     [['software', 'Software'], ['sueldos', 'Sueldos'], ['servicios', 'Servicios'], ['publicidad', 'Publicidad']]
       .map(([k, t]) => it(`costos.html?rubro=${k}`, t, 'costos-' + k, 'sub')).join('') +
     it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
+    it('perdido.html', 'Stock perdido', 'perdido') +
     `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a>` +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
