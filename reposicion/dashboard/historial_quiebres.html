@@ -3,42 +3,93 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reposición — Historial de quiebres</title>
+<title>Reposición — Quiebres</title>
 <style>
   :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#e8eaed; --muted:#8b93a1; --accent:#4f8cff;
-    --abierto:#b02a37; --cerrado:#1e7e34; }
+    --abierto:#b02a37; --cerrado:#1e7e34; --aviso:#b8860b; }
   * { box-sizing: border-box; }
   body { margin:0; font-family:-apple-system,"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--text); }
-  main { padding: 16px 20px; max-width: 900px; margin: 0 auto; }
-  h1 { font-size: 18px; }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; }
-  input[type=text] { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  main { padding: 16px 20px; max-width: 1280px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 4px 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+  .tab { background: transparent; color: var(--muted); border: none; border-bottom: 3px solid transparent; border-radius: 0;
+    padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .tab.activa { color: var(--text); border-bottom-color: var(--accent); }
+  .tab .n { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; font-size: 12px; margin-left: 6px; }
+  .tab.activa .n { background: var(--accent); border-color: var(--accent); color: white; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  input[type=text], select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  input[type=text] { width: 230px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  button.secondary { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+  label.chk { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .grupo { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .grupo button { border-radius: 0; background: var(--panel); color: var(--muted); border: none; border-right: 1px solid var(--border); }
+  .grupo button:last-child { border-right: none; }
+  .grupo button.activa { background: var(--accent); color: white; }
+  .tabla-wrap { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
-  th { color: var(--muted); font-weight: 600; }
-  .badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; }
-  .badge.abierto { background: var(--abierto); }
-  .badge.cerrado { background: var(--cerrado); }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  th.ord { cursor: pointer; user-select: none; }
+  th.ord:hover { color: var(--text); }
+  td.num, th.num { text-align: right; }
+  .sku { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+  .badge.sin { background: var(--abierto); }
+  .badge.con { background: var(--cerrado); }
+  .badge.sol { background: var(--aviso); }
+  .stock0 { color: #ff8585; font-weight: 600; }
+  .stockOk { color: #6fd08c; font-weight: 600; }
+  .accion { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+  .accion input { width: 64px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; font-size: 13px; text-align: right; }
+  .accion input.error { border-color: #ff5c5c; }
+  .accion button.en-pedido { background: var(--cerrado); }
   #status { padding: 20px; color: var(--muted); }
   .muted { color: var(--muted); }
+  .mas { text-align: center; padding: 14px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>🕳️ Historial de quiebres de stock</h1>
-  <div class="toolbar">
-    <input type="text" id="filtroSku" placeholder="Filtrar por SKU…">
-    <button id="btnFiltrar">Buscar</button>
-    <button id="btnLimpiar">Ver todos</button>
+  <h1>🕳️ Quiebres de stock</h1>
+  <div class="sub" id="sub"></div>
+
+  <div class="tabs">
+    <button class="tab activa" data-destino="deposito">Quiebre en Depósito <span class="n" id="nDeposito">…</span></button>
+    <button class="tab" data-destino="full_pret">Quiebre en Full <span class="n" id="nFull">…</span></button>
   </div>
+
+  <div class="toolbar">
+    <input type="text" id="filtroTexto" placeholder="Buscar SKU o producto…">
+    <select id="filtroProveedor"><option value="">Todos los proveedores</option></select>
+    <div class="grupo" id="grupoEstado">
+      <button data-estado="sin" class="activa">Sin stock ahora</button>
+      <button data-estado="repuesto" title="Quebraron y ya tienen stock otra vez (últimos 14 días)">Ya repuestos</button>
+      <button data-estado="todos">Todos</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="soloVenden" checked> Solo los que venden</label>
+  </div>
+
   <div id="status">Cargando…</div>
-  <table id="tabla" style="display:none">
-    <thead>
-      <tr><th>SKU</th><th>Producto</th><th>Destino</th><th>Fecha quiebre</th><th>Stock previo</th><th>Vel. semanal al quebrar</th><th>Repuesto</th><th>Estado</th></tr>
-    </thead>
-    <tbody id="filas"></tbody>
-  </table>
+  <div class="tabla-wrap">
+    <table id="tabla" style="display:none">
+      <thead>
+        <tr>
+          <th class="ord" data-orden="sku">SKU</th>
+          <th class="ord" data-orden="nombre">Producto</th>
+          <th class="ord num" data-orden="vel" title="Unidades vendidas por semana en este destino (ventana de 60 días)">Vel. venta / sem</th>
+          <th class="ord num" data-orden="stock" title="Stock de hoy según el último relevamiento diario">Stock actual</th>
+          <th class="ord" data-orden="fecha">Fecha quiebre</th>
+          <th class="ord" data-orden="proveedor">Proveedor</th>
+          <th>A pedir</th>
+        </tr>
+      </thead>
+      <tbody id="filas"></tbody>
+    </table>
+  </div>
+  <div class="mas" id="mas" style="display:none"><button class="secondary" id="btnMas">Mostrar más</button></div>
 </main>
 
 <script src="config.js"></script>
@@ -46,48 +97,311 @@
 <script>
 renderNav("quiebres");
 
-// DESTINO_LABEL viene de app.js — declararlo también acá chocaba con esa
-// constante global (mismo <script> scope) y reventaba TODO el script con un
-// SyntaxError, incluido el renderNav() de arriba — por eso no aparecía ni el
-// menú de navegación al entrar a esta página.
+// OJO: DESTINO_LABEL y el resto de las constantes globales de app.js no se
+// pueden redeclarar acá (mismo scope de <script>: reventaba todo con un
+// SyntaxError, incluido el menú). Por eso estas llevan nombres propios.
 
-function render(quiebres) {
-  const tbody = document.getElementById("filas");
-  tbody.innerHTML = "";
-  for (const q of quiebres) {
-    const abierto = !q.fecha_reposicion;
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${q.sku}</td>
-      <td>${q.nombre || "<span class=muted>(sin nombre)</span>"}</td>
-      <td>${DESTINO_LABEL[q.destino] || q.destino}</td>
-      <td>${fmtDate(q.fecha_quiebre)}</td>
-      <td>${fmtNum(q.stock_previo)}</td>
-      <td>${fmtNum(q.vel_semanal_al_quebrar)}</td>
-      <td>${q.fecha_reposicion ? fmtDate(q.fecha_reposicion) : "—"}</td>
-      <td><span class="badge ${abierto ? "abierto" : "cerrado"}">${abierto ? "Sigue sin stock" : "Repuesto"}</span></td>
-    `;
-    tbody.appendChild(tr);
-  }
+// Cada pestaña es un pool de stock independiente (ver CLAUDE.md). Full Casa
+// Lavan está desactivado a propósito, igual que en el tablero (DESTINOS en
+// index.html) — para reactivarlo, sumar acá la entrada y una pestaña.
+const DEST = {
+  deposito: {
+    label: "Depósito",
+    stock: (p) => p.stock_deposito_hoy ?? p.stock_deposito,
+    vel: "vel_semanal_deposito", aReponer: "a_reponer_deposito", fechaCalc: "fecha_quiebre_deposito",
+  },
+  full_pret: {
+    label: "Full Pret a Home",
+    stock: (p) => p.stock_full_pret_hoy,
+    vel: "vel_semanal_full_pret", aReponer: "a_reponer_full_pret", fechaCalc: "fecha_quiebre_full_pret",
+  },
+};
+
+const DIAS_REPUESTO = 14;   // "Ya repuestos": cuántos días hacia atrás se muestran
+const POR_PAGINA = 100;
+
+let PRODUCTOS = [];
+let QUIEBRES = [];
+let PRIMER_QUIEBRE = null;   // fecha más vieja del historial (para el "antes del …")
+let destinoActual = "deposito";
+let estadoActual = "sin";
+let ordenCol = "vel", ordenDir = "desc";
+let visibles = POR_PAGINA;
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function diasDesde(iso) {
+  if (!iso) return null;
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d)) return null;
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  return Math.round((hoy - d) / 86400000);
 }
 
-async function cargar(sku) {
-  document.getElementById("status").textContent = "Cargando…";
-  document.getElementById("tabla").style.display = "none";
+// Arma una fila por SKU para el destino: el quiebre más reciente del historial
+// (abierto o ya repuesto) + los datos de hoy (stock, velocidad, proveedor).
+// Además suma los SKUs que están en 0 y venden pero no tienen quiebre en el
+// historial (ya estaban en 0 cuando empezó a registrarse) — la fecha ahí sale
+// del cálculo diario, o queda "antes del …" si no se sabe.
+function construirFilas(destino) {
+  const cfg = DEST[destino];
+  const ultimo = new Map();
+  for (const q of QUIEBRES) {
+    if (q.destino !== destino) continue;
+    const cur = ultimo.get(q.sku);
+    if (!cur || q.fecha_quiebre > cur.fecha_quiebre || (q.fecha_quiebre === cur.fecha_quiebre && q.id > cur.id)) ultimo.set(q.sku, q);
+  }
+  const filas = [];
+  for (const p of PRODUCTOS) {
+    const stock = cfg.stock(p) ?? 0;
+    const vel = Number(p[cfg.vel]) || 0;
+    const q = ultimo.get(p.sku);
+    if (!q && !(stock === 0 && vel > 0)) continue;
+    const sinStock = stock <= 0;
+    const fechaQuiebre = q ? q.fecha_quiebre : (p[cfg.fechaCalc] || null);
+    // Repuesto: la fecha en que el job lo vio otra vez con stock. Si el stock de
+    // hoy ya es > 0 pero el historial todavía no lo cerró, cuenta como de hoy.
+    const fechaRepo = !sinStock ? ((q && q.fecha_reposicion) || null) : null;
+    filas.push({
+      p, sku: p.sku, nombre: p.nombre || "", proveedor: p.proveedor || "Otros",
+      vel, stock, sinStock, fechaQuiebre, fechaRepo,
+      sugerido: Number(p[cfg.aReponer]) || 0,
+      solicitado: (p.destinos_ya_solicitados || []).includes(destino),
+      diasRepo: sinStock ? null : (fechaRepo ? diasDesde(fechaRepo) : 0),
+    });
+  }
+  return filas;
+}
+
+function pasaEstado(f) {
+  if (estadoActual === "sin") return f.sinStock;
+  if (estadoActual === "repuesto") return !f.sinStock && f.diasRepo !== null && f.diasRepo <= DIAS_REPUESTO;
+  return true;
+}
+
+function filasFiltradas(destino, { conTexto = true } = {}) {
+  const soloVenden = document.getElementById("soloVenden").checked;
+  const prov = document.getElementById("filtroProveedor").value;
+  const txt = document.getElementById("filtroTexto").value.trim().toLowerCase();
+  return construirFilas(destino).filter((f) =>
+    pasaEstado(f) &&
+    (!soloVenden || f.vel > 0) &&
+    (!prov || f.proveedor === prov) &&
+    (!conTexto || !txt || f.sku.toLowerCase().includes(txt) || f.nombre.toLowerCase().includes(txt))
+  );
+}
+
+const CLAVES = {
+  sku: (f) => f.sku.toLowerCase(),
+  nombre: (f) => f.nombre.toLowerCase(),
+  vel: (f) => f.vel,
+  stock: (f) => f.stock,
+  fecha: (f) => f.fechaQuiebre || "0000-00-00",   // sin fecha = más viejo
+  proveedor: (f) => f.proveedor.toLowerCase(),
+};
+
+function enCarrito(sku, destino) {
+  return getCarrito().find((l) => l.sku === sku && l.destino === destino);
+}
+
+function refrescarNavCarrito() {
+  const a = Array.from(document.querySelectorAll("nav a")).find((x) => x.getAttribute("href") === "pedido.html");
+  if (!a) return;
+  const n = getCarrito().length;
+  a.textContent = n ? `🛒 Carrito (${n})` : "🛒 Carrito";
+}
+
+// Proveedores conocidos que deben poder elegirse aunque todavía no tengan
+// ningún SKU asignado (mismo criterio que PROVEEDORES_CONOCIDOS del tablero).
+const PROVEEDORES_CONOCIDOS = ["Guiwi"];
+
+function listaProveedores() {
+  return Array.from(new Set([...PRODUCTOS.map((p) => p.proveedor || "Otros"), ...PROVEEDORES_CONOCIDOS]))
+    .sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function llenarFiltroProveedor() {
+  const sel = document.getElementById("filtroProveedor");
+  const actual = sel.value;
+  sel.innerHTML = `<option value="">Todos los proveedores</option>` +
+    listaProveedores().map((v) => `<option>${esc(v)}</option>`).join("");
+  sel.value = actual;
+}
+
+// Corregir el proveedor de un producto: se guarda en el producto (igual que en
+// el tablero, queda para siempre) y, si ya está en el carrito, la línea pasa al
+// proveedor nuevo — el pedido se arma agrupado por proveedor.
+function selectProveedor(f) {
+  const sel = document.createElement("select");
+  sel.title = "Cambiar el proveedor de este producto";
+  const opciones = listaProveedores();
+  if (!opciones.includes(f.proveedor)) opciones.push(f.proveedor);
+  sel.innerHTML = opciones.map((v) => `<option value="${esc(v)}"${v === f.proveedor ? " selected" : ""}>${esc(v)}</option>`).join("") +
+    `<option value="__otro__">Otro…</option>`;
+  sel.addEventListener("change", async () => {
+    let valor = sel.value;
+    if (valor === "__otro__") {
+      valor = (prompt("Nombre del proveedor:") || "").trim();
+      if (!valor) { sel.value = f.proveedor; return; }
+    }
+    if (valor === f.proveedor) return;
+    sel.disabled = true;
+    try {
+      await apiFetch(`/productos/${encodeURIComponent(f.sku)}/proveedor`, {
+        method: "POST", body: JSON.stringify({ proveedor: valor }),
+      });
+    } catch (e) {
+      alert(`No se pudo guardar el proveedor: ${e.message}`);
+      sel.value = f.proveedor;
+      sel.disabled = false;
+      return;
+    }
+    f.p.proveedor_manual = valor; f.p.proveedor = valor; f.proveedor = valor;
+    setCarrito(getCarrito().map((l) => (l.sku === f.sku ? { ...l, proveedor: valor } : l)));
+    llenarFiltroProveedor();
+    // Si hay un filtro de proveedor puesto, la fila ya no corresponde: se redibuja.
+    if (document.getElementById("filtroProveedor").value) render();
+    else {
+      if (!Array.from(sel.options).some((o) => o.value === valor)) sel.add(new Option(valor, valor), sel.options[sel.options.length - 1]);
+      sel.value = valor;
+      sel.disabled = false;
+    }
+  });
+  return sel;
+}
+
+function fechaHTML(f) {
+  if (!f.fechaQuiebre) {
+    return `<span class="muted">antes del ${fmtDate(PRIMER_QUIEBRE)}</span>`;
+  }
+  const d = diasDesde(f.fechaQuiebre);
+  const hace = d === null ? "" : d === 0 ? "hoy" : d === 1 ? "ayer" : `hace ${d} días`;
+  return `${fmtDate(f.fechaQuiebre)} <span class="muted">· ${hace}</span>`;
+}
+
+function accionHTML(f) {
+  const lin = enCarrito(f.sku, destinoActual);
+  const valor = lin ? lin.cantidad : (f.sugerido || "");
+  const sol = f.solicitado ? `<span class="badge sol" title="Ya hay un pedido abierto con este producto para este destino">✓ Ya solicitado</span>` : "";
+  return `<div class="accion">
+    <input type="number" min="0" value="${valor}" placeholder="cant." title="${f.sugerido ? "Sugerido por el sistema: " + f.sugerido : "Sin sugerencia automática — escribí la cantidad"}">
+    <button class="btn-pedido${lin ? " en-pedido" : ""}">${lin ? "✓ En el pedido" : "🛒 Sumar a pedido"}</button>
+    ${sol}
+  </div>`;
+}
+
+function render() {
+  const filas = filasFiltradas(destinoActual);
+  const clave = CLAVES[ordenCol];
+  filas.sort((a, b) => {
+    const x = clave(a), y = clave(b);
+    const c = x < y ? -1 : x > y ? 1 : 0;
+    return (ordenDir === "asc" ? c : -c) || (b.vel - a.vel);
+  });
+
+  const tbody = document.getElementById("filas");
+  tbody.innerHTML = "";
+  const cfg = DEST[destinoActual];
+  for (const f of filas.slice(0, visibles)) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="sku">${esc(f.sku)}</td>
+      <td>${f.nombre ? esc(f.nombre) : "<span class=muted>(sin nombre)</span>"}</td>
+      <td class="num">${f.vel ? fmtNum(Math.round(f.vel * 10) / 10) : "<span class=muted>—</span>"}</td>
+      <td class="num"><span class="${f.sinStock ? "stock0" : "stockOk"}">${fmtNum(f.stock)}</span>${
+        f.sinStock ? "" : `<div class="muted" style="font-size:11px">${f.fechaRepo ? "repuesto " + fmtDate(f.fechaRepo) : "repuesto"}</div>`}</td>
+      <td>${fechaHTML(f)}</td>
+      <td></td>
+      <td>${accionHTML(f)}</td>`;
+    const selProv = selectProveedor(f);
+    tr.children[5].appendChild(selProv);
+    const input = tr.querySelector("input");
+    const btn = tr.querySelector(".btn-pedido");
+    input.addEventListener("focus", () => input.select());
+    btn.addEventListener("click", () => {
+      const qty = Number(input.value);
+      if (!qty || qty <= 0) {
+        input.focus();
+        input.classList.add("error");
+        setTimeout(() => input.classList.remove("error"), 1200);
+        return;
+      }
+      addLineaCarrito({
+        sku: f.sku, nombre: f.nombre, proveedor: f.proveedor,
+        destino: destinoActual, cantidad: qty, cantidad_sugerida: f.sugerido,
+        stock_hoy: f.stock ?? 0,
+      });
+      btn.textContent = "✓ En el pedido";
+      btn.classList.add("en-pedido");
+      refrescarNavCarrito();
+    });
+    tbody.appendChild(tr);
+  }
+
+  document.getElementById("status").style.display = filas.length ? "none" : "block";
+  if (!filas.length) document.getElementById("status").textContent = "No hay productos para estos filtros.";
+  document.getElementById("tabla").style.display = filas.length ? "table" : "none";
+  const mas = document.getElementById("mas");
+  mas.style.display = filas.length > visibles ? "block" : "none";
+  document.getElementById("btnMas").textContent = `Mostrar más (${filas.length - visibles} restantes)`;
+
+  for (const th of document.querySelectorAll("th.ord")) {
+    th.textContent = th.textContent.replace(/ [▲▼]$/, "");
+    if (th.dataset.orden === ordenCol) th.textContent += ordenDir === "asc" ? " ▲" : " ▼";
+  }
+  document.getElementById("nDeposito").textContent = filasFiltradas("deposito", { conTexto: false }).length;
+  document.getElementById("nFull").textContent = filasFiltradas("full_pret", { conTexto: false }).length;
+}
+
+function resetYRender() { visibles = POR_PAGINA; render(); }
+
+for (const t of document.querySelectorAll(".tab")) {
+  t.addEventListener("click", () => {
+    destinoActual = t.dataset.destino;
+    document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("activa", x === t));
+    resetYRender();
+  });
+}
+for (const b of document.querySelectorAll("#grupoEstado button")) {
+  b.addEventListener("click", () => {
+    estadoActual = b.dataset.estado;
+    document.querySelectorAll("#grupoEstado button").forEach((x) => x.classList.toggle("activa", x === b));
+    resetYRender();
+  });
+}
+for (const th of document.querySelectorAll("th.ord")) {
+  th.addEventListener("click", () => {
+    const col = th.dataset.orden;
+    if (ordenCol === col) ordenDir = ordenDir === "asc" ? "desc" : "asc";
+    else { ordenCol = col; ordenDir = (col === "vel" || col === "stock") ? "desc" : "asc"; }
+    resetYRender();
+  });
+}
+document.getElementById("filtroTexto").addEventListener("input", resetYRender);
+document.getElementById("filtroProveedor").addEventListener("change", resetYRender);
+document.getElementById("soloVenden").addEventListener("change", resetYRender);
+document.getElementById("btnMas").addEventListener("click", () => { visibles += POR_PAGINA; render(); });
+
+async function cargar() {
   try {
-    const qs = sku ? `?sku=${encodeURIComponent(sku)}` : "";
-    const quiebres = await apiFetch(`/quiebres${qs}`);
-    render(quiebres);
-    document.getElementById("status").style.display = "none";
-    document.getElementById("tabla").style.display = "table";
+    // /productos trae todo lo de hoy (stock del último relevamiento, velocidad,
+    // proveedor, sugerido, pedidos abiertos) — el historial de /quiebres solo
+    // aporta cuándo quebró cada uno.
+    const [productos, quiebres] = await Promise.all([apiFetch("/productos"), apiFetch("/quiebres")]);
+    PRODUCTOS = productos;
+    QUIEBRES = quiebres;
+    PRIMER_QUIEBRE = quiebres.reduce((m, q) => (!m || q.fecha_quiebre < m ? q.fecha_quiebre : m), null);
+
+    llenarFiltroProveedor();
+
+    const ultima = productos.map((p) => p.stock_actualizado_at).filter(Boolean).sort().pop();
+    document.getElementById("sub").textContent =
+      `El stock se relevó ${ultima ? fmtFechaHora(ultima) : "—"} y se actualiza todos los días: un producto que ya entró mercadería aparece en "Ya repuestos".`;
+    render();
   } catch (e) {
     document.getElementById("status").textContent = `Error: ${e.message}`;
   }
 }
-
-document.getElementById("btnFiltrar").addEventListener("click", () => cargar(document.getElementById("filtroSku").value.trim()));
-document.getElementById("btnLimpiar").addEventListener("click", () => { document.getElementById("filtroSku").value = ""; cargar(); });
-document.getElementById("filtroSku").addEventListener("keydown", (e) => { if (e.key === "Enter") cargar(e.target.value.trim()); });
 
 cargar();
 </script>
