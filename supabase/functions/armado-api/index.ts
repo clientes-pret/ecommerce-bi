@@ -726,10 +726,11 @@ async function casoPendiente(sku: string) {
 
 async function guardarReportes(caso: Json, reportes: Reporte[], extra: Json = {}) {
   const { reportadas, pedidos } = sumarReportes(reportes);
-  const unidades = Math.max(0, reportadas - caso.encontradas);
+  // Lo que ya apareció o ya se dio por perdido (no está / se pidió al proveedor) no se vuelve a buscar
+  const unidades = Math.max(0, reportadas - caso.encontradas - caso.perdidas);
   const { error } = await supabase.from("busqueda_profunda").update({
     ...extra, reportes, reportadas, unidades, pedidos,
-    estado: unidades > 0 ? "pendiente" : "aparecio",
+    estado: unidades > 0 ? "pendiente" : caso.encontradas > 0 || !caso.perdidas ? "aparecio" : "perdido",
     ...(unidades > 0 ? {} : { cerrado_at: new Date().toISOString(), cerrado_por: caso.cerrado_por ?? caso.tomado_por }),
     actualizado_at: new Date().toISOString(),
   }).eq("id", caso.id);
@@ -759,7 +760,7 @@ async function retirarReporte(sku: string, clave: string) {
   const caso = await casoPendiente(sku);
   if (!caso || !(caso.reportes as Reporte[]).some((r) => r.clave === clave)) return;
   const reportes = (caso.reportes as Reporte[]).filter((r) => r.clave !== clave);
-  if (!reportes.length && !caso.encontradas && !caso.tomado_por) {
+  if (!reportes.length && !caso.encontradas && !caso.perdidas && !caso.tomado_por) {
     const { error } = await supabase.from("busqueda_profunda").delete().eq("id", caso.id);
     if (error) throw error;
     return;
@@ -816,32 +817,46 @@ async function postProfundaCerrar(req: Request) {
   const por = b.por ? String(b.por).slice(0, 80) : null;
   const ahora = new Date().toISOString();
 
-  if (b.resultado === "aparecio") {
-    const n = Math.max(1, Math.min(caso.unidades, Number(b.encontradas) || 0));
-    const quedan = caso.unidades - n;
-    const { error: e } = await supabase.from("busqueda_profunda").update({
-      encontradas: caso.encontradas + n, unidades: quedan,
-      donde: b.donde ? String(b.donde).slice(0, 200) : caso.donde,
-      estado: quedan > 0 ? "pendiente" : "aparecio",
-      ...(quedan > 0 ? {} : { cerrado_por: por, cerrado_at: ahora }),
-      actualizado_at: ahora,
-    }).eq("id", caso.id).eq("estado", "pendiente");
-    if (e) throw e;
-    return json({ ok: true, quedan });
-  }
-
-  if (b.resultado === "perdido") {
+  // Lo que no apareció en el depósito (no está, o se pidió al proveedor) es Stock perdido: se valúa al
+  // costo de Tiendanube de hoy y se guarda el stock que la tienda creía tener.
+  const sumarPerdidas = async (n: number) => {
     let tn = null;
     try { tn = await varianteTN(caso.sku); } catch (err) { console.error(err); }
-    const costo = tn?.costo ?? null;
-    const { error: e } = await supabase.from("busqueda_profunda").update({
-      estado: "perdido", perdidas: caso.unidades, cerrado_por: por, cerrado_at: ahora, actualizado_at: ahora,
-      stock_tn: tn?.stock ?? null, costo_unitario: costo, costo_total: costo === null ? null : costo * caso.unidades,
-    }).eq("id", caso.id).eq("estado", "pendiente");
-    if (e) throw e;
-    return json({ ok: true });
+    const costo = tn?.costo ?? (caso.costo_unitario === null ? null : Number(caso.costo_unitario));
+    const perdidas = caso.perdidas + n;
+    return {
+      perdidas, perdido_at: ahora, stock_tn: tn?.stock ?? caso.stock_tn,
+      costo_unitario: costo, costo_total: costo === null ? null : costo * perdidas,
+    };
+  };
+  const cerrar = (quedan: number, encontradas: number) => ({
+    unidades: quedan,
+    estado: quedan > 0 ? "pendiente" : encontradas > 0 ? "aparecio" : "perdido",
+    ...(quedan > 0 ? {} : { cerrado_por: por, cerrado_at: ahora }),
+    actualizado_at: ahora,
+  });
+
+  let cambios: Json;
+  if (b.resultado === "aparecio" || b.resultado === "proveedor") {
+    const n = Math.max(1, Math.min(caso.unidades, Number(b.encontradas) || 0));
+    const quedan = caso.unidades - n;
+    if (b.resultado === "proveedor") {
+      // El pedido se puede despachar, pero esas unidades no aparecieron en el depósito
+      cambios = { ...(await sumarPerdidas(n)), al_proveedor: caso.al_proveedor + n, ...cerrar(quedan, caso.encontradas) };
+    } else {
+      cambios = {
+        encontradas: caso.encontradas + n, donde: b.donde ? String(b.donde).slice(0, 200) : caso.donde,
+        ...cerrar(quedan, caso.encontradas + n),
+      };
+    }
+  } else if (b.resultado === "perdido") {
+    cambios = { ...(await sumarPerdidas(caso.unidades)), ...cerrar(0, caso.encontradas) };
+  } else {
+    return json({ error: "Resultado inválido" }, 400);
   }
-  return json({ error: "Resultado inválido" }, 400);
+  const { error: e } = await supabase.from("busqueda_profunda").update(cambios).eq("id", caso.id).eq("estado", "pendiente");
+  if (e) throw e;
+  return json({ ok: true, quedan: cambios.unidades });
 }
 
 Deno.serve(async (req) => {

@@ -11,7 +11,9 @@
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-// Stock perdido: lo que el depósito no encontró ni en la búsqueda profunda (busqueda_profunda, estado 'perdido').
+// Stock perdido: lo que el depósito no encontró ni en la búsqueda profunda (busqueda_profunda, `perdidas` > 0):
+// lo que quien buscaba confirmó que no está, y lo que resolvió pidiéndolo al proveedor (`al_proveedor`, parte de
+// `perdidas`). Se agrupa por el mes de `perdido_at`.
 // La app del depósito (armado.html) lo carga; acá solo se mira, con el costo de Tiendanube del día en que se
 // confirmó (queda guardado aunque el costo cambie después). "TN decía" es el stock que Tiendanube creía tener:
 // sirve para corregirlo en la tienda (el sistema no lo toca). La marca sale de los pedidos que esperaban el producto.
@@ -36,25 +38,30 @@ casos = casos.map((c) => ({ ...c, costo_total: c.costo_total === null ? null : N
   marcas: [...new Set((c.pedidos || []).map((p) => p.tienda))] }));
 
 const mesActual = mesDe(new Date().toISOString());
-const meses = [...new Set([mesActual, ...casos.filter((c) => c.cerrado_at).map((c) => mesDe(c.cerrado_at))])].sort().reverse();
+const fechaPerdida = (c) => c.perdido_at || c.cerrado_at;
+const meses = [...new Set([mesActual, ...casos.filter((c) => c.cerrado_at || c.perdido_at).map((c) => mesDe(fechaPerdida(c) || c.cerrado_at))])].sort().reverse();
 let mes = mesActual, marca = 'todas';
 
 function pintar() {
   const deMarca = (c) => marca === 'todas' || c.marcas.includes(marca);
   const enMes = (c) => c.cerrado_at && (mes === 'todos' || mesDe(c.cerrado_at) === mes);
-  const perdidos = casos.filter((c) => c.estado === 'perdido' && deMarca(c) && enMes(c));
+  const perdidos = casos.filter((c) => c.perdidas > 0 && deMarca(c) && (mes === 'todos' || mesDe(fechaPerdida(c)) === mes));
   const cerrados = casos.filter((c) => c.estado !== 'pendiente' && deMarca(c) && enMes(c));
   const aparecidos = casos.filter((c) => c.encontradas > 0 && deMarca(c) && enMes(c));
   const pendientes = casos.filter((c) => c.estado === 'pendiente' && deMarca(c));
   const suma = (xs, f) => xs.reduce((a, x) => a + (f(x) || 0), 0);
   const uPerdidas = suma(perdidos, (c) => c.perdidas), plata = suma(perdidos, (c) => c.costo_total);
   const sinCosto = perdidos.filter((c) => c.costo_total === null).length;
+  const uProveedor = suma(perdidos, (c) => c.al_proveedor);
   const uEnc = suma(cerrados, (c) => c.encontradas), uRep = uEnc + suma(cerrados, (c) => c.perdidas);
 
   // Últimos 6 meses de plata perdida (con el filtro de marca)
   const ult6 = Array.from({ length: 6 }, (_, i) => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 5 + i); return d.toISOString().slice(0, 7); });
   const porMes = Object.fromEntries(ult6.map((m) => [m, { u: 0, p: 0 }]));
-  for (const c of casos) if (c.estado === 'perdido' && deMarca(c) && porMes[mesDe(c.cerrado_at)]) { porMes[mesDe(c.cerrado_at)].u += c.perdidas; porMes[mesDe(c.cerrado_at)].p += c.costo_total || 0; }
+  for (const c of casos) {
+    const m = c.perdidas > 0 && deMarca(c) && porMes[mesDe(fechaPerdida(c))];
+    if (m) { m.u += c.perdidas; m.p += c.costo_total || 0; }
+  }
 
   const segMarca = [['todas', 'Las dos marcas'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']]
     .map(([k, t]) => `<button type="button" data-marca="${k}" aria-pressed="${marca === k}">${t}</button>`).join('');
@@ -66,7 +73,7 @@ function pintar() {
       ${meses.map((m) => `<option value="${m}" ${m === mes ? 'selected' : ''}>${nombreMes(m)}</option>`).join('')}<option value="todos" ${mes === 'todos' ? 'selected' : ''}>Todos los meses</option></select></div></div>
   <div class="seg" role="group" aria-label="Marca" style="margin-bottom:14px">${segMarca}</div>
   <div class="centro-comando">
-    <div class="cc-card ${uPerdidas ? 'alerta' : ''}"><div class="cc-label">Unidades perdidas · ${titMes}</div><div class="cc-valor num">${uPerdidas}</div><div class="cc-sub">${perdidos.length} producto${perdidos.length === 1 ? '' : 's'}</div></div>
+    <div class="cc-card ${uPerdidas ? 'alerta' : ''}"><div class="cc-label">Unidades perdidas · ${titMes}</div><div class="cc-valor num">${uPerdidas}</div><div class="cc-sub">${perdidos.length} producto${perdidos.length === 1 ? '' : 's'}${uProveedor ? ` · ${uProveedor} se ${uProveedor === 1 ? 'pidió' : 'pidieron'} al proveedor` : ''}</div></div>
     <div class="cc-card ${plata ? 'alerta' : ''}"><div class="cc-label">Plata perdida al costo</div><div class="cc-valor num">${peso0(plata)}</div><div class="cc-sub">${sinCosto ? `${sinCosto} sin costo cargado en Tiendanube` : 'costo de Tiendanube al confirmar'}</div></div>
     <div class="cc-card"><div class="cc-label">Aparecieron en la búsqueda profunda</div><div class="cc-valor num">${uEnc}</div><div class="cc-sub">${uRep ? `de ${uRep} unidades cerradas (${Math.round(uEnc / uRep * 100)} %)` : 'nada cerrado todavía'}</div></div>
     <div class="cc-card"><div class="cc-label">Buscándose ahora</div><div class="cc-valor num">${suma(pendientes, (c) => c.unidades)}</div><div class="cc-sub">${pendientes.length} producto${pendientes.length === 1 ? '' : 's'} en la búsqueda profunda</div></div>
@@ -76,20 +83,22 @@ function pintar() {
     <tbody><tr><th scope="row">Unidades</th>${ult6.map((m) => `<td class="r num">${porMes[m].u}</td>`).join('')}</tr>
     <tr><th scope="row">Al costo</th>${ult6.map((m) => `<td class="r num"><b>${peso0(porMes[m].p)}</b></td>`).join('')}</tr></tbody></table></div></section>
   <section class="card tabla"><div class="cab"><div><h2>Perdidos · ${titMes}</h2><span class="muted">"TN decía": el stock que figuraba en Tiendanube al confirmar. Si es mayor a cero, conviene corregirlo en la tienda.</span></div></div>
-    <div class="scroll"><table style="min-width:820px"><thead><tr><th scope="col">Producto</th><th scope="col">Marca</th><th scope="col">Confirmó</th><th scope="col">Fecha</th>
+    <div class="scroll"><table style="min-width:960px"><thead><tr><th scope="col">Producto</th><th scope="col">Qué pasó</th><th scope="col">Marca</th><th scope="col">Confirmó</th><th scope="col">Fecha</th>
       <th scope="col" class="r">Unidades</th><th scope="col" class="r">Costo unit.</th><th scope="col" class="r">Total</th><th scope="col" class="r">TN decía</th></tr></thead>
     <tbody>${perdidos.map((c) => `<tr><td><b>${esc(c.nombre || c.sku)}</b>${c.variante ? ` · ${esc(c.variante)}` : ''}<div class="small muted">${esc(c.sku)}</div></td>
-      <td>${c.marcas.map((k) => MARCAS[k] || k).join(', ')}</td><td>${esc(c.cerrado_por || '')}</td><td class="num">${dm(c.cerrado_at)}</td>
+      <td>${c.al_proveedor >= c.perdidas ? '<span class="chip info">Se pidió al proveedor</span>'
+        : c.al_proveedor ? `No está · ${c.al_proveedor} se ${c.al_proveedor === 1 ? 'pidió' : 'pidieron'} al proveedor` : 'No está'}</td>
+      <td>${c.marcas.map((k) => MARCAS[k] || k).join(', ')}</td><td>${esc(c.cerrado_por || c.tomado_por || '')}</td><td class="num">${dm(fechaPerdida(c))}</td>
       <td class="r num">${c.perdidas}</td><td class="r num">${c.costo_unitario === null ? '<span class="muted">sin costo</span>' : peso0(c.costo_unitario)}</td>
       <td class="r num"><b>${c.costo_total === null ? '—' : peso0(c.costo_total)}</b></td>
       <td class="r num">${c.stock_tn === null ? '—' : c.stock_tn > 0 ? `<span class="chip">${c.stock_tn}</span>` : 0}</td></tr>`).join('') ||
-      '<tr><td colspan="8" class="muted">No se perdió nada en este período.</td></tr>'}</tbody></table></div></section>
+      '<tr><td colspan="9" class="muted">No se perdió nada en este período.</td></tr>'}</tbody></table></div></section>
   <section class="card tabla"><div class="cab"><div><h2>Aparecieron · ${titMes}</h2><span class="muted">Dónde estaba lo que nadie encontraba</span></div></div>
     <div class="scroll"><table style="min-width:640px"><thead><tr><th scope="col">Producto</th><th scope="col">Dónde estaba</th><th scope="col">Lo encontró</th><th scope="col" class="r">Unidades</th></tr></thead>
     <tbody>${aparecidos.map((c) => `<tr><td><b>${esc(c.nombre || c.sku)}</b>${c.variante ? ` · ${esc(c.variante)}` : ''}<div class="small muted">${esc(c.sku)}</div></td>
       <td>${esc(c.donde || '—')}</td><td>${esc(c.cerrado_por || c.tomado_por || '')}</td><td class="r num">${c.encontradas}</td></tr>`).join('') ||
       '<tr><td colspan="4" class="muted">Nada en este período.</td></tr>'}</tbody></table></div></section>
-  <p class="muted small" style="line-height:1.6">Entra a la búsqueda profunda todo lo que alguien marca como "no hay" en la app del depósito (Búsqueda o Empaquetado). Si aparece, sale de la lista; si quien la busca confirma que no está, pasa acá. El sistema no cambia el stock de Tiendanube.</p>`;
+  <p class="muted small" style="line-height:1.6">Entra a la búsqueda profunda todo lo que alguien marca como "no hay" en la app del depósito (Búsqueda o Empaquetado). Si aparece, sale de la lista; si quien la busca confirma que no está, o lo resuelve pidiéndolo al proveedor, pasa acá con su costo. El sistema no cambia el stock de Tiendanube.</p>`;
 
   $('#mes').onchange = (e) => { mes = e.target.value; pintar(); };
   $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; pintar(); }));

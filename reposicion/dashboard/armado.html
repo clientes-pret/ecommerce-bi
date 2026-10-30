@@ -1250,7 +1250,8 @@ function vistaFalta() {
 // ("Lo busco yo"), lo busca a fondo y lo cierra: apareció (cuántas y dónde estaba) o no está. Lo que no está
 // pasa a Stock perdido, que se ve en el panel de control y no en esta app.
 const prof = { casos: [], cargado: false, error: null, vista: "lista", id: null, pollId: null, firma: "" };
-const DONDE = ["Otro estante", "En otra caja", "Devoluciones", "Otro lugar"];
+const PROVEEDOR = "Lo pedí al proveedor"; // no apareció en el depósito: cuenta como Stock perdido
+const DONDE = ["Otro estante", "En otra caja", "Devoluciones", "Otro lugar", PROVEEDOR];
 
 function detenerProfunda() { clearInterval(prof.pollId); prof.pollId = null; }
 
@@ -1337,6 +1338,7 @@ function vistaCaso() {
     <div class="sku">${esc(c.sku)}</div>
     ${c.stock_tn === null || c.stock_tn === undefined ? "" : `<div class="tn-dice"><span>Tiendanube dice que hay</span><b>${c.stock_tn}</b></div>`}
     ${c.encontradas ? `<div class="marcado">Ya aparecieron ${c.encontradas}${c.donde ? ` · ${esc(c.donde)}` : ""}</div>` : ""}
+    ${c.al_proveedor ? `<div class="marcado">Ya se pidieron ${c.al_proveedor} al proveedor</div>` : ""}
     <div class="grupo"><span>Quién no lo encontró</span>
       ${c.reportes.map((r) => `<div class="rep">${esc(r.por || "Alguien")} · ${r.origen === "busqueda" ? "Búsqueda" : "Empaquetado"}
         <small>${fechaHora(r.at)} · ${r.origen === "busqueda" ? `faltaban ${r.faltan}` : `pedido ${esc(r.pedidos[0]?.pedido || "")}`}</small></div>`).join("")}
@@ -1415,7 +1417,7 @@ function hojaAparecio(c) {
   $("hojaB").innerHTML = `
     <h3>¡Apareció! ¿Cuántas?</h3>
     ${c.unidades > 1 ? `<div class="stepper"><button type="button" id="hMenos">−</button><strong id="hN"></strong><button type="button" id="hMas">+</button></div>` : ""}
-    <div class="grupo"><span>¿Dónde estaba?</span>
+    <div class="grupo"><span>¿Dónde estaba o cómo lo resolviste?</span>
       <div class="donde">${DONDE.map((d) => `<button type="button" data-donde="${d}">${d}</button>`).join("")}</div>
       <input class="texto" id="hOtro" placeholder="¿Dónde?" hidden>
     </div>
@@ -1425,7 +1427,9 @@ function hojaAparecio(c) {
     if ($("hN")) $("hN").innerHTML = `${n} <small>de ${c.unidades}</small>`;
     for (const b of $("hojaB").querySelectorAll("[data-donde]")) b.classList.toggle("on", b.dataset.donde === donde);
     $("hOtro").hidden = donde !== "Otro lugar";
-    $("hGuardar").textContent = n < c.unidades ? `Apareció ${n} · siguen faltando ${c.unidades - n}` : "Guardar";
+    $("hGuardar").textContent = donde === PROVEEDOR
+      ? `Pedí ${n} al proveedor${n < c.unidades ? ` · siguen faltando ${c.unidades - n}` : ""}`
+      : n < c.unidades ? `Apareció ${n} · siguen faltando ${c.unidades - n}` : "Guardar";
   };
   if ($("hMenos")) {
     $("hMenos").onclick = () => { n = Math.max(1, n - 1); pintar(); };
@@ -1433,7 +1437,7 @@ function hojaAparecio(c) {
   }
   for (const b of $("hojaB").querySelectorAll("[data-donde]")) b.onclick = () => { donde = b.dataset.donde; pintar(); if (donde === "Otro lugar") $("hOtro").focus(); };
   $("hOtro").oninput = (e) => { otro = e.target.value; };
-  $("hGuardar").onclick = () => cerrarCaso(c, { resultado: "aparecio", encontradas: n,
+  $("hGuardar").onclick = () => cerrarCaso(c, donde === PROVEEDOR ? { resultado: "proveedor", encontradas: n } : { resultado: "aparecio", encontradas: n,
     donde: donde === "Otro lugar" ? (otro.trim() || "Otro lugar") : donde || null });
   $("hVolver").onclick = cerrarHoja;
   pintar();
