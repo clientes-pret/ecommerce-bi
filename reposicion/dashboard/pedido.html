@@ -126,16 +126,35 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
   }
 }
 
-function quitarLinea(sku) {
+// Quitar un producto NO vuelve a dibujar el carrito: render() reconstruye todo
+// desde localStorage, y las cantidades editadas (y el destino/unidad elegidos)
+// solo viven en los inputs, así que se perdían. Acá solo se saca la fila.
+function quitarLinea(tr) {
+  const sku = tr.dataset.sku;
   quitarLineaCarrito(sku, "deposito");
   quitarLineaCarrito(sku, "full_pret");
   quitarLineaCarrito(sku, "full_lavan");
-  render();
+  const grupoEl = tr.closest(".grupo");
+  tr.remove();
+  const quedan = grupoEl.querySelectorAll("tbody tr[data-sku]").length;
+  if (!quedan) {
+    grupoEl.remove();
+  } else {
+    grupoEl.querySelector("h2").textContent =
+      `📦 ${grupoEl.dataset.proveedor} — ${quedan} producto${quedan === 1 ? "" : "s"}`;
+  }
+  if (!document.querySelector("#grupos .grupo")) {
+    document.getElementById("vacio").style.display = "block";
+  }
+  const n = getCarrito().length;
+  const navLink = document.querySelector('nav a[href="pedido.html"]');
+  if (navLink) navLink.textContent = n ? `🛒 Carrito (${n})` : "🛒 Carrito";
 }
 
 function renderGrupo(proveedor, lineas) {
   const el = document.createElement("div");
   el.className = "grupo";
+  el.dataset.proveedor = proveedor;
   const grupos = agruparPorSku(lineas);
   const filas = grupos.map((g) => {
     const nombre = g.nombre || (g.deposito || g.full)?.nombre || "";
@@ -181,8 +200,7 @@ function renderGrupo(proveedor, lineas) {
 
   el.querySelectorAll(".btn-quitar").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const tr = btn.closest("tr");
-      quitarLinea(tr.dataset.sku);
+      quitarLinea(btn.closest("tr"));
     });
   });
   el.querySelectorAll(".qty-deposito, .qty-full").forEach((inp) => {
