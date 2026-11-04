@@ -679,7 +679,7 @@ async function postMarcar(req: Request) {
 // por origen: volver a marcar en Búsqueda reemplaza el aviso del día, y un pedido que después se empaqueta
 // completo retira el suyo. Así lo mismo reportado dos veces (en Búsqueda y al empaquetar) no se cuenta doble.
 
-type PedidoRef = { canal: string; tienda: string; pedido: string; cantidad: number };
+type PedidoRef = { canal: string; tienda: string; pedido: string; cantidad: number; cliente?: string | null };
 type Reporte = { clave: string; origen: "busqueda" | "empaquetado"; faltan: number; pedidos: PedidoRef[]; por: string | null; at: string };
 
 function pedidosDe(x: unknown): PedidoRef[] {
@@ -726,6 +726,8 @@ async function casoPendiente(sku: string) {
 
 async function guardarReportes(caso: Json, reportes: Reporte[], extra: Json = {}) {
   const { reportadas, pedidos } = sumarReportes(reportes);
+  const nombres = new Map((caso.pedidos as PedidoRef[]).filter((p) => "cliente" in p).map((p) => [clavePedido(p), p.cliente]));
+  for (const p of pedidos) if (nombres.has(clavePedido(p))) p.cliente = nombres.get(clavePedido(p));
   // Lo que ya apareció o ya se dio por perdido (no está / se pidió al proveedor) no se vuelve a buscar
   const unidades = Math.max(0, reportadas - caso.encontradas - caso.perdidas);
   const { error } = await supabase.from("busqueda_profunda").update({
@@ -786,10 +788,37 @@ async function varianteTN(sku: string): Promise<{ stock: number | null; costo: n
 
 let cacheStockTN: { at: number; stock: Map<string, number | null> } = { at: 0, stock: new Map() };
 
+/** Quién compró, para buscar el paquete por la etiqueta: en ML el usuario (apodo) del comprador; Tiendanube no
+ *  tiene usuario, así que ahí va el nombre. */
+async function nombreCliente(p: PedidoRef): Promise<string | null> {
+  const tienda = p.tienda as Tienda;
+  const num = p.pedido.split(",")[0].trim();
+  if (p.canal === "tn") {
+    const o = (await tnBuscar(tienda, num))[0];
+    return o ? (o.customer?.name || o.contact_name || o.shipping_address?.name || null) : null;
+  }
+  // ML: el número es el del carrito (pack) o el de la orden
+  const pack = await mlGet(tienda, `/packs/${num}`);
+  const ordenId = pack.status === 200 ? pack.body?.orders?.[0]?.id : num;
+  if (!ordenId) return null;
+  const b = (await mlGet(tienda, `/orders/${ordenId}`)).body?.buyer ?? {};
+  return b.nickname || [b.first_name, b.last_name].filter(Boolean).join(" ") || null;
+}
+
 async function getProfunda() {
   const { data, error } = await supabase.from("busqueda_profunda").select("*")
     .eq("estado", "pendiente").order("creado_at");
   if (error) throw error;
+  // Quién compró cada pedido: se averigua una vez y queda guardado en el caso
+  const sinNombre = (data ?? []).filter((c) => (c.pedidos as PedidoRef[]).some((p) => !("cliente" in p)));
+  await enParalelo(sinNombre, 3, async (c) => {
+    const pedidos = await Promise.all((c.pedidos as PedidoRef[]).map(async (p) => {
+      if ("cliente" in p) return p;
+      try { return { ...p, cliente: await nombreCliente(p) }; } catch (err) { console.error(err); return p; }
+    }));
+    c.pedidos = pedidos;
+    await supabase.from("busqueda_profunda").update({ pedidos }).eq("id", c.id).eq("estado", "pendiente");
+  });
   // Cuánto cree Tiendanube que hay: si dice que hay y nadie lo encuentra, el stock está mal cargado.
   if (Date.now() - cacheStockTN.at > 60_000) cacheStockTN = { at: Date.now(), stock: new Map() };
   const falta = (data ?? []).map((c) => c.sku).filter((s) => !cacheStockTN.stock.has(s));

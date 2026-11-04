@@ -213,6 +213,7 @@
   .ped .tag.ml { background: #f3d23a; color: var(--ink); }
   .ped b { font-family: var(--display); font-size: 24px; }
   .ped small { display: block; color: var(--soft); font-size: 12.5px; }
+  .ped small.cliente { color: var(--ink); font-weight: 700; font-size: 14px; }
   .marcado { font-size: 14px; color: var(--soft); text-align: center; }
   .stepper { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; gap: 8px; }
   .stepper button { height: 64px; border-radius: 16px; border: 2.5px solid var(--line); background: var(--card); font-size: 32px; font-weight: 800; }
@@ -1345,7 +1346,8 @@ function vistaCaso() {
     </div>
     <div class="grupo"><span>Lo esperan</span>
       ${c.pedidos.map((l) => `<div class="ped"><span class="tag ${l.canal}">${esc(l.canal.toUpperCase())}</span>
-        <div>${nombreTienda(l.tienda)}<small>${l.canal === "tn" ? `#${esc(l.pedido)}` : `Venta ${esc(l.pedido)}`}</small></div><b>×${l.cantidad}</b></div>`).join("")}
+        <div>${nombreTienda(l.tienda)}<small>${l.canal === "tn" ? `#${esc(l.pedido)}` : `Venta ${esc(l.pedido)}`}</small>
+          ${l.cliente ? `<small class="cliente">${esc(l.cliente)}</small>` : ""}</div><b>×${l.cantidad}</b></div>`).join("")}
     </div>
     ${mio ? `<div class="hint">Deslizá la foto: → apareció · ← no está</div>` : ""}`;
   if (mio) {
