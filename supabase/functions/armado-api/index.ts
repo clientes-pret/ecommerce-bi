@@ -159,6 +159,35 @@ async function tnGet(tienda: Tienda, path: string, params: Record<string, string
   throw new Error(`Tiendanube ${tienda} no responde`);
 }
 
+/**
+ * Marca el pedido como empaquetado en Tiendanube (queda "por enviar"), como si se hiciera a mano en el admin
+ * (5/11/2026, pedido del usuario). Pasa a PACKED cada orden de despacho que esté UNPACKED / IN_PREPARATION; las
+ * que ya están empaquetadas, despachadas o entregadas no se tocan. Nunca tira: el control ya quedó guardado.
+ */
+async function marcarEmpaquetadoTN(tienda: Tienda, numero: string): Promise<{ estado: "marcado" | "ya_estaba" | "error"; texto?: string }> {
+  const c = CRED.tn?.[tienda];
+  try {
+    if (!c) throw new Error("sin credenciales");
+    const o = (await tnBuscar(tienda, numero)).find((x) => String(x.number) === numero);
+    if (!o) throw new Error("no encontré el pedido");
+    const pendientes = (o.fulfillments ?? []).filter((f: Json) =>
+      ["UNPACKED", "IN_PREPARATION"].includes(f?.status) && f?.shipping?.extras?.shippable !== false); // sin envío: Tiendanube no acepta PACKED
+    if (!pendientes.length) return { estado: "ya_estaba" };
+    for (const f of pendientes) {
+      const r = await fetch(`https://api.tiendanube.com/v1/${c.store_id}/orders/${o.id}/fulfillment-orders/${f.id}`, {
+        method: "PATCH",
+        headers: { Authentication: `bearer ${c.access_token}`, "User-Agent": "ArmadoPedidos (info@pretahome.com)", "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "PACKED" }),
+      });
+      if (!r.ok) throw new Error(`Tiendanube respondió ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    }
+    return { estado: "marcado" };
+  } catch (err) {
+    console.error("marcar empaquetado TN", tienda, numero, err);
+    return { estado: "error", texto: String((err as Error)?.message ?? err) };
+  }
+}
+
 /** Órdenes de una tienda cuyo número o seguimiento es exactamente `ref`. */
 async function tnBuscar(tienda: Tienda, ref: string): Promise<Json[]> {
   if (!CRED.tn?.[tienda]) return [];
@@ -432,7 +461,11 @@ async function postControl(req: Request) {
       console.error("búsqueda profunda", err); // el control ya quedó guardado
     }
   }
-  return json({ id: data.id, resultado });
+  // Pedido de Tiendanube completo → empaquetado en la tienda. Con faltante no se marca.
+  const tiendanube = b.canal === "tn" && resultado === "completo"
+    ? await marcarEmpaquetadoTN(b.tienda, String(b.pedido))
+    : null;
+  return json({ id: data.id, resultado, tiendanube });
 }
 
 /** Pedidos de los últimos 14 días cuyo último control quedó con faltante. */

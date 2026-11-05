@@ -763,12 +763,15 @@ function resultado() {
 async function guardar() {
   const estado = $("guardando");
   try {
-    await armadoFetch("/controles", {
+    const r = await armadoFetch("/controles", {
       canal: pedido.canal, tienda: pedido.tienda, pedido: pedido.pedido, envio: pedido.envio,
       codigo_leido: codigoLeido, armado_por: quien, inicio_at: inicio,
       items: lineas.map((l) => ({ sku: l.sku, nombre: l.nombre, variante: l.variante, imagen: l.imagen, cantidad: l.cantidad, estado: l.estado, confirmado_at: l.confirmado_at })),
     });
-    estado.innerHTML = `<p>Guardado${quien ? ` · armó ${esc(quien)}` : ""}.</p>`;
+    // Tiendanube completo: la función lo marca como empaquetado en la tienda ("por enviar").
+    const tn = r?.tiendanube;
+    estado.innerHTML = `<p>Guardado${quien ? ` · armó ${esc(quien)}` : ""}.${tn?.estado === "marcado" ? " Marcado como empaquetado en Tiendanube." : ""}</p>` +
+      (tn?.estado === "error" ? `<div class="aviso amarillo">No se pudo marcar como empaquetado en Tiendanube. Marcalo a mano en el admin.</div>` : "");
     $("btnSiguiente").disabled = false;
   } catch (err) {
     console.error(err);
