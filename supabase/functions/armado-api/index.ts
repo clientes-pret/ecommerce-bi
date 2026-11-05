@@ -24,6 +24,10 @@
 //    "ml": {"pret": {"user_id", "client_id", "client_secret", "refresh_token", "access_token"?}, "lavan": {…}}}
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  detectarPaquete, esParaManana, fechaHoraAR, grupoDeEnvioTN, MENSAJERIAS, NOMBRE_MENSAJERIA, ZETA_TOKEN_SUFIJO,
+  type Mensajeria, type Paquete, type TipoPaquete,
+} from "./despacho.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -56,9 +60,8 @@ const CRED: { tn: Record<Tienda, CredTN>; ml: Record<Tienda, CredML> } = JSON.pa
   Deno.env.get("ARMADO_CREDENCIALES") ?? "{}",
 );
 
-// Sufijo fijo que Zeta agrega al "did" del QR para armar el token de seguimiento
-// (igual en todas las órdenes de Pret con seguimiento de Zeta cargado, ej. 1571347d54df4s8a513).
-const ZETA_TOKEN_SUFIJO = "d54df4s8a513";
+// El sufijo fijo que Zeta agrega al "did" del QR para armar el token de seguimiento (ZETA_TOKEN_SUFIJO,
+// ej. 1571347d54df4s8a513) vive en despacho.ts, que también interpreta los QR del modo Despacho.
 const ZETA_TRACKING_URL = "https://zetaenvios.lightdata.app/tracking.php?token=";
 
 function json(body: unknown, status = 200) {
@@ -941,6 +944,312 @@ async function postProfundaCerrar(req: Request) {
   return json({ ok: true, quedan: cambios.unidades });
 }
 
+// ─── Despacho ───────────────────────────────────────────────────────────────
+// Cuando pasa una mensajería a retirar, se elige quién es y se escanea el QR de cada paquete (una fila por paquete
+// en armado_despachos). Zeta y Ninja son UNA opción ("zeta_ninja"): el reparto entre ellos lo define su equipo.
+// El contador de lo que falta sale de lo pendiente en Tiendanube (por empaquetar o por enviar, de hoy o de antes) y
+// en Mercado Libre (Flex listo para despachar, hasta las 14 hs) menos lo ya entregado.
+//   - Cada escaneo se guarda al instante; el pedido al que corresponde se averigua en segundo plano.
+//   - Un QR de otra mensajería no se cuenta (estado "otra").
+
+type PendienteDesp = {
+  clave: string;             // 'tn|tienda|numero' o 'ml|envio': lo mismo que guarda pedido_clave al entregar
+  grupo: Mensajeria;
+  tipo: "flex_ml" | "tn";
+  canal: "tn" | "ml";
+  tienda: Tienda;
+  pedido: string;
+  etiqueta: string;          // opción de envío, para mostrar
+  fecha: string;
+  cliente: string | null;
+  para_manana: boolean;      // Flex creado hoy después de las 14 hs: sale mañana
+};
+
+/** Pedidos de Tiendanube por empaquetar (unpacked) o empaquetados sin enviar (unfulfilled). Sin "Retira en el local". */
+async function pendientesDespachoTN(tienda: Tienda): Promise<PendienteDesp[]> {
+  if (!CRED.tn?.[tienda]) return [];
+  const desde = new Date(Date.now() - 45 * 86400_000).toISOString();
+  const ordenes = new Map<string, Json>();
+  for (const estado of ["unpacked", "unfulfilled"]) {
+    for (let page = 1; page < 20; page++) {
+      const r: Json[] = await tnGet(tienda, "/orders", {
+        status: "open", payment_status: "paid", shipping_status: estado,
+        created_at_min: desde, per_page: "200", page: String(page),
+      });
+      for (const o of r) ordenes.set(String(o.id), o);
+      if (r.length < 200) break;
+    }
+  }
+  const out: PendienteDesp[] = [];
+  for (const o of ordenes.values()) {
+    const f = (o.fulfillments ?? []).find((x: Json) => ["UNPACKED", "IN_PREPARATION", "PACKED"].includes(x?.status));
+    if (!f || f.shipping?.extras?.shippable === false) continue;
+    const etiqueta = String(f.shipping?.option?.name || o.shipping_option || "");
+    const grupo = grupoDeEnvioTN(etiqueta, f.shipping?.carrier?.name ?? o.shipping_carrier_name);
+    if (!grupo) continue;
+    out.push({
+      clave: `tn|${tienda}|${o.number}`, grupo, tipo: "tn", canal: "tn", tienda, pedido: String(o.number), etiqueta,
+      fecha: o.created_at ?? "", cliente: o.customer?.name || o.contact_name || null, para_manana: false,
+    });
+  }
+  return out;
+}
+
+/** Envíos Flex de Mercado Libre listos para despachar (uno por envío, aunque tenga varias órdenes). */
+async function pendientesFlexML(tienda: Tienda, hoy: string): Promise<PendienteDesp[]> {
+  const c = CRED.ml?.[tienda];
+  if (!c) return [];
+  const ordenes: Json[] = [];
+  for (let offset = 0; offset < 1000; offset += 50) {
+    const r = await mlGet(tienda,
+      `/orders/search?seller=${c.user_id}&order.status=paid&shipping.status=ready_to_ship&sort=date_desc&limit=50&offset=${offset}`);
+    const res: Json[] = r.body?.results ?? [];
+    ordenes.push(...res);
+    if (res.length < 50) break;
+  }
+  const envioIds = [...new Set(ordenes.map((o) => o.shipping?.id).filter(Boolean).map(String))];
+  const envios = new Map<string, Json>();
+  await enParalelo(envioIds, 12, async (id) => {
+    const r = await mlGet(tienda, `/shipments/${id}`);
+    if (r.body) envios.set(id, r.body);
+  });
+  const vistos = new Set<string>();
+  const out: PendienteDesp[] = [];
+  for (const o of ordenes) {
+    const id = String(o.shipping?.id ?? "");
+    const e = envios.get(id);
+    if (!id || vistos.has(id) || !e || e.status !== "ready_to_ship" || e.logistic_type !== "self_service") continue;
+    vistos.add(id);
+    const creado = String(o.date_created ?? "");
+    out.push({
+      clave: `ml|${id}`, grupo: "zeta_ninja", tipo: "flex_ml", canal: "ml", tienda, pedido: String(o.pack_id ?? o.id),
+      etiqueta: "Mercado Libre Flex", fecha: creado, cliente: o.buyer?.nickname ?? null,
+      para_manana: creado ? esParaManana(creado, hoy) : false,
+    });
+  }
+  return out;
+}
+
+let cacheDespacho: { at: number; items: PendienteDesp[] } | null = null;
+
+async function pendientesDespacho(refrescar: boolean): Promise<{ at: number; items: PendienteDesp[] }> {
+  if (!cacheDespacho || refrescar || Date.now() - cacheDespacho.at > 60_000) {
+    const hoy = hoyAR();
+    const partes = await Promise.all([
+      ...TIENDAS.map((t) => pendientesDespachoTN(t)),
+      ...TIENDAS.map((t) => pendientesFlexML(t, hoy)),
+    ]);
+    cacheDespacho = { at: Date.now(), items: partes.flat() };
+  }
+  return cacheDespacho;
+}
+
+async function getDespachoEstado(url: URL) {
+  const hoy = hoyAR();
+  const pend = await pendientesDespacho(url.searchParams.get("refrescar") === "1");
+
+  const { data: hoyRows, error } = await supabase.from("armado_despachos")
+    .select("id, creado_at, mensajeria, tipo, por, canal, tienda, pedido, pedido_clave, envio")
+    .eq("estado", "ok").eq("fecha", hoy).order("id", { ascending: false }).limit(1000);
+  if (error) throw error;
+
+  // Lo pendiente que ya se entregó (cualquier día), por la clave del pedido
+  const entregadas = new Set<string>();
+  const claves = pend.items.map((p) => p.clave);
+  for (let i = 0; i < claves.length; i += 150) {
+    const { data, error: e } = await supabase.from("armado_despachos").select("pedido_clave")
+      .eq("estado", "ok").in("pedido_clave", claves.slice(i, i + 150));
+    if (e) throw e;
+    for (const r of data ?? []) entregadas.add(r.pedido_clave);
+  }
+
+  const grupos: Record<string, Json> = {};
+  for (const g of MENSAJERIAS) {
+    const ent = (hoyRows ?? []).filter((r) => r.mensajeria === g);
+    const entTipo = (t: TipoPaquete) => ent.filter((r) => r.tipo === t).length;
+    // Un paquete entregado cuyo pedido no se pudo identificar no se puede tachar de la lista: se resta del número
+    const sinId = (t: TipoPaquete) => ent.filter((r) => r.tipo === t && !r.pedido_clave).length;
+    const faltan = pend.items.filter((p) => p.grupo === g && !entregadas.has(p.clave) && !p.para_manana);
+    const faltanTipo = (t: "flex_ml" | "tn") => Math.max(0, faltan.filter((p) => p.tipo === t).length - sinId(t));
+    grupos[g] = {
+      nombre: NOMBRE_MENSAJERIA[g],
+      entregados: { flex_ml: entTipo("flex_ml"), tn: entTipo("tn"), otro: entTipo("otro"), total: ent.length },
+      faltan: { flex_ml: faltanTipo("flex_ml"), tn: faltanTipo("tn"), total: faltanTipo("flex_ml") + faltanTipo("tn") },
+      sin_identificar: ent.filter((r) => !r.pedido_clave).length,
+      para_manana: pend.items.filter((p) => p.grupo === g && !entregadas.has(p.clave) && p.para_manana).length,
+      lista_faltan: faltan.sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(0, 300).map((p) => ({
+        tipo: p.tipo, canal: p.canal, tienda: p.tienda, pedido: p.pedido, etiqueta: p.etiqueta, fecha: p.fecha, cliente: p.cliente,
+        atrasado: p.fecha ? fechaHoraAR(p.fecha).dia < hoy : false,
+      })),
+    };
+  }
+  return json({
+    fecha: hoy,
+    actualizado_at: new Date(pend.at).toISOString(),
+    grupos,
+    entregados: (hoyRows ?? []).slice(0, 300).map((r) => ({
+      id: r.id, at: r.creado_at, mensajeria: r.mensajeria, tipo: r.tipo, por: r.por, canal: r.canal,
+      tienda: r.tienda, pedido: r.pedido,
+    })),
+  });
+}
+
+type DatosPaquete = { canal?: "tn" | "ml"; tienda?: Tienda; pedido?: string; pedido_clave?: string; envio?: string };
+
+const tiendaMLDe = (sender?: string): Tienda | undefined =>
+  TIENDAS.find((t) => sender && CRED.ml?.[t] && String(CRED.ml[t].user_id) === sender);
+
+/** Códigos escritos a mano (número de venta o de envío): no dicen la mensajería, se averigua con el pedido. */
+async function resolverAMano(p: Paquete): Promise<{ paquete: Paquete; datos: DatosPaquete } | { error: string }> {
+  if (p.formato === "numero_tn") {
+    const ref = p.ref!;
+    const hallados = (await Promise.all(TIENDAS.map(async (t) => (await tnBuscar(t, ref)).map((o) => ({ t, o }))))).flat();
+    if (!hallados.length) return { error: `No encontré el pedido ${ref}.` };
+    if (hallados.length > 1) return { error: `Hay más de un pedido ${ref} (Pret y Laván). Escaneá el QR de la etiqueta.` };
+    const { t, o } = hallados[0];
+    const f = (o.fulfillments ?? [])[0];
+    const grupo = grupoDeEnvioTN(String(f?.shipping?.option?.name || o.shipping_option || ""), f?.shipping?.carrier?.name ?? o.shipping_carrier_name);
+    const clave = `tn|${t}|${o.number}`;
+    return {
+      paquete: { ...p, grupo, tipo: "tn", clave },
+      datos: { canal: "tn", tienda: t, pedido: String(o.number), pedido_clave: clave },
+    };
+  }
+  let envio = p.envio ?? "";
+  if (p.formato === "ml_venta") envio = (await mlEnvioDeVenta(p.venta!)) ?? "";
+  if (!envio) return { error: "Mercado Libre no encontró esa venta." };
+  for (const t of TIENDAS.filter((x) => CRED.ml?.[x])) {
+    const e = await mlGet(t, `/shipments/${envio}`);
+    if (e.status !== 200) continue;
+    const flex = e.body?.logistic_type === "self_service";
+    return {
+      paquete: { ...p, formato: flex ? "ml_flex" : "ml_otro", grupo: flex ? "zeta_ninja" : null, tipo: flex ? "flex_ml" : null, clave: `ml|${envio}`, envio },
+      datos: { canal: "ml", tienda: t, envio, pedido_clave: `ml|${envio}` },
+    };
+  }
+  return { error: "Mercado Libre no encontró ese envío." };
+}
+
+/** Averigua a qué pedido corresponde un paquete ya contado y lo anota. Nunca tira: el escaneo ya quedó guardado. */
+async function identificarPaquete(id: number, p: Paquete, datos: DatosPaquete) {
+  try {
+    const cambios: Json = {};
+    if (p.formato === "ml_flex" || p.formato === "ml_envio_manual" || p.formato === "ml_venta") {
+      // Número de venta (el del carrito si lo hay), igual que lo imprime la etiqueta
+      const tienda = datos.tienda;
+      if (tienda && p.envio) {
+        const items = await mlGet(tienda, `/shipments/${p.envio}/items`);
+        const ordenId = String((items.body ?? [])[0]?.order_id ?? "");
+        if (ordenId) {
+          const o = await mlGet(tienda, `/orders/${ordenId}`);
+          cambios.pedido = String(o.body?.pack_id ?? ordenId);
+        }
+      }
+    } else if (p.formato === "zeta" || p.formato === "ninja" || p.formato === "correo") {
+      let ref = p.ref ?? "";
+      if (p.formato === "zeta") ref = (await zetaNumeroVenta(p.zetaToken!)) ?? "";
+      if (ref) {
+        const hallados = (await Promise.all(TIENDAS.map(async (t) => (await tnBuscar(t, ref)).map((o) => ({ t, o }))))).flat();
+        // Solo si es uno: con dos pedidos (Pret y Laván) con el mismo número no se adivina
+        if (hallados.length === 1) {
+          Object.assign(cambios, {
+            canal: "tn", tienda: hallados[0].t, pedido: String(hallados[0].o.number),
+            pedido_clave: `tn|${hallados[0].t}|${hallados[0].o.number}`,
+          });
+        }
+      }
+    }
+    if (Object.keys(cambios).length) {
+      const { error } = await supabase.from("armado_despachos").update(cambios).eq("id", id);
+      if (error) throw error;
+    }
+  } catch (err) {
+    console.error("identificar paquete", id, err);
+  }
+}
+
+async function postDespachoEscanear(req: Request) {
+  const b = await req.json();
+  const elegida = b.mensajeria as Mensajeria;
+  if (!MENSAJERIAS.includes(elegida)) return json({ error: "Falta la mensajería" }, 400);
+  const raw = String(b.codigo ?? "").slice(0, 500);
+  let p = detectarPaquete(raw);
+  if (!p) return json({ estado: "no_reconocido", mensaje: "No reconozco ese código." });
+
+  let datos: DatosPaquete = {};
+  if (p.formato === "ml_flex") {
+    datos = { canal: "ml", tienda: tiendaMLDe(p.sender), envio: p.envio, pedido_clave: `ml|${p.envio}` };
+  } else if (p.formato === "ml_correo") {
+    datos = { canal: "ml", envio: p.envio };
+  } else if (p.resolverGrupo) {
+    const r = await resolverAMano(p);
+    if ("error" in r) return json({ estado: "no_reconocido", mensaje: r.error });
+    p = r.paquete;
+    datos = r.datos;
+  }
+
+  if (!p.grupo) {
+    // Un código que ninguna mensajería conocida reconoce solo se acepta si se eligió Andreani (su QR no se conoce)
+    if (p.formato === "desconocido" && elegida === "andreani") p = { ...p, grupo: "andreani", tipo: "tn" };
+    else if (p.formato === "desconocido") return json({ estado: "no_reconocido", mensaje: "No reconozco ese código. Escribí el número de venta." });
+    else if (p.formato === "ml_colecta") return json({ estado: "otra", grupo_detectado: null, mensaje: "Es un paquete de Mercado Libre Colecta. Lo retira Mercado Libre." });
+    else return json({ estado: "otra", grupo_detectado: null, mensaje: "Este paquete no es de ninguna de estas mensajerías." });
+  }
+  const grupoDelPaquete = p.grupo;
+  if (!grupoDelPaquete) return json({ estado: "no_reconocido", mensaje: "No reconozco ese código." });
+  if (grupoDelPaquete !== elegida) {
+    return json({ estado: "otra", grupo_detectado: grupoDelPaquete, mensaje: `Este paquete es de ${NOMBRE_MENSAJERIA[grupoDelPaquete]}.` });
+  }
+
+  const repetido = async () => {
+    const campos = "por, creado_at, mensajeria";
+    let previo = (await supabase.from("armado_despachos").select(campos).eq("estado", "ok").eq("clave", p!.clave!).limit(1)).data?.[0];
+    if (!previo && datos.pedido_clave) {
+      previo = (await supabase.from("armado_despachos").select(campos).eq("estado", "ok").eq("pedido_clave", datos.pedido_clave).limit(1)).data?.[0];
+    }
+    return json({ estado: "repetido", previo: previo ?? null, mensaje: "Este paquete ya estaba contado." });
+  };
+  // Escrito a mano y ya entregado con su QR: la clave del QR es otra, se mira por el pedido
+  if (datos.pedido_clave) {
+    const { data } = await supabase.from("armado_despachos").select("id").eq("estado", "ok").eq("pedido_clave", datos.pedido_clave).limit(1);
+    if (data?.length) return await repetido();
+  }
+
+  const { data, error } = await supabase.from("armado_despachos").insert({
+    fecha: hoyAR(),
+    mensajeria: elegida,
+    tipo: p.tipo ?? "otro",
+    por: b.por ? String(b.por).slice(0, 80) : null,
+    codigo_leido: raw,
+    clave: p.clave,
+    canal: datos.canal ?? null,
+    tienda: datos.tienda ?? null,
+    pedido: datos.pedido ?? null,
+    envio: datos.envio ?? null,
+    pedido_clave: datos.pedido_clave ?? null,
+  }).select("id").single();
+  if (error) {
+    if (error.code === "23505") return await repetido();
+    throw error;
+  }
+  // El pedido se averigua después (Zeta consulta su página): contar es al instante
+  const tarea = identificarPaquete(data.id, p, datos);
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).EdgeRuntime?.waitUntil?.(tarea);
+  return json({ estado: "ok", id: data.id, formato: p.formato, grupo: p.grupo, tipo: p.tipo });
+}
+
+async function postDespachoAnular(req: Request) {
+  const b = await req.json();
+  const id = Number(b.id);
+  if (!id) return json({ error: "Falta el paquete" }, 400);
+  const { error } = await supabase.from("armado_despachos").update({
+    estado: "anulado", anulado_at: new Date().toISOString(), anulado_por: b.por ? String(b.por).slice(0, 80) : null,
+  }).eq("id", id).eq("estado", "ok");
+  if (error) throw error;
+  return json({ ok: true });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
   if (!checkPassword(req)) return json({ error: "Contraseña inválida" }, 401);
@@ -959,6 +1268,9 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && path === "/profunda") return await getProfunda();
     if (req.method === "POST" && path === "/profunda/tomar") return await postProfundaTomar(req);
     if (req.method === "POST" && path === "/profunda/cerrar") return await postProfundaCerrar(req);
+    if (req.method === "GET" && path === "/despacho/estado") return await getDespachoEstado(url);
+    if (req.method === "POST" && path === "/despacho/escanear") return await postDespachoEscanear(req);
+    if (req.method === "POST" && path === "/despacho/anular") return await postDespachoAnular(req);
     return json({ error: "Ruta no encontrada" }, 404);
   } catch (err) {
     console.error(err);

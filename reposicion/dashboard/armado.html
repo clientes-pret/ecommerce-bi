@@ -285,7 +285,45 @@
   .donde button { border: 2px solid var(--line); background: var(--card); border-radius: 12px; padding: 10px 12px; font-weight: 600; font-size: 15px; }
   .donde button.on { border-color: var(--ok); background: var(--ok-soft); }
   .hoja input.texto { font: inherit; font-size: 17px; padding: 12px; border-radius: 12px; border: 2px solid var(--line); }
-  @media (prefers-reduced-motion: reduce) { .card.volando { transition: none; } }
+  /* ── Despacho ── */
+  .tarea.despacho { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .tarea.despacho span { color: #c8d0cb; }
+  .tarea.despacho .badge.avance { background: #fff; color: var(--ink); }
+  #vDesp { background: var(--bg); }
+  #vDesp .bar { background: var(--ink); color: #fff; }
+  #vDesp .bar .link { color: #fff; text-decoration: none; }
+  #vDesp .cam { flex: none; height: 30vh; min-height: 170px; background: var(--cam); }
+  #vDesp .mira { width: min(42vw, 170px); box-shadow: 0 0 0 9999px rgba(0,0,0,.28); }
+  #dFlash { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .35s ease-out; }
+  #dFlash.on { opacity: .55; transition: none; }
+  .d-panel { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .d-panel > * { flex-shrink: 0; }
+  .d-cont { text-align: center; }
+  .d-big { font-family: var(--display); font-size: 84px; font-weight: 800; line-height: .95; }
+  .d-sub { color: var(--soft); font-size: 17px; font-weight: 600; }
+  .d-sub b { color: var(--ink); }
+  .d-prog { display: grid; gap: 3px; font-size: 14px; font-weight: 600; }
+  .d-prog .r { display: flex; justify-content: space-between; }
+  .d-barra { height: 9px; border-radius: 5px; background: var(--line); overflow: hidden; }
+  .d-barra i { display: block; height: 100%; background: var(--ok); transition: width .25s; }
+  .d-ultimo { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-radius: 12px; padding: 10px 12px; font-weight: 700; font-size: 16px; line-height: 1.25; }
+  .d-ultimo.ok { background: var(--ok-soft); color: #11603a; }
+  .d-ultimo.rojo { background: var(--no); color: #fff; font-size: 19px; }
+  .d-ultimo.amarillo { background: var(--warn-soft); border: 2px solid var(--warn); }
+  .d-ultimo button { flex: none; background: rgba(255,255,255,.85); border: none; border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 14px; color: var(--ink); }
+  .d-tabs { display: flex; border-bottom: 2px solid var(--line); }
+  .d-tabs button { flex: 1; background: none; border: none; padding: 10px 0; font-weight: 700; font-size: 16px; color: var(--soft); border-bottom: 3px solid transparent; margin-bottom: -2px; }
+  .d-tabs button.on { color: var(--ok); border-bottom-color: var(--ok); }
+  .d-tabs i { font-style: normal; font-family: var(--display); font-size: 19px; margin-left: 4px; }
+  .d-fila { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 15px; line-height: 1.25; }
+  .d-fila small { display: block; color: var(--soft); font-size: 13px; }
+  .d-fila small.atras { color: var(--no); font-weight: 700; }
+  .d-fila button { background: none; border: none; color: var(--soft); text-decoration: underline; font-size: 13px; }
+  .d-nota { font-size: 13.5px; color: var(--soft); background: var(--warn-soft); border-radius: 10px; padding: 8px 10px; }
+  .d-manual { display: flex; gap: 8px; }
+  .d-manual input { flex: 1; min-width: 0; font: inherit; font-size: 17px; padding: 11px 12px; border-radius: 12px; border: 2px solid var(--line); background: var(--card); }
+  .d-envuelo { font-size: 13px; color: var(--soft); text-align: center; min-height: 16px; }
+  @media (prefers-reduced-motion: reduce) { .card.volando { transition: none; } #dFlash { transition: none; } }
 </style>
 </head>
 <body>
@@ -320,7 +358,47 @@
     <h1>¿Qué vas a hacer hoy?</h1>
     <button class="tarea" type="button" id="btnBusqueda"><b>Búsqueda</b><span>Juntar los productos de los pedidos</span><span class="badge avance" id="avBusq" hidden></span></button>
     <button class="tarea principal" type="button" id="btnEmpaquetado"><b>Empaquetado</b><span>Escanear la etiqueta y controlar cada paquete</span><span class="badge avance" id="avEmpaq" hidden></span></button>
+    <button class="tarea despacho" type="button" id="btnDespacho"><b>Despacho</b><span>Entregar los paquetes a la mensajería</span></button>
     <button class="tarea profunda" type="button" id="btnProfunda"><b>Búsqueda profunda</b><span>Lo que nadie encontró</span><span class="badge" id="profBadge" hidden></span></button>
+  </div>
+</section>
+
+<!-- Despacho: quién llegó -->
+<section class="vista" id="vDespElegir" hidden>
+  <div class="bar"><button class="link" id="deAtras" type="button" style="color:var(--ink);text-decoration:none"><b>‹ Despacho</b></button></div>
+  <div class="tareas" style="justify-content:flex-start">
+    <h1>¿Quién llegó?</h1>
+    <button class="tarea" type="button" data-mens="zeta_ninja"><b>Zeta / Ninja</b><span id="deZ">Calculando…</span></button>
+    <button class="tarea" type="button" data-mens="correo"><b>Correo Argentino</b><span id="deC">Calculando…</span></button>
+    <button class="tarea" type="button" data-mens="andreani"><b>Andreani</b><span id="deA">Calculando…</span></button>
+    <p class="actualizado">Zeta y Ninja se entregan juntos: qué se lleva cada uno lo define su equipo.</p>
+  </div>
+</section>
+
+<!-- Despacho: escanear y contar -->
+<section class="vista" id="vDesp" hidden>
+  <div class="bar"><button class="link" id="dAtras" type="button"><b id="dTitulo">‹ Despacho</b></button><button class="link" id="dTerminar" type="button">Terminar</button></div>
+  <div class="cam">
+    <video id="videoDesp" playsinline muted></video>
+    <div class="mira"></div>
+    <div id="dFlash"></div>
+    <div class="cam-msg" id="dCamMsg" hidden></div>
+  </div>
+  <div class="d-panel" id="dPanel">
+    <div class="d-cont"><div class="d-big" id="dBig">0</div><div class="d-sub" id="dSub"></div></div>
+    <div class="d-prog" id="dProg"></div>
+    <div class="d-envuelo" id="dEnVuelo"></div>
+    <div class="d-ultimo" id="dUltimo" hidden></div>
+    <div class="d-tabs">
+      <button type="button" data-tab="entregados" class="on">Entregados<i id="dTabE">0</i></button>
+      <button type="button" data-tab="faltan">Faltan<i id="dTabF">0</i></button>
+    </div>
+    <div id="dLista"></div>
+    <form class="d-manual" id="formDesp" autocomplete="off">
+      <input id="inpDesp" placeholder="O escribí el número de venta" aria-label="Número de venta">
+      <button class="cta ok chico" type="submit">Sumar</button>
+    </form>
+    <button class="link" id="dReintentarCam" type="button" hidden>Reintentar cámara</button>
   </div>
 </section>
 
@@ -421,10 +499,13 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function mostrar(id) {
-  for (const v of ["vInicio", "vScan", "vQuien", "vPanel", "vCartas", "vBusq", "vProf"]) $(v).hidden = v !== id;
-  if (id === "vScan") iniciarCamara(); else detenerCamara();
+  for (const v of ["vInicio", "vScan", "vQuien", "vPanel", "vCartas", "vBusq", "vProf", "vDespElegir", "vDesp"]) $(v).hidden = v !== id;
+  if (id === "vScan") iniciarCamara();
+  else if (id === "vDesp") iniciarCamara("videoDesp", leerDespacho);
+  else detenerCamara();
   if (id !== "vBusq") detenerBusqueda();
   if (id !== "vProf") detenerProfunda();
+  if (id !== "vDesp" && id !== "vDespElegir") detenerDespacho();
   if (id === "vInicio") contarProfunda();
   if (["vScan", "vPanel", "vInicio"].includes(id)) iniciarListos(); else detenerListos();
 }
@@ -498,19 +579,27 @@ $("btnEmpaquetado").onclick = () => mostrar("vScan");
 $("btnTarea").onclick = () => mostrar("vInicio");
 $("btnBusqueda").onclick = () => abrirBusqueda();
 $("btnProfunda").onclick = () => abrirProfunda();
+$("btnDespacho").onclick = () => abrirDespacho();
 
 // ─── Cámara y QR ────────────────────────────────────────────────────────────
+// Dos usos: Empaquetado (una lectura y se apaga la cámara) y Despacho (sigue abierta y entrega cada
+// lectura a camHandler, para escanear paquete tras paquete sin tocar nada).
 let stream = null, loopId = null, detector = null, leyendo = false;
+let camVideoId = "video", camHandler = null;
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
 function mensajeCamara(txt, error = false) {
-  $("camMsg").hidden = !txt;
-  $("camMsg").textContent = txt || "";
-  $("camMsg").classList.toggle("error", error);
+  const id = camHandler ? "dCamMsg" : "camMsg";
+  $(id).hidden = !txt;
+  $(id).textContent = txt || "";
+  $(id).classList.toggle("error", error);
 }
 
-async function iniciarCamara() {
+function botonCamara(visible) { (camHandler ? $("dReintentarCam") : $("btnCamara")).hidden = !visible; }
+
+async function iniciarCamara(videoId = "video", handler = null) {
+  camVideoId = videoId; camHandler = handler;
   if (!navigator.mediaDevices?.getUserMedia) {
     mensajeCamara("Este navegador no permite usar la cámara. Escribí el número de venta.", true);
     return;
@@ -518,10 +607,10 @@ async function iniciarCamara() {
   if (stream) return;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
-    const v = $("video");
+    const v = $(camVideoId);
     v.srcObject = stream;
     await v.play();
-    $("btnCamara").hidden = true;
+    botonCamara(false);
     if ("BarcodeDetector" in window) {
       try { detector = new BarcodeDetector({ formats: ["qr_code"] }); } catch { detector = null; }
     }
@@ -529,7 +618,7 @@ async function iniciarCamara() {
     loopId = setInterval(leerCuadro, 180);
   } catch (err) {
     stream = null;
-    $("btnCamara").hidden = false;
+    botonCamara(true);
     mensajeCamara("No se pudo abrir la cámara. Dale permiso al navegador o escribí el número de venta.", true);
   }
 }
@@ -540,7 +629,7 @@ function detenerCamara() {
 }
 
 async function leerCuadro() {
-  const v = $("video");
+  const v = $(camVideoId);
   if (leyendo || !v.videoWidth) return;
   leyendo = true;
   try {
@@ -557,7 +646,9 @@ async function leerCuadro() {
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
       texto = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" })?.data || null;
     }
-    if (texto) {
+    if (texto && camHandler) {
+      camHandler(texto); // Despacho: la cámara sigue abierta para el próximo paquete
+    } else if (texto) {
       pitido(); vibrar(60);
       await buscar(texto);
       return; // buscar() cambia de pantalla y apaga la cámara
@@ -567,6 +658,7 @@ async function leerCuadro() {
 }
 
 $("btnCamara").onclick = () => iniciarCamara();
+$("dReintentarCam").onclick = () => iniciarCamara("videoDesp", leerDespacho);
 $("formManual").onsubmit = (e) => {
   e.preventDefault();
   const v = $("inpNumero").value.trim();
@@ -1706,6 +1798,234 @@ function hojaNoEsta(c) {
   $("hVolver").onclick = cerrarHoja;
   $("veloB").hidden = false;
 }
+
+// ─── Despacho ───────────────────────────────────────────────────────────────
+// Cuando pasa una mensajería a retirar: se elige quién es y se escanea el QR de cada paquete, uno tras otro, sin
+// tocar nada. Cada lectura se manda al servidor (que dice si suma, si es de otra mensajería o si ya estaba) y el
+// contador baja lo que falta. Zeta y Ninja son una sola opción: el reparto entre ellos lo define su equipo.
+const MENS = {
+  zeta_ninja: { nombre: "Zeta / Ninja", lineas: [["flex_ml", "Flex Mercado Libre"], ["tn", "Tiendanube en el día"]] },
+  correo: { nombre: "Correo Argentino", lineas: [["tn", "Tiendanube"]] },
+  andreani: { nombre: "Andreani", lineas: [["tn", "Tiendanube"]] },
+};
+const FORMATO_TXT = { zeta: "Zeta", ninja: "Ninja", correo: "Correo Argentino", ml_flex: "Flex Mercado Libre", ml_correo: "Mercado Libre vía Correo",
+  desconocido: "Andreani", numero_tn: "Tiendanube", ml_envio_manual: "Mercado Libre", ml_venta: "Mercado Libre" };
+const TIPO_TXT = { flex_ml: "Flex ML", tn: "Tiendanube", otro: "Mercado Libre" };
+const desp = { grupo: null, estado: null, error: null, enVuelo: 0, visto: new Map(), tab: "entregados", pollId: null, refrescoId: null,
+  ultimoId: null, cargando: false };
+
+function detenerDespacho() {
+  clearInterval(desp.pollId); desp.pollId = null;
+  clearTimeout(desp.refrescoId); desp.refrescoId = null;
+}
+
+function iniciarPollDespacho() {
+  clearInterval(desp.pollId);
+  desp.pollId = setInterval(() => { if (!document.hidden && !desp.enVuelo) cargarDespacho(); }, 15_000);
+}
+
+function activarAudio() { try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume?.(); } catch {} }
+
+async function cargarDespacho(refrescar = false) {
+  if (desp.cargando) return;
+  desp.cargando = true;
+  try {
+    desp.estado = await armadoFetch("/despacho/estado" + (refrescar ? "?refrescar=1" : ""));
+    desp.error = null;
+  } catch (err) {
+    if (String(err.message) === "401") return;
+    console.error(err);
+    desp.error = "No se pudo traer el estado. Revisá la conexión.";
+  } finally { desp.cargando = false; }
+  if (!$("vDespElegir").hidden) pintarDespElegir();
+  if (!$("vDesp").hidden) pintarDespacho();
+}
+
+function abrirDespacho() {
+  activarAudio();
+  mostrar("vDespElegir");
+  pintarDespElegir();
+  cargarDespacho(true);
+  iniciarPollDespacho();
+}
+
+function pintarDespElegir() {
+  const g = desp.estado?.grupos;
+  const ids = { zeta_ninja: "deZ", correo: "deC", andreani: "deA" };
+  for (const [m, id] of Object.entries(ids)) {
+    const x = g?.[m];
+    $(id).textContent = desp.error && !g ? "No se pudo calcular" : !x ? "Calculando…"
+      : x.faltan.total ? `Quedan ${x.faltan.total} por entregar` : "No queda nada por entregar";
+  }
+}
+$("deAtras").onclick = () => mostrar("vInicio");
+for (const b of document.querySelectorAll("[data-mens]")) b.onclick = () => elegirMensajeria(b.dataset.mens);
+
+function elegirMensajeria(m) {
+  activarAudio();
+  desp.grupo = m;
+  desp.tab = "entregados";
+  desp.visto.clear();
+  $("dUltimo").hidden = true;
+  $("dTitulo").textContent = `‹ ${MENS[m].nombre}`;
+  mostrar("vDesp");
+  pintarDespacho();
+  cargarDespacho();
+}
+$("dAtras").onclick = () => { mostrar("vDespElegir"); pintarDespElegir(); cargarDespacho(); iniciarPollDespacho(); };
+
+// Cada lectura de la cámara: lo mismo se ve muchas veces seguidas mientras el QR está en el cuadro, así que solo se
+// manda cuando el código estuvo fuera de la vista un rato (2,5 s). Si se vuelve a mostrar después, el servidor
+// contesta "ya estaba contado".
+function leerDespacho(texto) {
+  const ahora = Date.now(), antes = desp.visto.get(texto) || 0;
+  desp.visto.set(texto, ahora);
+  if (ahora - antes < 2500) return;
+  vibrar(25);
+  enviarDespacho(texto);
+}
+
+$("formDesp").onsubmit = (e) => {
+  e.preventDefault();
+  const v = $("inpDesp").value.trim();
+  if (!v) return;
+  $("inpDesp").value = "";
+  enviarDespacho(v);
+};
+
+function destello(color) {
+  const f = $("dFlash");
+  f.style.background = color;
+  f.classList.add("on");
+  requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove("on")));
+}
+
+function avisoUltimo(nivel, texto, deshacerId = null) {
+  const u = $("dUltimo");
+  u.hidden = false;
+  u.className = `d-ultimo ${nivel}`;
+  u.innerHTML = `<span>${esc(texto)}</span>${deshacerId ? `<button type="button" id="dDeshacer">Deshacer</button>` : ""}`;
+  if (deshacerId) $("dDeshacer").onclick = () => anularDespacho(deshacerId, true);
+}
+
+function pintarEnVuelo() { $("dEnVuelo").textContent = desp.enVuelo ? `Guardando ${desp.enVuelo}…` : ""; }
+
+async function enviarDespacho(codigo) {
+  const grupo = desp.grupo;
+  desp.enVuelo++; pintarEnVuelo();
+  try {
+    const r = await armadoFetch("/despacho/escanear", { codigo, mensajeria: grupo, por: quien });
+    if (grupo !== desp.grupo) return;
+    if (r.estado === "ok") {
+      pitido(880, 0.1); vibrar(40); destello("#1d9a5b");
+      const x = desp.estado?.grupos?.[grupo];
+      if (x) { // se ve al instante; el servidor confirma enseguida
+        x.entregados.total++;
+        if (x.entregados[r.tipo] !== undefined) x.entregados[r.tipo]++;
+        if (x.faltan[r.tipo] > 0) { x.faltan[r.tipo]--; x.faltan.total--; }
+      }
+      desp.ultimoId = r.id;
+      avisoUltimo("ok", `✓ ${FORMATO_TXT[r.formato] || "Paquete"} sumado`, r.id);
+    } else if (r.estado === "repetido") {
+      pitido(200, 0.4); vibrar([120, 70, 120]); destello("#d8443b");
+      const p = r.previo;
+      avisoUltimo("amarillo", `Ya estaba contado${p ? ` (${p.por || "alguien"}, ${horaCorta(p.creado_at)})` : ""}. No se suma de nuevo.`);
+    } else {
+      pitido(200, 0.5); vibrar([150, 80, 150]); destello("#d8443b");
+      avisoUltimo("rojo", r.mensaje || "Este paquete no corresponde.");
+    }
+  } catch (err) {
+    if (String(err.message) === "401") return;
+    console.error(err);
+    desp.visto.delete(codigo); // que se pueda volver a escanear enseguida
+    pitido(200, 0.5); vibrar([150, 80, 150]);
+    avisoUltimo("rojo", "No se guardó. Revisá la conexión y escaneá ese paquete de nuevo.");
+  } finally {
+    desp.enVuelo--; pintarEnVuelo();
+    pintarDespacho();
+    if (!desp.enVuelo) { clearTimeout(desp.refrescoId); desp.refrescoId = setTimeout(() => cargarDespacho(), 1200); }
+  }
+}
+
+async function anularDespacho(id, esUltimo = false) {
+  if (!esUltimo && !confirm("¿Sacar este paquete de lo entregado?")) return;
+  try {
+    await armadoFetch("/despacho/anular", { id, por: quien });
+    if (esUltimo) { $("dUltimo").hidden = true; }
+    for (const k of [...desp.visto.keys()]) desp.visto.set(k, 0); // permite volver a escanear
+    await cargarDespacho();
+  } catch (err) { console.error(err); avisoUltimo("rojo", "No se pudo deshacer. Revisá la conexión."); }
+}
+
+function pintarDespacho() {
+  if ($("vDesp").hidden) return;
+  const m = desp.grupo, x = desp.estado?.grupos?.[m];
+  if (!x) {
+    $("dBig").textContent = "…";
+    $("dSub").textContent = desp.error || "Calculando lo que falta";
+    $("dProg").innerHTML = "";
+    $("dLista").innerHTML = "";
+    return;
+  }
+  $("dBig").textContent = x.entregados.total;
+  $("dSub").innerHTML = `${x.entregados.total === 1 ? "entregado" : "entregados"} · faltan <b>${x.faltan.total}</b>`;
+  $("dProg").innerHTML = MENS[m].lineas.map(([t, rotulo]) => {
+    const hechos = x.entregados[t], total = hechos + x.faltan[t];
+    return `<div><div class="r"><span>${rotulo}</span><span>${hechos} de ${total}</span></div>
+      <div class="d-barra"><i style="width:${total ? Math.min(100, Math.round(hechos / total * 100)) : 100}%"></i></div></div>`;
+  }).join("") + (x.entregados.otro ? `<div class="r"><span>Mercado Libre vía Correo</span><span>${x.entregados.otro}</span></div>` : "")
+    + (x.para_manana ? `<small style="color:var(--soft)">${pl(x.para_manana, "Flex", "Flex")} de después de las 14 hs ${x.para_manana === 1 ? "sale" : "salen"} mañana y no se cuenta${x.para_manana === 1 ? "" : "n"}.</small>` : "");
+
+  $("dTabE").textContent = x.entregados.total;
+  $("dTabF").textContent = x.faltan.total;
+  for (const b of document.querySelectorAll(".d-tabs [data-tab]")) b.classList.toggle("on", b.dataset.tab === desp.tab);
+
+  const filas = desp.tab === "entregados"
+    ? (desp.estado.entregados || []).filter((e) => e.mensajeria === m).map((e) => `
+        <div class="d-fila"><div>${e.pedido ? `${e.canal === "tn" ? `${nombreTienda(e.tienda)} · #${esc(e.pedido)}` : `${e.tienda ? nombreTienda(e.tienda) + " · " : ""}Venta ${esc(e.pedido)}`}` : "Paquete sin identificar"}
+          <small>${horaCorta(e.at)} · ${TIPO_TXT[e.tipo] || ""}${e.por ? ` · ${esc(e.por)}` : ""}</small></div>
+          <button type="button" data-anular="${e.id}">Anular</button></div>`)
+    : x.lista_faltan.map((f) => `
+        <div class="d-fila"><div>${f.canal === "tn" ? `${nombreTienda(f.tienda)} · #${esc(f.pedido)}` : `${nombreTienda(f.tienda)} · Venta ${esc(f.pedido)}`}
+          <small>${esc(f.etiqueta || "")}${f.cliente ? ` · ${esc(f.cliente)}` : ""}</small>
+          ${f.atrasado ? `<small class="atras">De un día anterior</small>` : ""}</div></div>`);
+  const nota = desp.tab === "faltan" && x.sin_identificar
+    ? `<div class="d-nota">${pl(x.sin_identificar, "paquete entregado no se pudo identificar", "paquetes entregados no se pudieron identificar")}: el número de arriba ya los descuenta, pero la lista puede mostrar pedidos de más.</div>` : "";
+  $("dLista").innerHTML = nota + (filas.length ? filas.join("") : `<p class="vacio">${desp.tab === "entregados" ? "Todavía no entregaste nada hoy." : "No falta nada."}</p>`);
+  for (const b of $("dLista").querySelectorAll("[data-anular]")) b.onclick = () => anularDespacho(Number(b.dataset.anular));
+}
+for (const b of document.querySelectorAll(".d-tabs [data-tab]")) b.onclick = () => { desp.tab = b.dataset.tab; pintarDespacho(); };
+
+// Terminar: resumen de lo entregado y de lo que queda
+$("dTerminar").onclick = async () => {
+  while (desp.enVuelo || desp.cargando) await new Promise((r) => setTimeout(r, 150)); // que termine lo que se está guardando
+  await cargarDespacho(true);
+  const m = desp.grupo, x = desp.estado?.grupos?.[m];
+  if (!x) return;
+  const hora = horaCorta(new Date().toISOString());
+  panel(`
+    <div class="bar"><b>Entrega terminada</b><small>${hora}</small></div>
+    <div class="scroll">
+      <div class="cabecera" style="text-align:center">
+        <h1 style="font-size:84px;color:var(--ok)">${x.entregados.total}</h1>
+        <p>${x.entregados.total === 1 ? "paquete entregado" : "paquetes entregados"} a ${esc(MENS[m].nombre)}</p>
+      </div>
+      <div class="lista"><div class="rep">
+        ${MENS[m].lineas.map(([t, rotulo]) => `<div style="display:flex;justify-content:space-between"><span>${rotulo}</span><b>${x.entregados[t]}</b></div>`).join("")}
+        ${x.entregados.otro ? `<div style="display:flex;justify-content:space-between"><span>Mercado Libre vía Correo</span><b>${x.entregados.otro}</b></div>` : ""}
+      </div></div>
+      ${x.faltan.total
+        ? `<div class="avisos"><div class="aviso amarillo">Faltan entregar ${MENS[m].lineas.filter(([t]) => x.faltan[t]).map(([t, r]) => `${x.faltan[t]} de ${r}`).join(" y ")}.</div></div>
+           <div class="lista" style="padding:0 16px">${x.lista_faltan.map((f) => `<div class="d-fila"><div>${f.canal === "tn" ? `${nombreTienda(f.tienda)} · #${esc(f.pedido)}` : `${nombreTienda(f.tienda)} · Venta ${esc(f.pedido)}`}
+             <small>${esc(f.etiqueta || "")}${f.cliente ? ` · ${esc(f.cliente)}` : ""}</small>${f.atrasado ? `<small class="atras">De un día anterior</small>` : ""}</div></div>`).join("")}</div>`
+        : `<div class="avisos"><div class="aviso" style="background:var(--ok-soft);color:#11603a">No queda nada por entregar.</div></div>`}
+    </div>
+    <div class="pie"><button class="cta ok" type="button" id="dSeguir">Volver a escanear</button>
+      <button class="cta ghost" type="button" id="dInicio">Volver al inicio</button></div>`);
+  // panel() apagó la cámara y el polling de Despacho
+  $("dSeguir").onclick = () => elegirMensajeria(m);
+  $("dInicio").onclick = () => mostrar("vInicio");
+};
 
 // ─── Arranque ───────────────────────────────────────────────────────────────
 (async () => {
