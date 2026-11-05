@@ -45,6 +45,51 @@ def test_base_cero_se_respeta():
     assert core.dias_efectivos("A", "deposito", 0) == 0
 
 
+def _con_now(now_iso):
+    from datetime import datetime
+    core.configure(days=60, coverage_days=60, now=datetime.fromisoformat(now_iso))
+
+
+def test_dias_con_stock_de_los_ultimos_7():
+    _con_now("2026-10-31T12:00:00+00:00")  # corte = 2026-10-24: cuentan snapshots > 24 (25..31)
+    f = _filas("A", 31)  # stock todos los días de octubre
+    d = core.contar_dias_con_stock(f)["A"]
+    assert d["deposito"] == 31
+    assert d["deposito_7d"] == 7
+    core.configure(days=60, coverage_days=60)
+
+
+def test_pico_reciente_gana_al_promedio():
+    # Producto con stock 60 días, 60 ventas en 60 días (1/día) pero 42 en los últimos 7 (6/día).
+    _con_now("2026-10-31T12:00:00+00:00")
+    filas = [{"fecha": f"2026-{m}-{d:02d}", "sku": "A", "stock_deposito": 9, "stock_full_pret": 0, "stock_full_lavan": 0}
+             for m, rng in (("09", range(2, 31)), ("10", range(1, 32))) for d in rng]
+    core.set_stock_days(core.contar_dias_con_stock(filas))
+    promedio = 60 / core.dias_efectivos("A", "deposito", 60)
+    reciente = core.vel_reciente(42, "A", "deposito", 60)
+    assert round(promedio, 2) == 1.0 and round(reciente, 2) == 6.0
+    assert max(promedio, reciente) == 6.0
+    core.set_stock_days({})
+    core.configure(days=60, coverage_days=60)
+
+
+def test_ritmo_reciente_no_castiga_dias_sin_stock():
+    # Estuvo sin stock 4 de los últimos 7 días (3 con stock): 9 ventas → 3/día, no 9/7.
+    _con_now("2026-10-31T12:00:00+00:00")
+    filas = [{"fecha": f"2026-10-{d}", "sku": "A", "stock_deposito": 5, "stock_full_pret": 0, "stock_full_lavan": 0}
+             for d in (29, 30, 31)]
+    core.set_stock_days(core.contar_dias_con_stock(filas))
+    assert core.vel_reciente(9, "A", "deposito", 60) == 3.0
+    core.set_stock_days({})
+    core.configure(days=60, coverage_days=60)
+
+
+def test_sin_ventas_recientes_manda_el_promedio_y_tope_por_antiguedad():
+    core.set_stock_days({})
+    assert core.vel_reciente(0, "A", "deposito", 60) == 0
+    assert core.vel_reciente(6, "A", "deposito", 3) == 2.0  # producto de 3 días: divisor 3, no 7
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

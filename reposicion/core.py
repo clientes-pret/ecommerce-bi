@@ -64,6 +64,12 @@ def tnlog(msg):
 # tests) = comportamiento anterior: divisor = días desde que se creó el producto.
 STOCK_DAYS = {}
 
+# Ventana del "ritmo reciente". La velocidad que se usa es el MAYOR entre el promedio
+# de la ventana (ventas / días con stock) y el ritmo de los últimos RECENT_DAYS días
+# (decisión del usuario 2026-11-05: un pico reciente tiene que verse enseguida; una
+# baja reciente no baja la velocidad de golpe).
+RECENT_DAYS = 7
+
 
 def set_stock_days(dias_por_sku):
     global STOCK_DAYS
@@ -74,15 +80,32 @@ def contar_dias_con_stock(filas):
     """filas: dicts de repo_stock_snapshot (fecha, sku, stock_deposito,
     stock_full_pret, stock_full_lavan). Devuelve el dict para set_stock_days().
     "full" = día con stock en cualquiera de los dos pools Full."""
-    dias = defaultdict(lambda: {"deposito": 0, "full_pret": 0, "full_lavan": 0, "full": 0})
+    destinos = ("deposito", "full_pret", "full_lavan", "full")
+    dias = defaultdict(lambda: {k: 0 for k in destinos} | {k + "_7d": 0 for k in destinos})
+    # Los snapshots con fecha posterior a este corte son los últimos RECENT_DAYS días.
+    corte = (NOW - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%d")
     for r in filas:
         d = dias[r["sku"]]
         dep, fp, fl = (r.get("stock_deposito") or 0), (r.get("stock_full_pret") or 0), (r.get("stock_full_lavan") or 0)
-        if dep > 0: d["deposito"] += 1
-        if fp > 0:  d["full_pret"] += 1
-        if fl > 0:  d["full_lavan"] += 1
-        if fp > 0 or fl > 0: d["full"] += 1
+        con_stock = {"deposito": dep > 0, "full_pret": fp > 0, "full_lavan": fl > 0, "full": fp > 0 or fl > 0}
+        reciente = str(r.get("fecha", "")) > corte
+        for k, ok in con_stock.items():
+            if ok:
+                d[k] += 1
+                if reciente:
+                    d[k + "_7d"] += 1
     return dict(dias)
+
+
+def vel_reciente(unidades, sku, destino, prod_days_active):
+    """Ritmo diario de los últimos RECENT_DAYS días: unidades / días con stock de esa
+    ventana (no se castiga con días en que no había nada para vender). Tope: antigüedad
+    del producto. Sin ventas recientes devuelve 0 (el promedio manda)."""
+    if not unidades:
+        return 0
+    base = min(RECENT_DAYS, prod_days_active)
+    dias = dias_efectivos(sku, destino + "_7d", base)
+    return unidades / dias if dias > 0 else 0
 
 
 def dias_efectivos(sku, destino, base_days):
@@ -807,13 +830,26 @@ def build_rows(results):
         for sku, qty in d.items():
             sales_full_by_sku[sku] += qty
 
+    # ── Ventas de los últimos RECENT_DAYS días (para el ritmo reciente). weekly_calc arma
+    # `sales_recent` (TN) y `orders_recent` (ML) filtrando las MISMAS órdenes; la separación
+    # Full / no-Full reusa ml_sales_full_split tal cual. Sin esas claves (ej. generar_reporte.py)
+    # queda vacío y manda el promedio, como antes.
+    tn_pret_recent   = results.get("tn_pret", {}).get("sales_recent", {})
+    tn_lavan_recent  = results.get("tn_lavan", {}).get("sales_recent", {})
+    ml_pret_rec_full,  ml_pret_rec_nofull  = ml_sales_full_split(results.get("ml_pret",  {}).get("orders_recent", []), ml_pret_items)
+    ml_lavan_rec_full, ml_lavan_rec_nofull = ml_sales_full_split(results.get("ml_lavan", {}).get("orders_recent", []), ml_lavan_items)
+    rec_full_by_sku = defaultdict(int)
+    for d in (ml_pret_rec_full, ml_lavan_rec_full):
+        for sku, qty in d.items():
+            rec_full_by_sku[sku] += qty
+
     # Full pasa a ser un canal más (como ML Pret/ML Lavan/TN Pret/TN Lavan), así que
     # las ventas "ML Pret"/"ML Lavan" de acá en más son SOLO no-Full — sin esto se
     # contarían dos veces (una en el canal ML de origen, otra en "Full").
     ml_pret_by_sku  = ml_pret_sales_nofull
     ml_lavan_by_sku = ml_lavan_sales_nofull
 
-    def full_metrics_marca(sku, stock_full, active_days, prefix, ventas_dict):
+    def full_metrics_marca(sku, stock_full, active_days, prefix, ventas_dict, recientes_dict=None):
         """Devuelve el dict de columnas Full de UNA sola marca (Pret o Lavan).
 
         El stock Full de cada cuenta ML es un pool separado que Mercado Libre
@@ -826,8 +862,12 @@ def build_rows(results):
         SU PROPIA marca, nunca mezclados."""
         ventas_full = ventas_dict.get(sku, 0)
         # Días con stock en ESTE pool Full (cada marca tiene el suyo), no días de vida.
+        dias_vida = active_days
         active_days = dias_efectivos(sku, f"full_{prefix.lower()}", active_days)
-        vel_full_diaria  = round(ventas_full / active_days, 4) if active_days > 0 else 0
+        vel_full_prom    = ventas_full / active_days if active_days > 0 else 0
+        # Velocidad = el mayor entre el promedio (días con stock) y el ritmo de los últimos 7 días.
+        vel_full_rec     = vel_reciente((recientes_dict or {}).get(sku, 0), sku, f"full_{prefix.lower()}", dias_vida)
+        vel_full_diaria  = round(max(vel_full_prom, vel_full_rec), 4)
         vel_full_semanal = round(vel_full_diaria * 7, 2)
 
         if vel_full_diaria > 0:
@@ -865,8 +905,8 @@ def build_rows(results):
     def full_metrics(sku, active_days):
         """Mergea las columnas Full de las dos marcas (Pret y Lavan) para un SKU."""
         return {
-            **full_metrics_marca(sku, ml_pret_stock_full.get(sku, 0), active_days, "Pret", ml_pret_sales_full),
-            **full_metrics_marca(sku, ml_lavan_stock_full.get(sku, 0), active_days, "Lavan", ml_lavan_sales_full),
+            **full_metrics_marca(sku, ml_pret_stock_full.get(sku, 0), active_days, "Pret", ml_pret_sales_full, ml_pret_rec_full),
+            **full_metrics_marca(sku, ml_lavan_stock_full.get(sku, 0), active_days, "Lavan", ml_lavan_sales_full, ml_lavan_rec_full),
         }
 
     def ml_sales_by_sku(ml_sales):
@@ -1014,6 +1054,12 @@ def build_rows(results):
             total_1h   = tn_p_1h + tn_l_1h + ml_1h
             total_2h   = tn_p_2h + tn_l_2h + ml_2h
 
+            # Ventas de los últimos 7 días (mismo criterio de canales que total_sold).
+            rec_full     = rec_full_by_sku.get(sku, 0)
+            rec_deposito = (tn_pret_recent.get(sku, 0) + tn_pret_recent.get(str(variant.get("id", "")), 0)
+                            + tn_lavan_recent.get(sku, 0)
+                            + ml_pret_rec_nofull.get(sku, 0) + ml_lavan_rec_nofull.get(sku, 0))
+
             # Depósito = todo menos Full (Full tiene su propio quiebre/reposición aparte,
             # ver full_metrics). Así "A reponer" no infla la sugerencia de compra con
             # demanda que ni sale del depósito.
@@ -1021,8 +1067,13 @@ def build_rows(results):
             ventas_deposito = total_sold - sold_full
             dias_dep    = dias_efectivos(sku, "deposito", prod_days_active)
             dias_full   = dias_efectivos(sku, "full", prod_days_active)
-            vel_dep_diaria  = round(ventas_deposito / dias_dep, 4) if dias_dep > 0 else 0
-            vel_diaria  = round(vel_dep_diaria + (sold_full / dias_full if dias_full > 0 else 0), 4)
+            # Velocidad = el MAYOR entre el promedio (días con stock) y el ritmo de los últimos 7 días.
+            vel_dep_prom = ventas_deposito / dias_dep if dias_dep > 0 else 0
+            vel_dep_rec  = vel_reciente(rec_deposito, sku, "deposito", prod_days_active)
+            vel_dep_diaria  = round(max(vel_dep_prom, vel_dep_rec), 4)
+            vel_full_prom = sold_full / dias_full if dias_full > 0 else 0
+            vel_full_rec  = vel_reciente(rec_full, sku, "full", prod_days_active)
+            vel_diaria  = round(vel_dep_diaria + max(vel_full_prom, vel_full_rec), 4)
             vel_semanal = round(vel_diaria * 7, 2)
             vel_dep_semanal = round(vel_dep_diaria * 7, 2)
 
@@ -1155,6 +1206,11 @@ def build_rows(results):
             total_1h   = tn_l_1h + ml_1h
             total_2h   = tn_l_2h + ml_2h
 
+            # Ventas de los últimos 7 días (mismo criterio de canales que total_sold).
+            rec_full     = rec_full_by_sku.get(sku, 0)
+            rec_deposito = (tn_lavan_recent.get(sku, 0) + tn_lavan_recent.get(str(variant.get("id", "")), 0)
+                            + ml_pret_rec_nofull.get(sku, 0) + ml_lavan_rec_nofull.get(sku, 0))
+
             # Depósito = todo menos Full (Full tiene su propio quiebre/reposición aparte,
             # ver full_metrics). Así "A reponer" no infla la sugerencia de compra con
             # demanda que ni sale del depósito.
@@ -1162,8 +1218,13 @@ def build_rows(results):
             ventas_deposito = total_sold - sold_full
             dias_dep    = dias_efectivos(sku, "deposito", prod_days_active)
             dias_full   = dias_efectivos(sku, "full", prod_days_active)
-            vel_dep_diaria  = round(ventas_deposito / dias_dep, 4) if dias_dep > 0 else 0
-            vel_diaria  = round(vel_dep_diaria + (sold_full / dias_full if dias_full > 0 else 0), 4)
+            # Velocidad = el MAYOR entre el promedio (días con stock) y el ritmo de los últimos 7 días.
+            vel_dep_prom = ventas_deposito / dias_dep if dias_dep > 0 else 0
+            vel_dep_rec  = vel_reciente(rec_deposito, sku, "deposito", prod_days_active)
+            vel_dep_diaria  = round(max(vel_dep_prom, vel_dep_rec), 4)
+            vel_full_prom = sold_full / dias_full if dias_full > 0 else 0
+            vel_full_rec  = vel_reciente(rec_full, sku, "full", prod_days_active)
+            vel_diaria  = round(vel_dep_diaria + max(vel_full_prom, vel_full_rec), 4)
             vel_semanal = round(vel_diaria * 7, 2)
             vel_dep_semanal = round(vel_dep_diaria * 7, 2)
 

@@ -17,7 +17,7 @@ Uso local: python3 -m reposicion.jobs.weekly_calc
 import sys
 import threading
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -171,6 +171,20 @@ def _resolver_items_cerrados(config, canal, cfg, rows, item_details):
     return resueltos
 
 
+def _solo_recientes(orders, campo_fecha):
+    """Órdenes de los últimos core.RECENT_DAYS días (para el ritmo reciente de
+    core.build_rows). `campo_fecha` es la clave con el timestamp de creación."""
+    corte = core.NOW - timedelta(days=core.RECENT_DAYS)
+    out = []
+    for o in orders:
+        try:
+            if datetime.fromisoformat(str(o[campo_fecha]).replace("Z", "+00:00")) >= corte:
+                out.append(o)
+        except Exception:
+            continue
+    return out
+
+
 def fetch_all_hybrid(config):
     """Catálogo en vivo (precio/costo/stock/nombre — cambia todos los días,
     no tiene sentido persistirlo con esta cadencia) + ventas desde
@@ -190,6 +204,7 @@ def fetch_all_hybrid(config):
         results[canal]["sales"] = sales_total
         results[canal]["sales_first"] = sales_first
         results[canal]["sales_second"] = sales_second
+        results[canal]["sales_recent"] = core.parse_tn_sales(_solo_recientes(fake_orders, "created_at"))[0]
         core.tnlog(f"  {canal}: {len(rows)} líneas de venta desde repo_ventas_items")
 
     for canal in ("ml_pret", "ml_lavan"):
@@ -201,6 +216,7 @@ def fetch_all_hybrid(config):
         fake_orders = _fake_ml_orders_from_rows(rows)
         sales_total, sales_first, sales_second = core.parse_ml_sales(fake_orders)
         results[canal]["orders"] = fake_orders  # ml_sales_full_split() lo usa dentro de build_rows()
+        results[canal]["orders_recent"] = _solo_recientes(fake_orders, "date_created")
         results[canal]["sales"] = sales_total
         results[canal]["sales_first"] = sales_first
         results[canal]["sales_second"] = sales_second
