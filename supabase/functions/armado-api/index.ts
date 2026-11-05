@@ -164,24 +164,28 @@ async function tnGet(tienda: Tienda, path: string, params: Record<string, string
  * (5/11/2026, pedido del usuario). Pasa a PACKED cada orden de despacho que esté UNPACKED / IN_PREPARATION; las
  * que ya están empaquetadas, despachadas o entregadas no se tocan. Nunca tira: el control ya quedó guardado.
  */
-async function marcarEmpaquetadoTN(tienda: Tienda, numero: string): Promise<{ estado: "marcado" | "ya_estaba" | "error"; texto?: string }> {
+async function marcarEmpaquetadoTN(tienda: Tienda, numero: string): Promise<{ estado: "marcado" | "ya_estaba" | "error"; retiro?: boolean; texto?: string }> {
   const c = CRED.tn?.[tienda];
   try {
     if (!c) throw new Error("sin credenciales");
     const o = (await tnBuscar(tienda, numero)).find((x) => String(x.number) === numero);
     if (!o) throw new Error("no encontré el pedido");
-    const pendientes = (o.fulfillments ?? []).filter((f: Json) =>
-      ["UNPACKED", "IN_PREPARATION"].includes(f?.status) && f?.shipping?.extras?.shippable !== false); // sin envío: Tiendanube no acepta PACKED
+    const pendientes = (o.fulfillments ?? []).filter((f: Json) => ["UNPACKED", "IN_PREPARATION"].includes(f?.status));
     if (!pendientes.length) return { estado: "ya_estaba" };
+    let retiro = false;
     for (const f of pendientes) {
+      // "Retira en el local" (pickup sin envío): Tiendanube no acepta PACKED; pasa directo a "listo para retirar",
+      // igual que cuando se marca a mano en el admin (5/11/2026, pedido del usuario).
+      const sinEnvio = f?.shipping?.extras?.shippable === false;
+      if (sinEnvio) retiro = true;
       const r = await fetch(`https://api.tiendanube.com/v1/${c.store_id}/orders/${o.id}/fulfillment-orders/${f.id}`, {
         method: "PATCH",
         headers: { Authentication: `bearer ${c.access_token}`, "User-Agent": "ArmadoPedidos (info@pretahome.com)", "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "PACKED" }),
+        body: JSON.stringify({ status: sinEnvio ? "READY_FOR_PICKUP" : "PACKED" }),
       });
       if (!r.ok) throw new Error(`Tiendanube respondió ${r.status}: ${(await r.text()).slice(0, 200)}`);
     }
-    return { estado: "marcado" };
+    return { estado: "marcado", retiro };
   } catch (err) {
     console.error("marcar empaquetado TN", tienda, numero, err);
     return { estado: "error", texto: String((err as Error)?.message ?? err) };

@@ -819,8 +819,8 @@ async function guardar() {
     });
     // Tiendanube completo: la función lo marca como empaquetado en la tienda ("por enviar").
     const tn = r?.tiendanube;
-    estado.innerHTML = `<p>Guardado${quien ? ` · armó ${esc(quien)}` : ""}.${tn?.estado === "marcado" ? " Marcado como empaquetado en Tiendanube." : ""}</p>` +
-      (tn?.estado === "error" ? `<div class="aviso amarillo">No se pudo marcar como empaquetado en Tiendanube. Marcalo a mano en el admin.</div>` : "");
+    estado.innerHTML = `<p>Guardado${quien ? ` · armó ${esc(quien)}` : ""}.${tn?.estado === "marcado" ? (tn.retiro ? " Marcado como listo para retirar en Tiendanube." : " Marcado como empaquetado en Tiendanube.") : ""}</p>` +
+      (tn?.estado === "error" ? `<div class="aviso amarillo">No se pudo marcar en Tiendanube. Marcalo a mano en el admin.</div>` : "");
     $("btnSiguiente").disabled = false;
   } catch (err) {
     console.error(err);
