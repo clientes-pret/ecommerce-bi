@@ -510,6 +510,8 @@ type Linea = {
   imagen: string | null;
   categoria: string | null;
   marca: string | null;
+  fecha: string | null;    // creación de la orden (para repartir lo encontrado del más viejo al más nuevo)
+  cliente: string | null;  // ML: usuario del comprador; TN: nombre
 };
 
 const LOGISTICA_ML: Record<string, string> = {
@@ -559,6 +561,8 @@ async function pendientesTN(tienda: Tienda): Promise<Linea[]> {
     imagen: p.image?.src ?? null,
     categoria: null,
     marca: null,
+    fecha: o.created_at ?? null,
+    cliente: o.customer?.name || o.contact_name || null,
   })));
 }
 
@@ -598,6 +602,8 @@ async function pendientesML(tienda: Tienda): Promise<Linea[]> {
         imagen: null,
         categoria: null,
         marca: null,
+        fecha: o.date_created ?? null,
+        cliente: o.buyer?.nickname ?? null,
         _item: String(it.item?.id),
         _var: it.item?.variation_id ? String(it.item.variation_id) : null,
       });
@@ -662,13 +668,23 @@ async function getEstado(url: URL) {
       visto_at: new Date().toISOString(),
     });
   }
-  const [marcas, presencia] = await Promise.all([
+  const [marcas, presencia, controles] = await Promise.all([
     supabase.from("busqueda_marcas").select("sku, estado, requeridas, encontradas, por, marcado_at").eq("fecha", hoyAR()),
     supabase.from("busqueda_presencia").select("por, categoria")
       .gte("visto_at", new Date(Date.now() - 120_000).toISOString()).not("categoria", "is", null),
+    // Paquetes cerrados completos hoy: en Empaquetado ("Pedidos listos") no se vuelven a ofrecer y lo que se
+    // llevaron ya no está disponible para otros pedidos. Los de ML siguen "listos para despachar" hasta que salen.
+    supabase.from("armado_controles").select("canal, tienda, pedido, creado_at, armado_items(sku, cantidad, estado)")
+      .eq("resultado", "completo").gte("creado_at", `${hoyAR()}T00:00:00-03:00`).order("id"),
   ]);
   if (marcas.error) throw marcas.error;
-  return json({ marcas: marcas.data ?? [], presencia: presencia.data ?? [] });
+  return json({
+    marcas: marcas.data ?? [], presencia: presencia.data ?? [],
+    empaquetados: (controles.data ?? []).map((c) => ({
+      canal: c.canal, tienda: c.tienda, pedido: c.pedido, at: c.creado_at,
+      items: (c.armado_items ?? []).filter((i: Json) => i.estado === "ok" && i.sku).map((i: Json) => ({ sku: i.sku, cantidad: i.cantidad })),
+    })),
+  });
 }
 
 async function postMarcar(req: Request) {
