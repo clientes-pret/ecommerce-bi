@@ -57,6 +57,52 @@ def tnlog(msg):
     print(f"  {msg}", flush=True)
 
 
+# ─── DÍAS CON STOCK (divisor de la velocidad) ───────────────────────────────
+# {sku: {"deposito": n, "full_pret": n, "full_lavan": n, "full": n}} = cantidad
+# de días de la ventana en que el SKU tuvo stock > 0 según repo_stock_snapshot.
+# Lo carga weekly_calc con set_stock_days(). Vacío (ej. generar_reporte.py o
+# tests) = comportamiento anterior: divisor = días desde que se creó el producto.
+STOCK_DAYS = {}
+
+
+def set_stock_days(dias_por_sku):
+    global STOCK_DAYS
+    STOCK_DAYS = dias_por_sku or {}
+
+
+def contar_dias_con_stock(filas):
+    """filas: dicts de repo_stock_snapshot (fecha, sku, stock_deposito,
+    stock_full_pret, stock_full_lavan). Devuelve el dict para set_stock_days().
+    "full" = día con stock en cualquiera de los dos pools Full."""
+    dias = defaultdict(lambda: {"deposito": 0, "full_pret": 0, "full_lavan": 0, "full": 0})
+    for r in filas:
+        d = dias[r["sku"]]
+        dep, fp, fl = (r.get("stock_deposito") or 0), (r.get("stock_full_pret") or 0), (r.get("stock_full_lavan") or 0)
+        if dep > 0: d["deposito"] += 1
+        if fp > 0:  d["full_pret"] += 1
+        if fl > 0:  d["full_lavan"] += 1
+        if fp > 0 or fl > 0: d["full"] += 1
+    return dict(dias)
+
+
+def dias_efectivos(sku, destino, base_days):
+    """Divisor de la velocidad de venta: días en que HAY stock, no días desde
+    que se creó el producto. Un producto creado hace 200 días que estuvo sin
+    stock y reingresó hace 10, con 10 ventas, vende 1/día — no 10/60. Dividir
+    por los días de vida del producto subestimaba la demanda de todo SKU que
+    estuvo quebrado.
+
+    Nunca supera `base_days` (ventana / antigüedad del producto). Sin historial
+    del SKU, o sin ningún día con stock (p. ej. reingresó hoy después del
+    snapshot de las 06:00), no se puede inferir nada y se usa `base_days`."""
+    if base_days <= 0:
+        return base_days
+    n = STOCK_DAYS.get(sku, {}).get(destino)
+    if not n:
+        return base_days
+    return max(1, min(base_days, n))
+
+
 # ─── PROVEEDORES ────────────────────────────────────────────────────────────
 # Prioridad: 1) mapeo explícito SKU→Proveedor desde Google Sheets (o desde
 #            repo_productos.proveedor_manual, override que aplican los jobs
@@ -779,6 +825,8 @@ def build_rows(results):
         la mercadería. Por eso stock y velocidad van siempre de la mano de
         SU PROPIA marca, nunca mezclados."""
         ventas_full = ventas_dict.get(sku, 0)
+        # Días con stock en ESTE pool Full (cada marca tiene el suyo), no días de vida.
+        active_days = dias_efectivos(sku, f"full_{prefix.lower()}", active_days)
         vel_full_diaria  = round(ventas_full / active_days, 4) if active_days > 0 else 0
         vel_full_semanal = round(vel_full_diaria * 7, 2)
 
@@ -966,18 +1014,21 @@ def build_rows(results):
             total_1h   = tn_p_1h + tn_l_1h + ml_1h
             total_2h   = tn_p_2h + tn_l_2h + ml_2h
 
-            active_days = prod_days_active
-            vel_diaria  = round(total_sold / active_days, 4) if active_days > 0 else 0
-            vel_semanal = round(vel_diaria * 7, 2)
-
             # Depósito = todo menos Full (Full tiene su propio quiebre/reposición aparte,
             # ver full_metrics). Así "A reponer" no infla la sugerencia de compra con
             # demanda que ni sale del depósito.
+            # Velocidad = ventas / días CON STOCK (ver dias_efectivos), no / días de vida.
             ventas_deposito = total_sold - sold_full
-            vel_dep_diaria  = round(ventas_deposito / active_days, 4) if active_days > 0 else 0
+            dias_dep    = dias_efectivos(sku, "deposito", prod_days_active)
+            dias_full   = dias_efectivos(sku, "full", prod_days_active)
+            vel_dep_diaria  = round(ventas_deposito / dias_dep, 4) if dias_dep > 0 else 0
+            vel_diaria  = round(vel_dep_diaria + (sold_full / dias_full if dias_full > 0 else 0), 4)
+            vel_semanal = round(vel_diaria * 7, 2)
             vel_dep_semanal = round(vel_dep_diaria * 7, 2)
 
-            trend_label, trend_pct = calc_trend(total_1h, total_2h, active_days)
+            # La tendencia compara mitades del calendario: usa la ventana, no los días con stock.
+            trend_label, trend_pct = calc_trend(total_1h, total_2h, prod_days_active)
+            active_days = dias_dep   # lo que se muestra como "Días activo" y mide la confianza
 
             if vel_dep_diaria > 0 and stock_mgmt:
                 dias_quiebre  = int(stock / vel_dep_diaria)
@@ -1059,7 +1110,7 @@ def build_rows(results):
                 "URL TN Lavan":           url_tn_lavan,
                 "URL ML Pret":            ml_pret_sku_to_url.get(sku, ""),
                 "URL ML Lavan":           ml_lavan_sku_to_url.get(sku, ""),
-                **full_metrics(sku, active_days),
+                **full_metrics(sku, prod_days_active),
             })
 
     # ── PASO 2: SKUs exclusivos de TN Lavan (no están en TN Pret)
@@ -1104,18 +1155,21 @@ def build_rows(results):
             total_1h   = tn_l_1h + ml_1h
             total_2h   = tn_l_2h + ml_2h
 
-            active_days = prod_days_active
-            vel_diaria  = round(total_sold / active_days, 4) if active_days > 0 else 0
-            vel_semanal = round(vel_diaria * 7, 2)
-
             # Depósito = todo menos Full (Full tiene su propio quiebre/reposición aparte,
             # ver full_metrics). Así "A reponer" no infla la sugerencia de compra con
             # demanda que ni sale del depósito.
+            # Velocidad = ventas / días CON STOCK (ver dias_efectivos), no / días de vida.
             ventas_deposito = total_sold - sold_full
-            vel_dep_diaria  = round(ventas_deposito / active_days, 4) if active_days > 0 else 0
+            dias_dep    = dias_efectivos(sku, "deposito", prod_days_active)
+            dias_full   = dias_efectivos(sku, "full", prod_days_active)
+            vel_dep_diaria  = round(ventas_deposito / dias_dep, 4) if dias_dep > 0 else 0
+            vel_diaria  = round(vel_dep_diaria + (sold_full / dias_full if dias_full > 0 else 0), 4)
+            vel_semanal = round(vel_diaria * 7, 2)
             vel_dep_semanal = round(vel_dep_diaria * 7, 2)
 
-            trend_label, trend_pct = calc_trend(total_1h, total_2h, active_days)
+            # La tendencia compara mitades del calendario: usa la ventana, no los días con stock.
+            trend_label, trend_pct = calc_trend(total_1h, total_2h, prod_days_active)
+            active_days = dias_dep   # lo que se muestra como "Días activo" y mide la confianza
 
             if vel_dep_diaria > 0 and stock_mgmt:
                 dias_quiebre  = int(stock / vel_dep_diaria)
@@ -1197,7 +1251,7 @@ def build_rows(results):
                 "URL TN Lavan":           url_tn_lavan,
                 "URL ML Pret":            ml_pret_sku_to_url.get(sku, ""),
                 "URL ML Lavan":           ml_lavan_sku_to_url.get(sku, ""),
-                **full_metrics(sku, active_days),
+                **full_metrics(sku, prod_days_active),
             })
 
     return rows

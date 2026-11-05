@@ -209,6 +209,22 @@ def fetch_all_hybrid(config):
     return results
 
 
+def cargar_dias_con_stock(config):
+    """Días de la ventana en que cada SKU tuvo stock, desde repo_stock_snapshot
+    (un snapshot por día a las 06:00). Solo se traen las filas con algún stock
+    > 0: un día sin fila con stock cuenta como día sin stock. Alimenta el divisor
+    de la velocidad (core.dias_efectivos)."""
+    filas = db.select(config, "repo_stock_snapshot", params={
+        "select": "fecha,sku,stock_deposito,stock_full_pret,stock_full_lavan",
+        "fecha": f"gt.{core.DATE_FROM_STR}",
+        "or": "(stock_deposito.gt.0,stock_full_pret.gt.0,stock_full_lavan.gt.0)",
+        "order": "fecha.asc,sku.asc",
+    })
+    dias = core.contar_dias_con_stock(filas)
+    core.tnlog(f"  Días con stock en la ventana: {len(filas)} filas de snapshot, {len(dias)} SKUs")
+    return dias
+
+
 def semana_iso(d=None):
     d = d or date.today()
     y, w, _ = d.isocalendar()
@@ -379,6 +395,7 @@ def main():
     core.tnlog(f"═══ Cálculo semanal {semana}  |  cobertura target: {coverage_days}d ═══")
     core.configure(days=DEFAULT_DAYS, coverage_days=coverage_days)
     core.load_supplier_map()
+    core.set_stock_days(cargar_dias_con_stock(config))
 
     results = fetch_all_hybrid(config)
 
