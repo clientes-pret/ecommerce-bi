@@ -86,6 +86,7 @@
   .fila .t { font-size: 15px; line-height: 1.2; font-weight: 600; min-width: 0; }
   .fila .t small { display: block; color: var(--soft); font-weight: 500; font-size: 14px; }
   .fila .t small.why { color: var(--no); font-weight: 600; }
+  .fila .t small.sku { font-weight: 400; font-size: 13px; letter-spacing: 0.02em; }
   .fila .q { font-family: var(--display); font-weight: 800; font-size: 24px; }
   .mark { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; }
   .mark.ok { background: var(--ok); }
@@ -591,7 +592,7 @@ function resumenInicial(p) {
       <div class="lista">
         ${p.items.map((i) => `
           <div class="fila">${fotoHTML(i.imagen)}
-            <div class="t">${esc(i.nombre)}<small>${esc(i.variante.join(" · "))}</small></div>
+            <div class="t">${esc(i.nombre)}${i.variante.length ? `<small>${esc(i.variante.join(" · "))}</small>` : ""}${i.sku ? `<small class="sku">${esc(i.sku)}</small>` : ""}</div>
             <span class="q">×${i.cantidad}</span></div>`).join("")}
       </div>
     </div>
