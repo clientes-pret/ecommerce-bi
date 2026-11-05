@@ -159,9 +159,10 @@
   .seg2 button { flex: 1; border: none; background: none; border-radius: 8px; padding: 7px 2px; font-size: 14px; font-weight: 600; color: var(--soft); white-space: nowrap; }
   .seg2 button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
   .lstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 0 16px; }
-  .lstats button { border: 2px solid transparent; background: var(--card); border-radius: 12px; padding: 8px 4px 7px; text-align: center; }
+  .lstats button { border: 2px solid transparent; background: var(--card); border-radius: 12px; padding: 8px 4px 7px; text-align: center;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start; }
   .lstats b { display: block; font-family: var(--display); font-size: 30px; font-weight: 800; line-height: 1; }
-  .lstats span { font-size: 12px; color: var(--soft); }
+  .lstats span { display: block; font-size: 12px; line-height: 1.15; color: var(--soft); margin-top: 3px; }
   .lstats button[aria-pressed="true"] { border-color: var(--ink); }
   .lstats .listo b { color: var(--ok); } .lstats .casi b { color: #8a5a00; } .lstats .conflicto b { color: var(--no); }
   .ped-listo { width: 100%; text-align: left; background: var(--card); border: none; border-radius: 14px; padding: 12px; display: grid; gap: 6px; }
@@ -267,6 +268,8 @@
   .tarea.profunda { border-color: var(--warn); }
   .tarea .badge { justify-self: start; margin-top: 4px; background: var(--warn); color: var(--ink); font-family: var(--display);
     font-weight: 800; font-size: 19px; border-radius: 8px; padding: 1px 9px 2px; }
+  .tarea .badge.avance { background: var(--ok-soft); color: #11603a; }
+  .tarea.principal .badge.avance { background: #fff; color: var(--ok); }
   #pBody { flex: 1; overflow-y: auto; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 10px; }
   #pBody > * { flex-shrink: 0; }
   .fila .q.falta { color: var(--no); text-align: right; line-height: 1; }
@@ -315,8 +318,8 @@
   <div class="bar"><img class="logo" src="assets/logo-white.png" alt="Pret a Home"><button class="link" id="btnQuien2" type="button"></button></div>
   <div class="tareas">
     <h1>¿Qué vas a hacer hoy?</h1>
-    <button class="tarea" type="button" id="btnBusqueda"><b>Búsqueda</b><span>Juntar los productos de los pedidos</span></button>
-    <button class="tarea principal" type="button" id="btnEmpaquetado"><b>Empaquetado</b><span>Escanear la etiqueta y controlar cada paquete</span></button>
+    <button class="tarea" type="button" id="btnBusqueda"><b>Búsqueda</b><span>Juntar los productos de los pedidos</span><span class="badge avance" id="avBusq" hidden></span></button>
+    <button class="tarea principal" type="button" id="btnEmpaquetado"><b>Empaquetado</b><span>Escanear la etiqueta y controlar cada paquete</span><span class="badge avance" id="avEmpaq" hidden></span></button>
     <button class="tarea profunda" type="button" id="btnProfunda"><b>Búsqueda profunda</b><span>Lo que nadie encontró</span><span class="badge" id="profBadge" hidden></span></button>
   </div>
 </section>
@@ -423,7 +426,7 @@ function mostrar(id) {
   if (id !== "vBusq") detenerBusqueda();
   if (id !== "vProf") detenerProfunda();
   if (id === "vInicio") contarProfunda();
-  if (id === "vScan" || id === "vPanel") iniciarListos(); else detenerListos();
+  if (["vScan", "vPanel", "vInicio"].includes(id)) iniciarListos(); else detenerListos();
 }
 
 function vibrar(ms) { try { navigator.vibrate?.(ms); } catch {} }
@@ -906,6 +909,7 @@ function calcularListos() {
 }
 
 async function leerListos() {
+  let cambio = false;
   try {
     const [est, pend] = await Promise.all([
       armadoFetch("/busqueda/estado"),
@@ -914,16 +918,20 @@ async function leerListos() {
     if (pend) { listos.lineas = pend.lineas; listos.pendAt = Date.now(); }
     const firma = JSON.stringify([est.marcas, est.empaquetados, listos.pendAt]);
     listos.cargado = true; listos.error = null;
-    if (firma === listos.firma) return;
-    listos.firma = firma;
-    listos.marcas = new Map(est.marcas.map((m) => [m.sku, m]));
-    listos.empaquetados = est.empaquetados || [];
-    calcularListos();
+    if (firma !== listos.firma) {
+      listos.firma = firma;
+      listos.marcas = new Map(est.marcas.map((m) => [m.sku, m]));
+      listos.empaquetados = est.empaquetados || [];
+      calcularListos();
+      cambio = true;
+    }
   } catch (err) {
     console.error(err);
     if (!listos.cargado) listos.error = "No se pudo ver lo que ya se buscó.";
   }
   pintarContadorListos();
+  pintarAvance();
+  if (!cambio && listos.cargado) return; // nada nuevo: no se redibuja (no mueve la pantalla)
   if ($("vPanel").dataset.vista === "listos" && !$("vPanel").hidden) pintarListos();
   if (pedido && $("vPanel").dataset.vista === "pedido") estadoBusquedaPedido(pedido);
 }
@@ -940,6 +948,21 @@ const urgencia = (p) => (p.logistica === "Flex" ? 0 : 1);
 // "Envío Nube - Correo Argentino Clásico a sucursal" → "Correo a sucursal"
 const logiCorta = (s) => String(s || "").replace(/^Envío Nube - /i, "").replace(/Correo Argentino( Clásico)?/i, "Correo").slice(0, 26);
 
+/** En el inicio: cómo va el día. Búsqueda en unidades (encontradas / a buscar), Empaquetado en pedidos.
+ *  Lo ya empaquetado hoy cuenta como encontrado y como hecho. */
+function pintarAvance() {
+  if (!listos.cargado || listos.error) return;
+  const pct = (a, b) => `${a}/${b} (${b ? Math.round((a / b) * 100) : 0} %)`;
+  const lineas = listos.pedidos.flatMap((p) => p.lineas);
+  const uHechas = listos.empaquetados.reduce((s, e) => s + e.items.reduce((t, i) => t + (Number(i.cantidad) || 0), 0), 0);
+  const uOk = lineas.filter((l) => l.est === "ok").reduce((s, l) => s + l.cantidad, 0) + uHechas;
+  const uTot = lineas.reduce((s, l) => s + l.cantidad, 0) + uHechas;
+  const hechos = new Set(listos.empaquetados.map(clavePed)).size;
+  const tot = hechos + listos.pedidos.length;
+  $("avBusq").hidden = !uTot; $("avBusq").textContent = `${pct(uOk, uTot)} productos encontrados`;
+  $("avEmpaq").hidden = !tot; $("avEmpaq").textContent = `${pct(hechos, tot)} empaquetados`;
+}
+
 function pintarContadorListos() {
   if (listos.error) { $("listosN").textContent = "–"; $("listosSub").textContent = listos.error; return; }
   if (!listos.cargado) return;
@@ -949,7 +972,7 @@ function pintarContadorListos() {
 }
 
 function verListos() {
-  panel(`<div class="bar"><button class="atras" type="button" id="btnListosAtras">‹ Pedidos listos</button></div>
+  panel(`<div class="bar"><button class="atras" type="button" id="btnListosAtras">‹ Para empaquetar</button></div>
     <div class="scroll" id="listosBody"><div class="cargando">Cargando</div></div>`);
   $("vPanel").dataset.vista = "listos";
   $("btnListosAtras").onclick = () => mostrar("vScan");
@@ -958,7 +981,7 @@ function verListos() {
 }
 $("btnListos").onclick = verListos;
 
-const CATS = [["listo", "Listos"], ["casi", "Casi"], ["conflicto", "Conflicto"], ["sin", "Sin buscar"]];
+const CATS = [["listo", "Listos para empaquetar"], ["casi", "Casi listos"], ["conflicto", "En conflicto"], ["sin", "Sin buscar"]];
 
 function pintarListos() {
   const body = $("listosBody");
