@@ -153,23 +153,18 @@
   .listos-btn b { display: block; font-size: 17px; }
   .listos-btn small { color: #d4f2e1; font-size: 14px; }
   .listos-btn .flecha { margin-left: auto; font-size: 26px; }
-  .listos-tot { display: flex; align-items: baseline; gap: 10px; padding: 0 16px; }
-  .listos-tot .n { font-family: var(--display); font-size: 52px; font-weight: 800; line-height: 1; color: var(--ok); }
-  .listos-tot b { display: block; font-size: 17px; }
-  .listos-tot small { color: var(--soft); font-size: 14px; }
-  .filtro { padding: 0 16px; }
-  .filtro > span { display: block; font-size: 13px; color: var(--soft); margin-bottom: 6px; }
-  .chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
-  .chip { flex: none; display: flex; align-items: center; gap: 7px; border: 2px solid var(--line); background: var(--card); border-radius: 999px;
-    padding: 8px 12px; font-size: 15px; font-weight: 600; }
-  .chip .dot { width: 10px; height: 10px; border-radius: 50%; }
-  .chip .c { background: var(--bg); border-radius: 999px; padding: 1px 8px; font-size: 13px; }
-  .chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
-  .chip[aria-pressed="true"] .c { background: #fff; color: var(--ink); }
-  .seccion { padding: 4px 16px 0; font-family: var(--display); font-size: 22px; font-weight: 800; }
-  .seccion.casi { color: #8a5a00; }
-  .ped-listo { width: 100%; text-align: left; background: var(--card); border: 2px solid transparent; border-radius: 14px; padding: 12px; display: grid; gap: 6px; }
-  .ped-listo.casi { border-color: var(--warn); }
+  .atras { background: none; border: none; padding: 4px 0; font-family: var(--display); font-size: 24px; font-weight: 800; color: var(--ink); }
+  .lfiltros { display: flex; gap: 8px; padding: 0 16px; }
+  .seg2 { flex: 1; display: flex; background: var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg2 button { flex: 1; border: none; background: none; border-radius: 8px; padding: 7px 2px; font-size: 14px; font-weight: 600; color: var(--soft); white-space: nowrap; }
+  .seg2 button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .lstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 0 16px; }
+  .lstats button { border: 2px solid transparent; background: var(--card); border-radius: 12px; padding: 8px 4px 7px; text-align: center; }
+  .lstats b { display: block; font-family: var(--display); font-size: 30px; font-weight: 800; line-height: 1; }
+  .lstats span { font-size: 12px; color: var(--soft); }
+  .lstats button[aria-pressed="true"] { border-color: var(--ink); }
+  .lstats .listo b { color: var(--ok); } .lstats .casi b { color: #8a5a00; } .lstats .conflicto b { color: var(--no); }
+  .ped-listo { width: 100%; text-align: left; background: var(--card); border: none; border-radius: 14px; padding: 12px; display: grid; gap: 6px; }
   .ped-listo .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .ped-listo .top b { font-size: 17px; overflow-wrap: anywhere; }
   .ped-listo .meta { color: var(--soft); font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -178,7 +173,8 @@
   .logi.flex { background: var(--ink); color: #fff; }
   .ped-listo .lp { font-size: 15px; display: flex; gap: 8px; align-items: center; }
   .ped-listo .lp img, .ped-listo .lp .sinfoto { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; background: var(--line); flex: none; }
-  .ped-listo .falta { color: #8a5a00; font-weight: 600; font-size: 15px; }
+  .ped-listo .falta { color: #8a5a00; font-weight: 600; font-size: 14px; }
+  .ped-listo .falta.no { color: var(--no); }
   .estado-busq { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 10px; font-size: 13px; font-weight: 700;
     margin-left: 6px; vertical-align: 1px; }
   .estado-busq.ok { background: var(--ok-soft); color: #11603a; }
@@ -902,7 +898,9 @@ function calcularListos() {
       else l.est = !m ? "pend" : m.estado !== "ok" ? "no" : "mas"; // mas: se buscó, pero lo juntado se fue a otros pedidos
     }
     p.faltan = p.lineas.filter((l) => l.est !== "ok");
-    p.casi = !p.listo && p.faltan.length === 1 && p.lineas.length > 1;
+    // listo · conflicto (algo marcado "no hay") · sin buscar (nada encontrado ni marcado) · casi (falta buscar algo)
+    p.cat = p.listo ? "listo" : p.faltan.some((l) => l.est === "no") ? "conflicto"
+      : p.lineas.every((l) => l.est === "pend") ? "sin" : "casi";
   }
   listos.pedidos = orden;
 }
@@ -945,53 +943,54 @@ const logiCorta = (s) => String(s || "").replace(/^Envío Nube - /i, "").replace
 function pintarContadorListos() {
   if (listos.error) { $("listosN").textContent = "–"; $("listosSub").textContent = listos.error; return; }
   if (!listos.cargado) return;
-  const l = listos.pedidos.filter((p) => p.listo).length, c = listos.pedidos.filter((p) => p.casi).length;
+  const l = listos.pedidos.filter((p) => p.listo).length, c = listos.pedidos.filter((p) => p.cat === "casi").length;
   $("listosN").textContent = l;
   $("listosSub").textContent = `ya buscados${c ? ` · ${c} casi listo${c === 1 ? "" : "s"}` : ""}`;
 }
 
 function verListos() {
-  panel(`<div class="bar"><b>Pedidos listos</b><small id="listosAct"></small></div><div class="scroll" id="listosBody"><div class="cargando">Cargando</div></div>
-    <div class="pie"><button class="cta ghost" type="button" id="btnVolverScan">Volver a escanear</button></div>`);
+  panel(`<div class="bar"><button class="atras" type="button" id="btnListosAtras">‹ Pedidos listos</button></div>
+    <div class="scroll" id="listosBody"><div class="cargando">Cargando</div></div>`);
   $("vPanel").dataset.vista = "listos";
-  $("btnVolverScan").onclick = () => mostrar("vScan");
+  $("btnListosAtras").onclick = () => mostrar("vScan");
   pintarListos();
   leerListos();
 }
 $("btnListos").onclick = verListos;
+
+const CATS = [["listo", "Listos"], ["casi", "Casi"], ["conflicto", "Conflicto"], ["sin", "Sin buscar"]];
 
 function pintarListos() {
   const body = $("listosBody");
   if (!body) return;
   if (!listos.cargado) { body.innerHTML = listos.error ? `<div class="aviso rojo">${esc(listos.error)}</div>` : `<div class="cargando">Cargando</div>`; return; }
   const f = listos.filtro;
-  const base = (filtro) => filtrarListos(listos.pedidos, filtro);
-  const ls = base(f).filter((p) => p.listo).sort((a, b) => urgencia(a) - urgencia(b) || a.fecha.localeCompare(b.fecha));
-  const cs = base(f).filter((p) => p.casi);
-  const cuenta = (filtro) => base(filtro).filter((p) => p.listo).length;
-  const chips = (campo, opciones) => opciones.map(([v, t, color]) => `<button class="chip" type="button" data-${campo}="${v}" aria-pressed="${f[campo] === v}">
-      ${color ? `<span class="dot" style="background:${color}"></span>` : ""}${t}<span class="c">${cuenta({ ...f, [campo]: v })}</span></button>`).join("");
-  const prodHTML = (l) => `<div class="lp">${fotoHTML(l.imagen)}<span>${esc(l.nombre)}${l.variante.length ? ` · ${esc(l.variante.join(" · "))}` : ""}${l.cantidad > 1 ? ` ×${l.cantidad}` : ""}</span></div>`;
+  f.cat ||= "listo";
+  const peds = filtrarListos(listos.pedidos, f);
+  const de = (c) => peds.filter((p) => p.cat === c);
+  const lista = de(f.cat).sort((a, b) => urgencia(a) - urgencia(b) || a.fecha.localeCompare(b.fecha));
+  const seg = (campo, opciones) => `<div class="seg2" role="group">${opciones.map(([v, t]) =>
+    `<button type="button" data-${campo}="${v}" aria-pressed="${f[campo] === v}">${t}</button>`).join("")}</div>`;
+  const variante = (l) => (l.variante.length ? ` · ${esc(l.variante.join(" · "))}` : "");
+  const prodHTML = (l) => `<div class="lp">${fotoHTML(l.imagen)}<span>${esc(l.nombre)}${variante(l)}${l.cantidad > 1 ? ` ×${l.cantidad}` : ""}</span></div>`;
   const tarjeta = (p) => {
     const quien = [...new Set(p.lineas.filter((l) => l.est === "ok" && l.por).map((l) => l.por))];
-    return `<button class="ped-listo ${p.casi ? "casi" : ""}" type="button" data-abrir="${esc(clavePed(p))}">
+    const faltas = p.cat === "casi" || p.cat === "conflicto" ? p.faltan : [];
+    return `<button class="ped-listo" type="button" data-abrir="${esc(clavePed(p))}">
       <div class="top"><b>#${esc(p.pedido)}</b>${p.logistica ? `<span class="logi ${p.logistica === "Flex" ? "flex" : ""}">${esc(logiCorta(p.logistica))}</span>` : ""}</div>
       <div class="meta"><span class="tienda ${p.tienda}">${nombreTienda(p.tienda)}</span>${p.canal === "ml" ? "Mercado Libre" : "Tiendanube"}${p.cliente ? ` · ${esc(p.cliente)}` : ""}</div>
-      ${p.casi ? `<div class="falta">Falta: ${esc(p.faltan[0].nombre)}${p.faltan[0].variante.length ? ` · ${esc(p.faltan[0].variante.join(" · "))}` : ""} ×${p.faltan[0].cantidad}${p.faltan[0].est === "no" ? " (no lo encontraron)" : p.faltan[0].est === "mas" ? " (no alcanzó lo juntado)" : ""}</div>` : ""}
-      ${p.lineas.filter((l) => !p.casi || l.est === "ok").map(prodHTML).join("")}
+      ${faltas.map((l) => `<div class="falta ${l.est === "no" ? "no" : ""}">${l.est === "no" ? "No lo encontraron" : "Falta"}: ${esc(l.nombre)}${variante(l)} ×${l.cantidad}</div>`).join("")}
+      ${p.lineas.filter((l) => !faltas.includes(l)).map(prodHTML).join("")}
       ${quien.length ? `<div class="meta">Lo juntó ${esc(quien.join(", "))}</div>` : ""}</button>`;
   };
-  const casiTxt = cs.length ? `y ${cs.length} casi listo${cs.length === 1 ? "" : "s"}` : "ninguno casi listo";
+  const VACIO = { listo: "Todavía no hay pedidos con todo buscado.", casi: "Ninguno.", conflicto: "Ninguno.", sin: "Ninguno." };
   body.innerHTML = `
-    <div class="listos-tot"><span class="n">${ls.length}</span><span><b>listo${ls.length === 1 ? "" : "s"} para empaquetar</b><small>${casiTxt}</small></span></div>
-    <div class="filtro"><span>Canal</span><div class="chips">${chips("canal", [["todo", "Todos"], ["ml", "Mercado Libre", "#ffe600"], ["tn", "Tiendanube", "#2c3e8f"]])}</div></div>
-    <div class="filtro"><span>Marca</span><div class="chips">${chips("tienda", [["todo", "Las dos"], ["pret", "Pret a Home", "#17201b"], ["lavan", "Casa Laván", "#6b4e8e"]])}</div></div>
-    <div class="seccion">Listos · ${ls.length}</div>
-    <div class="lista">${ls.map(tarjeta).join("") || `<p class="vacio">Todavía no hay pedidos con todo buscado${f.canal !== "todo" || f.tienda !== "todo" ? " con estos filtros" : ""}.</p>`}</div>
-    ${cs.length ? `<div class="seccion casi">Casi listos · ${cs.length}</div><div class="lista">${cs.map(tarjeta).join("")}</div>` : ""}`;
-  $("listosAct").textContent = `Se actualiza solo`;
-  body.querySelectorAll("[data-canal]").forEach((b) => (b.onclick = () => { f.canal = b.dataset.canal; pintarListos(); }));
-  body.querySelectorAll("[data-tienda]").forEach((b) => (b.onclick = () => { f.tienda = b.dataset.tienda; pintarListos(); }));
+    <div class="lfiltros">${seg("canal", [["todo", "Todos"], ["ml", "ML"], ["tn", "TN"]])}${seg("tienda", [["todo", "Ambas"], ["pret", "Pret"], ["lavan", "Laván"]])}</div>
+    <div class="lstats">${CATS.map(([c, t]) => `<button type="button" class="${c}" data-cat="${c}" aria-pressed="${f.cat === c}"><b>${de(c).length}</b><span>${t}</span></button>`).join("")}</div>
+    <div class="lista">${lista.map(tarjeta).join("") || `<p class="vacio">${VACIO[f.cat]}</p>`}</div>`;
+  for (const campo of ["canal", "tienda", "cat"]) {
+    body.querySelectorAll(`[data-${campo}]`).forEach((b) => (b.onclick = () => { f[campo] = b.dataset[campo]; pintarListos(); }));
+  }
   body.querySelectorAll("[data-abrir]").forEach((b) => (b.onclick = () => abrirListo(listos.pedidos.find((p) => clavePed(p) === b.dataset.abrir))));
 }
 
