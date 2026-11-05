@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Empaquetado · Panel de control</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=11">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Empaquetado: quién empaquetó cada pedido. Cada vez que alguien del depósito confirma un paquete en la app
+// (armado.html → Empaquetado) queda una fila en armado_controles (+ sus productos en armado_items). Un mismo
+// pedido puede tener varias (por ejemplo, primero con faltante y después completo): acá se ve cada una.
+// El tiempo es desde que se escaneó la etiqueta hasta que se confirmó el último producto.
+import { sb, $, $$, esc, guard, nav } from './app.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'empaquetado');
+
+const AR = { timeZone: 'America/Argentina/Buenos_Aires' };
+const diaDe = (iso) => new Date(iso).toLocaleDateString('en-CA', AR);
+const fechaHora = (iso) => new Date(iso).toLocaleString('es-AR', { ...AR, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const TIENDAS = { pret: 'Pret a Home', lavan: 'Casa Laván' };
+const CANALES = { tn: 'Tiendanube', ml: 'Mercado Libre' };
+const MAX_SEG = 30 * 60;  // más que esto es un pedido que quedó abierto en el celular, no tiempo de armado
+
+let controles = [];
+for (let i = 0; ; i += 1000) {
+  const { data, error } = await sb.from('armado_controles').select('*, armado_items(sku, nombre, variante, cantidad, estado)')
+    .neq('pedido', 'PRUEBA-CLAUDE').order('creado_at', { ascending: false }).order('id').range(i, i + 999);
+  if (error) { $('#app').innerHTML = `<p class="err">No se pudo cargar: ${esc(error.message)}</p>`; throw error; }
+  controles.push(...data); if (data.length < 1000) break;
+}
+controles = controles.map((c) => {
+  const seg = c.inicio_at && c.fin_at ? (new Date(c.fin_at) - new Date(c.inicio_at)) / 1000 : null;
+  const items = c.armado_items || [];
+  return { ...c, dia: diaDe(c.creado_at), seg: seg !== null && seg >= 0 ? seg : null, items,
+    texto: [c.pedido, c.envio, c.codigo_leido, ...items.flatMap((i) => [i.sku, i.nombre])].filter(Boolean).join(' ').toLowerCase() };
+});
+
+const hoy = diaDe(new Date().toISOString());
+const haceDias = (n) => { const d = new Date(); d.setDate(d.getDate() - n + 1); return diaDe(d.toISOString()); };
+const PERIODOS = [['hoy', 'Hoy'], ['7', 'Últimos 7 días'], ['30', 'Últimos 30 días'], ['todo', 'Todo']];
+const personas = [...new Set(controles.map((c) => c.armado_por || 'Sin nombre'))].sort((a, b) => a.localeCompare(b, 'es'));
+let periodo = '7', persona = 'todas', marca = 'todas', busca = '', dia = '';
+
+const tiempo = (s) => s === null ? '—' : s > MAX_SEG ? '<span class="muted">más de 30 min</span>'
+  : s < 60 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')} s`;
+const mediana = (xs) => { const v = xs.filter((s) => s !== null && s <= MAX_SEG).sort((a, b) => a - b); return v.length ? v[Math.floor((v.length - 1) / 2)] : null; };
+
+function enPeriodo(c) {
+  if (dia) return c.dia === dia;
+  if (periodo === 'todo') return true;
+  return c.dia >= (periodo === 'hoy' ? hoy : haceDias(+periodo));
+}
+
+function pintar() {
+  const base = controles.filter((c) => enPeriodo(c) && (marca === 'todas' || c.tienda === marca));
+  const conPersona = base.filter((c) => persona === 'todas' || (c.armado_por || 'Sin nombre') === persona);
+  const pedidos = new Set(conPersona.map((c) => `${c.tienda}|${c.canal}|${c.pedido}`));
+  const faltante = conPersona.filter((c) => c.resultado === 'faltante');
+  const unidades = conPersona.reduce((a, c) => a + (c.unidades || 0), 0);
+  const titPer = dia ? new Date(dia + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : PERIODOS.find(([k]) => k === periodo)[1].toLowerCase();
+
+  // Por persona (con los filtros de período y marca, sin el de persona)
+  const porPersona = {};
+  for (const c of base) {
+    const k = c.armado_por || 'Sin nombre';
+    const p = porPersona[k] ||= { n: 0, u: 0, f: 0, segs: [], dias: new Set() };
+    p.n++; p.u += c.unidades || 0; if (c.resultado === 'faltante') p.f++; p.segs.push(c.seg); p.dias.add(c.dia);
+  }
+  const filasPersona = Object.entries(porPersona).sort((a, b) => b[1].n - a[1].n);
+
+  const seg = (lista, attr, actual) => lista.map(([k, t]) => `<button type="button" data-${attr}="${k}" aria-pressed="${actual === k}">${t}</button>`).join('');
+
+  $('#app').innerHTML = `
+  <div class="cabecera"><div><h1>Empaquetado</h1><p>Quién empaquetó cada pedido con la app del depósito</p></div></div>
+  <div class="row wrapRow" style="margin:14px 0">
+    <div class="seg" role="group" aria-label="Período">${seg(PERIODOS, 'periodo', dia ? '' : periodo)}</div>
+    <label for="dia" style="position:absolute;left:-9999px">Día</label><input type="date" id="dia" value="${dia}" max="${hoy}" style="width:auto" title="Ver un día puntual">
+    <div class="seg" role="group" aria-label="Marca">${seg([['todas', 'Las dos marcas'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']], 'marca', marca)}</div>
+    <label for="persona" style="position:absolute;left:-9999px">Persona</label><select id="persona" style="width:auto">
+      <option value="todas">Todas las personas</option>${personas.map((p) => `<option ${p === persona ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
+  </div>
+  <div class="centro-comando">
+    <div class="cc-card"><div class="cc-label">Pedidos empaquetados · ${esc(titPer)}</div><div class="cc-valor num">${pedidos.size}</div><div class="cc-sub">${persona === 'todas' ? 'todas las personas' : esc(persona)}</div></div>
+    <div class="cc-card"><div class="cc-label">Unidades</div><div class="cc-valor num">${unidades}</div><div class="cc-sub">productos confirmados en los paquetes</div></div>
+    <div class="cc-card ${faltante.length ? 'alerta' : ''}"><div class="cc-label">Con faltante</div><div class="cc-valor num">${faltante.length}</div><div class="cc-sub">${faltante.length ? 'paquetes que se cerraron sin algún producto' : 'todos salieron completos'}</div></div>
+    <div class="cc-card"><div class="cc-label">Tiempo típico por pedido</div><div class="cc-valor md num">${tiempo(mediana(conPersona.map((c) => c.seg)))}</div><div class="cc-sub">de escanear la etiqueta a confirmar</div></div>
+  </div>
+  <section class="card tabla"><div class="cab"><div><h2>Por persona</h2><span class="muted">${esc(titPer)}</span></div></div>
+    <div class="scroll"><table style="min-width:620px"><thead><tr><th scope="col">Persona</th><th scope="col" class="r">Pedidos</th><th scope="col" class="r">Unidades</th>
+      <th scope="col" class="r">Con faltante</th><th scope="col" class="r">Días que empaquetó</th><th scope="col" class="r">Tiempo típico</th></tr></thead>
+    <tbody>${filasPersona.map(([k, p]) => `<tr><th scope="row"><a href="#" data-ver="${esc(k)}">${esc(k)}</a></th><td class="r num">${p.n}</td><td class="r num">${p.u}</td>
+      <td class="r num">${p.f || 0}</td><td class="r num">${p.dias.size}</td><td class="r num">${tiempo(mediana(p.segs))}</td></tr>`).join('') ||
+      '<tr><td colspan="6" class="muted">Nadie empaquetó en este período.</td></tr>'}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>Pedidos</h2><span class="muted" id="cuantos"></span></div>
+    <div><label for="busca" style="position:absolute;left:-9999px">Buscar</label><input id="busca" type="search" placeholder="Número de venta, envío o SKU" value="${esc(busca)}" style="min-width:260px"></div></div>
+    <div class="scroll"><table style="min-width:900px"><thead><tr><th scope="col">Fecha</th><th scope="col">Pedido</th><th scope="col">Empaquetó</th><th scope="col">Resultado</th>
+      <th scope="col">Productos</th><th scope="col" class="r">Unidades</th><th scope="col" class="r">Tiempo</th></tr></thead>
+    <tbody id="filas"></tbody></table></div></section>
+  <p class="muted small" style="line-height:1.6">Si un pedido se escaneó más de una vez (por ejemplo, primero con faltante y después completo), aparece una fila por cada vez. "Tiempo típico" es la mediana: no la mueve un pedido que quedó abierto en el celular.</p>`;
+
+  pintarFilas(conPersona);
+  $$('[data-periodo]').forEach((b) => (b.onclick = () => { periodo = b.dataset.periodo; dia = ''; pintar(); }));
+  $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; pintar(); }));
+  $$('[data-ver]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); persona = a.dataset.ver; pintar(); }));
+  $('#persona').onchange = (e) => { persona = e.target.value; pintar(); };
+  $('#dia').onchange = (e) => { dia = e.target.value; pintar(); };
+  $('#busca').oninput = (e) => { busca = e.target.value; pintarFilas(conPersona); };
+}
+
+function pintarFilas(lista) {
+  const q = busca.trim().toLowerCase();
+  // Buscar por número ignora el período: sirve para ver quién armó un pedido de cualquier fecha.
+  const filas = q ? controles.filter((c) => c.texto.includes(q)) : lista;
+  $('#cuantos').textContent = q ? `${filas.length} resultado${filas.length === 1 ? '' : 's'} en todas las fechas` : `${filas.length} paquete${filas.length === 1 ? '' : 's'}`;
+  $('#filas').innerHTML = filas.slice(0, 500).map((c) => `<tr>
+    <td class="num">${fechaHora(c.creado_at)}</td>
+    <td><b>#${esc(c.pedido)}</b><div class="small muted">${TIENDAS[c.tienda] || esc(c.tienda)} · ${CANALES[c.canal] || esc(c.canal)}</div></td>
+    <td>${esc(c.armado_por || 'Sin nombre')}</td>
+    <td>${c.resultado === 'completo' ? '<span class="chip ok">Completo</span>' : '<span class="chip bad">Con faltante</span>'}</td>
+    <td class="small">${c.items.map((i) => `<div${i.estado === 'no_hay' ? ' style="color:var(--bad)"' : ''}>${i.estado === 'no_hay' ? 'Falta: ' : ''}${esc(i.nombre || i.sku || '')}${i.variante ? ` · ${esc(i.variante)}` : ''}${i.cantidad > 1 ? ` ×${i.cantidad}` : ''}</div>`).join('')}</td>
+    <td class="r num">${c.unidades}</td><td class="r num">${tiempo(c.seg)}</td></tr>`).join('') ||
+    `<tr><td colspan="7" class="muted">${q ? 'No encontré ese pedido.' : 'No hay pedidos empaquetados en este período.'}</td></tr>`;
+}
+pintar();
+</script>
+</body>
+</html>
