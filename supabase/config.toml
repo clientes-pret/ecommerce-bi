@@ -8,3 +8,8 @@ verify_jwt = false
 # Misma contraseña compartida (armado de pedidos, reposicion/dashboard/armado.html).
 [functions.armado-api]
 verify_jwt = false
+
+# Webhooks de Tiendanube (y luego ML): los llama la plataforma, sin JWT de Supabase. La autenticación
+# es el token secreto de la URL (?t=...) que valida index.ts contra VENTAS_WEBHOOK_TOKEN.
+[functions.ventas-webhook]
+verify_jwt = false
