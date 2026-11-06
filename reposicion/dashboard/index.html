@@ -568,7 +568,9 @@ function filasVisibles() {
   rows = rows.filter((p) => alertas.has(estadoGeneral(p)));
   if (proveedor) rows = rows.filter((p) => p.proveedor === proveedor);
   if (categoria) rows = rows.filter((p) => (p.categoria || "Bazar") === categoria);
-  if (ocultarSolicitados) {
+  // En la vista "Fuera de temporada" no se oculta nada por "ya solicitado": si no,
+  // un producto con pedido abierto no se podría ver ni volver a temporada.
+  if (ocultarSolicitados && vista !== "fuera_temporada") {
     rows = rows.filter((p) => (p.destinos_ya_solicitados || []).length === 0);
   }
   if (busqueda) {
@@ -1265,12 +1267,20 @@ async function marcarTemporada(skus, fuera) {
   cargar();
 }
 
+// true si todo lo tildado ya está fuera de temporada → el botón masivo pasa a
+// "Volver a temporada". Se decide por lo seleccionado (no por el filtro de
+// vista): así también se puede revertir un producto que se encontró buscándolo
+// por SKU/nombre en otra vista, donde aparece con 🍂.
+function seleccionSoloFueraDeTemporada() {
+  const sel = PRODUCTOS.filter((p) => SELECTED.has(p.sku));
+  return sel.length > 0 && sel.every((p) => p.fuera_de_temporada);
+}
+
 function actualizarBotonesMasivos() {
   const n = SELECTED.size;
   const btnPedido = document.getElementById("btnArmarPedido");
   const btnTemporada = document.getElementById("btnTemporadaMasivo");
-  const enFuera = document.getElementById("filtroVista").value === "fuera_temporada";
-  btnTemporada.textContent = `${enFuera ? "↩ Volver a temporada" : "🍂 Fuera de temporada"} (${n})`;
+  btnTemporada.textContent = `${seleccionSoloFueraDeTemporada() ? "↩ Volver a temporada" : "🍂 Fuera de temporada"} (${n})`;
   btnTemporada.disabled = n === 0;
   const btnDescontinuar = document.getElementById("btnDescontinuarMasivo");
   const selectProveedor = document.getElementById("selectProveedorMasivo");
@@ -1372,8 +1382,7 @@ document.getElementById("btnArmarPedido").addEventListener("click", () => {
   window.location.href = "pedido.html";
 });
 document.getElementById("btnTemporadaMasivo").addEventListener("click", () => {
-  const enFuera = document.getElementById("filtroVista").value === "fuera_temporada";
-  marcarTemporada(Array.from(SELECTED), !enFuera);
+  marcarTemporada(Array.from(SELECTED), !seleccionSoloFueraDeTemporada());
 });
 document.getElementById("btnDescontinuarMasivo").addEventListener("click", async () => {
   const skus = Array.from(SELECTED);
