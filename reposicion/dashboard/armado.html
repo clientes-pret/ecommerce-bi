@@ -276,6 +276,24 @@
   .fila .q.falta small { display: block; font-family: var(--body); font-size: 11.5px; font-weight: 600; color: var(--soft); }
   .fila .lo-busca { grid-column: 1 / -1; font-size: 13px; font-weight: 700; background: var(--warn-soft); border-radius: 8px; padding: 4px 9px; }
   button.fila.tomado { border-color: var(--warn); }
+  /* Urgencia por tiempo sin encontrar: n0 hoy · n1 1 día · n2 2-3 días · n3 4 días o más */
+  button.fila.urg { border-left-width: 7px; }
+  .fila .edad { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 700; border-radius: 8px; padding: 4px 9px; }
+  .fila .edad span:last-child { font-weight: 600; opacity: .85; text-align: right; }
+  .urg.n0 { border-left-color: #c9cfc8; } .urg.n0 .edad { background: #eef0ec; color: #55605a; }
+  .urg.n1 { border-left-color: var(--warn); } .urg.n1 .edad { background: var(--warn-soft); color: #7a5600; }
+  .urg.n2 { border-left-color: #ef7d2d; } .urg.n2 .edad { background: #fde3cf; color: #8a3a06; }
+  .urg.n3 { border-color: #f3b5b0; border-left-color: var(--no); background: #fff6f5; } .urg.n3 .edad { background: var(--no); color: #fff; }
+  .urg-resumen { display: flex; gap: 6px; }
+  .urg-resumen span { flex: 1; text-align: center; border-radius: 10px; padding: 5px 2px; font-size: 11.5px; font-weight: 600; line-height: 1.15; }
+  .urg-resumen b { display: block; font-family: var(--display); font-size: 21px; font-weight: 800; }
+  .urg-resumen .n0 { background: #eef0ec; color: #55605a; } .urg-resumen .n1 { background: var(--warn-soft); color: #7a5600; }
+  .urg-resumen .n2 { background: #fde3cf; color: #8a3a06; } .urg-resumen .n3 { background: var(--no); color: #fff; }
+  .reloj { border-radius: 14px; padding: 10px 12px; }
+  .reloj b { display: block; font-family: var(--display); font-size: 32px; font-weight: 800; line-height: 1.05; }
+  .reloj small { font-size: 13px; }
+  .reloj.n0 { background: #eef0ec; color: #55605a; } .reloj.n1 { background: var(--warn-soft); color: #7a5600; }
+  .reloj.n2 { background: #fde3cf; color: #8a3a06; } .reloj.n3 { background: var(--no); color: #fff; }
   .tn-dice { display: flex; justify-content: space-between; align-items: center; background: var(--warn-soft); border-radius: 12px;
     padding: 10px 12px; font-weight: 600; font-size: 15px; }
   .tn-dice b { font-family: var(--display); font-size: 28px; line-height: 1; }
@@ -1615,7 +1633,7 @@ async function cargarProfunda() {
   try {
     const r = await armadoFetch("/profunda");
     prof.error = null;
-    const firma = JSON.stringify(r.casos);
+    const firma = JSON.stringify(r.casos) + Math.floor(Date.now() / 60_000); // cada minuto se redibuja: los tiempos avanzan
     prof.cargado = true;
     if (firma === prof.firma) return;
     prof.firma = firma;
@@ -1635,6 +1653,25 @@ const haceCuanto = (iso) => {
 const fechaHora = (iso) => new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
   hour12: false, timeZone: "America/Argentina/Buenos_Aires" });
 
+// Cuánto lleva un caso sin encontrar (desde que se abrió) y qué tan urgente es: se pone más rojo con los días.
+const URGENCIAS = [["n3", "4 días o más"], ["n2", "2 a 3 días"], ["n1", "1 día"], ["n0", "Hoy"]];
+const diasDesde = (iso) => Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 864e5));
+const nivelUrg = (iso) => { const d = diasDesde(iso); return d >= 4 ? "n3" : d >= 2 ? "n2" : d >= 1 ? "n1" : "n0"; };
+function hace(iso) {
+  const min = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60_000));
+  if (min < 60) return `hace ${min} min`;
+  if (min < 1440) return `hace ${Math.floor(min / 60)} h`;
+  const d = Math.floor(min / 1440);
+  return `hace ${d} día${d === 1 ? "" : "s"}`;
+}
+function duracionLarga(iso) {
+  const min = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60_000));
+  const d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60);
+  if (!d) return h ? `${h} h ${min % 60} min` : `${min} min`;
+  return `${d} día${d === 1 ? "" : "s"}${h ? ` y ${h} h` : ""}`;
+}
+const diaCorto = (iso) => haceCuanto(iso).startsWith("hoy") ? haceCuanto(iso) : `desde ${new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).slice(5).split("-").reverse().join("/")}`;
+
 function cabeceraP(titulo, sub, atras) {
   $("pTitulo").textContent = titulo;
   $("pSub").innerHTML = sub || "";
@@ -1651,16 +1688,27 @@ function pintarProfunda() {
   if (!prof.cargado) { body.innerHTML = prof.error ? `<div class="aviso rojo">${esc(prof.error)}</div>` : `<div class="cargando">Cargando</div>`; return; }
   const scroll = body.scrollTop;
   body.innerHTML = (prof.error ? `<div class="aviso rojo">${esc(prof.error)}</div>` : "") + (prof.casos.length
-    ? `<div class="grupo">${prof.casos.map((c) => `
-        <button class="fila ${c.tomado_por ? "tomado" : ""}" type="button" data-id="${c.id}">${fotoHTML(c.imagen)}
+    ? `${resumenUrgencia()}<div class="grupo">${[...prof.casos].sort((a, b) => Date.parse(a.creado_at) - Date.parse(b.creado_at)).map((c) => {
+        const quienBusca = c.tomado_por ? (c.tomado_por === quien ? "La buscás vos" : `La busca ${esc(c.tomado_por)}`) : "";
+        // Si alguien la tomó, se ve hace cuánto la busca; a la derecha, hace cuánto falta (si es distinto) o desde qué día
+        const izq = quienBusca && c.tomado_at ? `${quienBusca} ${hace(c.tomado_at)}` : quienBusca || `Sin encontrar ${hace(c.creado_at)}`;
+        const der = quienBusca && c.tomado_at && hace(c.tomado_at) !== hace(c.creado_at) ? `sin encontrar ${hace(c.creado_at)}` : diaCorto(c.creado_at);
+        return `
+        <button class="fila urg ${nivelUrg(c.creado_at)}" type="button" data-id="${c.id}">${fotoHTML(c.imagen)}
           <div class="t">${esc(c.nombre || c.sku)}${c.variante ? `<small style="color:var(--ink);font-family:var(--display);font-weight:800;font-size:17px;text-transform:uppercase">${esc(c.variante)}</small>` : ""}
-            <small>${pl(c.pedidos.length, "pedido", "pedidos")} · ${haceCuanto(c.creado_at)}</small></div>
+            <small>${pl(c.pedidos.length, "pedido", "pedidos")}</small></div>
           <div class="q falta">${c.unidades}<small>${c.unidades === 1 ? "falta" : "faltan"}</small></div>
-          ${c.tomado_por ? `<div class="lo-busca">${c.tomado_por === quien ? "La buscás vos" : `La busca ${esc(c.tomado_por)}`}</div>` : ""}
-        </button>`).join("")}</div>`
+          <div class="edad"><span>${izq}</span><span>${der}</span></div>
+        </button>`; }).join("")}</div>`
     : `<p class="vacio">No hay nada perdido. Cuando alguien no encuentre un producto, aparece acá.</p>`);
   body.scrollTop = scroll;
   for (const b of body.querySelectorAll("[data-id]")) b.onclick = () => { prof.vista = "detalle"; prof.id = Number(b.dataset.id); $("pBody").scrollTop = 0; pintarProfunda(); };
+}
+
+function resumenUrgencia() {
+  const n = Object.fromEntries(URGENCIAS.map(([k]) => [k, 0]));
+  for (const c of prof.casos) n[nivelUrg(c.creado_at)]++;
+  return `<div class="urg-resumen">${URGENCIAS.map(([k, t]) => `<span class="${k}"><b>${n[k]}</b>${t}</span>`).join("")}</div>`;
 }
 
 function vistaCaso() {
@@ -1675,6 +1723,9 @@ function vistaCaso() {
     ${variantes.length ? `<div class="chips">${variantes.map((v) => `<span class="chip">${esc(v)}</span>`).join("")}</div>` : ""}
     <div class="nombre">${esc(c.nombre || "")}</div>
     <div class="sku">${esc(c.sku)}</div>
+    <div class="reloj ${nivelUrg(c.creado_at)}"><small>Sin encontrar hace</small><b>${duracionLarga(c.creado_at)}</b>
+      <small>Lo reportaron el ${fechaHora(c.creado_at).replace(", ", " a las ")}</small></div>
+    ${c.tomado_por && c.tomado_at ? `<div class="rep" style="display:flex;justify-content:space-between"><span>${mio ? "La buscás vos" : `La busca ${esc(c.tomado_por)}`}</span><b>${hace(c.tomado_at)}</b></div>` : ""}
     ${c.stock_tn === null || c.stock_tn === undefined ? "" : `<div class="tn-dice"><span>Tiendanube dice que hay</span><b>${c.stock_tn}</b></div>`}
     ${c.encontradas ? `<div class="marcado">Ya aparecieron ${c.encontradas}${c.donde ? ` · ${esc(c.donde)}` : ""}</div>` : ""}
     ${c.al_proveedor ? `<div class="marcado">Ya se pidieron ${c.al_proveedor} al proveedor</div>` : ""}
