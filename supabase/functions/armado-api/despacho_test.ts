@@ -1,7 +1,7 @@
 // Pruebas de la parte pura de Despacho, con códigos reales de etiquetas:
 //   deno test supabase/functions/armado-api/despacho_test.ts
 import { assertEquals } from "jsr:@std/assert@1";
-import { detectarPaquete, esParaManana, grupoDeEnvioTN } from "./despacho.ts";
+import { detectarPaquete, esParaManana, grupoDeEnvioTN, MIEMBROS, poolDe } from "./despacho.ts";
 
 Deno.test("ML Flex: id + sender_id → Zeta/Ninja, Flex", () => {
   const p = detectarPaquete('{"id":"48360235661","sender_id":1255615205,"hash_code":null,"security_digit":"0"}')!;
@@ -23,7 +23,7 @@ Deno.test("Correo Argentino: seguimiento|DOM|…", () => {
   assertEquals([p.formato, p.grupo, p.clave, p.ref], ["correo", "correo", "correo|197816A39ME75AC601", "197816A39ME75AC601"]);
 });
 
-Deno.test("Zeta y Ninja son el mismo grupo", () => {
+Deno.test("Zeta y Ninja son el mismo grupo de pendientes", () => {
   const z = detectarPaquete('{"did": 1571347}')!;
   const n = detectarPaquete('{"internalID": "ABC123"}')!;
   assertEquals([z.formato, z.grupo, z.clave, z.zetaToken], ["zeta", "zeta_ninja", "zeta|1571347", "1571347d54df4s8a513"]);
@@ -68,4 +68,9 @@ Deno.test("Corte de las 14 hs (hora Argentina)", () => {
   assertEquals(esParaManana("2026-11-05T16:59:00Z", "2026-11-05"), false); // 13:59 AR
   assertEquals(esParaManana("2026-11-05T17:00:00Z", "2026-11-05"), true);  // 14:00 AR
   assertEquals(esParaManana("2026-11-04T20:00:00Z", "2026-11-05"), false); // ayer 17:00 AR: se debe hoy
+});
+
+Deno.test("Zeta y Ninja se registran por separado pero comparten el total", () => {
+  assertEquals([poolDe("zeta"), poolDe("ninja"), poolDe("correo"), poolDe("andreani")], ["zeta_ninja", "zeta_ninja", "correo", "andreani"]);
+  assertEquals(MIEMBROS.zeta_ninja, ["zeta", "ninja"]);
 });

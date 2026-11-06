@@ -368,10 +368,11 @@
   <div class="bar"><button class="link" id="deAtras" type="button" style="color:var(--ink);text-decoration:none"><b>‹ Despacho</b></button></div>
   <div class="tareas" style="justify-content:flex-start">
     <h1>¿Quién llegó?</h1>
-    <button class="tarea" type="button" data-mens="zeta_ninja"><b>Zeta / Ninja</b><span id="deZ">Calculando…</span></button>
+    <button class="tarea" type="button" data-mens="zeta"><b>Zeta</b><span id="deZ">Calculando…</span></button>
+    <button class="tarea" type="button" data-mens="ninja"><b>Ninja</b><span id="deN">Calculando…</span></button>
     <button class="tarea" type="button" data-mens="correo"><b>Correo Argentino</b><span id="deC">Calculando…</span></button>
     <button class="tarea" type="button" data-mens="andreani"><b>Andreani</b><span id="deA">Calculando…</span></button>
-    <p class="actualizado">Zeta y Ninja se entregan juntos: qué se lleva cada uno lo define su equipo.</p>
+    <p class="actualizado">Cada paquete queda registrado a quien se lo llevó. Lo que falta entregar de Zeta y Ninja es un solo total entre los dos.</p>
   </div>
 </section>
 
@@ -1803,11 +1804,14 @@ function hojaNoEsta(c) {
 // Cuando pasa una mensajería a retirar: se elige quién es y se escanea el QR de cada paquete, uno tras otro, sin
 // tocar nada. Cada lectura se manda al servidor (que dice si suma, si es de otra mensajería o si ya estaba) y el
 // contador baja lo que falta. Zeta y Ninja son una sola opción: el reparto entre ellos lo define su equipo.
+const LINEAS_ZN = [["flex_ml", "Flex Mercado Libre"], ["tn", "Tiendanube en el día"]];
 const MENS = {
-  zeta_ninja: { nombre: "Zeta / Ninja", lineas: [["flex_ml", "Flex Mercado Libre"], ["tn", "Tiendanube en el día"]] },
+  zeta: { nombre: "Zeta", otro: "Ninja", lineas: LINEAS_ZN },
+  ninja: { nombre: "Ninja", otro: "Zeta", lineas: LINEAS_ZN },
   correo: { nombre: "Correo Argentino", lineas: [["tn", "Tiendanube"]] },
   andreani: { nombre: "Andreani", lineas: [["tn", "Tiendanube"]] },
 };
+const COMPARTE = (m) => MENS[m].otro ? " entre Zeta y Ninja" : "";
 const FORMATO_TXT = { zeta: "Zeta", ninja: "Ninja", correo: "Correo Argentino", ml_flex: "Flex Mercado Libre", ml_correo: "Mercado Libre vía Correo",
   desconocido: "Andreani", numero_tn: "Tiendanube", ml_envio_manual: "Mercado Libre", ml_venta: "Mercado Libre" };
 const TIPO_TXT = { flex_ml: "Flex ML", tn: "Tiendanube", otro: "Mercado Libre" };
@@ -1851,11 +1855,12 @@ function abrirDespacho() {
 
 function pintarDespElegir() {
   const g = desp.estado?.grupos;
-  const ids = { zeta_ninja: "deZ", correo: "deC", andreani: "deA" };
+  const ids = { zeta: "deZ", ninja: "deN", correo: "deC", andreani: "deA" };
   for (const [m, id] of Object.entries(ids)) {
     const x = g?.[m];
     $(id).textContent = desp.error && !g ? "No se pudo calcular" : !x ? "Calculando…"
-      : x.faltan.total ? `Quedan ${x.faltan.total} por entregar` : "No queda nada por entregar";
+      : `${x.entregados.total ? `Hoy le entregaste ${x.entregados.total} · ` : ""}${x.faltan.total ? `quedan ${x.faltan.total} por entregar${COMPARTE(m)}` : "no queda nada por entregar"}`
+          .replace(/^./, (c) => c.toUpperCase());
   }
 }
 $("deAtras").onclick = () => mostrar("vInicio");
@@ -1920,8 +1925,9 @@ async function enviarDespacho(codigo) {
       pitido(880, 0.1); vibrar(40); destello("#1d9a5b");
       const x = desp.estado?.grupos?.[grupo];
       if (x) { // se ve al instante; el servidor confirma enseguida
-        x.entregados.total++;
-        if (x.entregados[r.tipo] !== undefined) x.entregados[r.tipo]++;
+        x.entregados.total++; x.pool_entregados.total++;
+        if (x.entregados[r.tipo] !== undefined) { x.entregados[r.tipo]++; x.pool_entregados[r.tipo]++; }
+        if (x.pool_por[grupo] !== undefined) x.pool_por[grupo]++;
         if (x.faltan[r.tipo] > 0) { x.faltan[r.tipo]--; x.faltan.total--; }
       }
       desp.ultimoId = r.id;
@@ -1929,7 +1935,8 @@ async function enviarDespacho(codigo) {
     } else if (r.estado === "repetido") {
       pitido(200, 0.4); vibrar([120, 70, 120]); destello("#d8443b");
       const p = r.previo;
-      avisoUltimo("amarillo", `Ya estaba contado${p ? ` (${p.por || "alguien"}, ${horaCorta(p.creado_at)})` : ""}. No se suma de nuevo.`);
+      const aQuien = p?.mensajeria && MENS[p.mensajeria] ? ` a ${MENS[p.mensajeria].nombre}` : "";
+      avisoUltimo("amarillo", `Ya se entregó${aQuien}${p ? ` (${p.por || "alguien"}, ${horaCorta(p.creado_at)})` : ""}. No se suma de nuevo.`);
     } else {
       pitido(200, 0.5); vibrar([150, 80, 150]); destello("#d8443b");
       avisoUltimo("rojo", r.mensaje || "Este paquete no corresponde.");
@@ -1968,10 +1975,13 @@ function pintarDespacho() {
     return;
   }
   $("dBig").textContent = x.entregados.total;
-  $("dSub").innerHTML = `${x.entregados.total === 1 ? "entregado" : "entregados"} · faltan <b>${x.faltan.total}</b>`;
-  $("dProg").innerHTML = MENS[m].lineas.map(([t, rotulo]) => {
-    const hechos = x.entregados[t], total = hechos + x.faltan[t];
-    return `<div><div class="r"><span>${rotulo}</span><span>${hechos} de ${total}</span></div>
+  const comparte = MENS[m].otro;
+  $("dSub").innerHTML = `a ${esc(MENS[m].nombre)} · faltan <b>${x.faltan.total}</b>${comparte ? " entre Zeta y Ninja" : ""}`;
+  $("dProg").innerHTML = (comparte
+    ? `<div class="r"><span>Zeta <b>${x.pool_por.zeta}</b> · Ninja <b>${x.pool_por.ninja}</b></span><span>entre los dos ${x.pool_entregados.total}</span></div>` : "")
+    + MENS[m].lineas.map(([t, rotulo]) => {
+    const hechos = x.pool_entregados[t], total = hechos + x.faltan[t];
+    return `<div><div class="r"><span>${rotulo}${comparte ? " (entre los dos)" : ""}</span><span>${hechos} de ${total}</span></div>
       <div class="d-barra"><i style="width:${total ? Math.min(100, Math.round(hechos / total * 100)) : 100}%"></i></div></div>`;
   }).join("") + (x.entregados.otro ? `<div class="r"><span>Mercado Libre vía Correo</span><span>${x.entregados.otro}</span></div>` : "")
     + (x.para_manana ? `<small style="color:var(--soft)">${pl(x.para_manana, "Flex", "Flex")} de después de las 14 hs ${x.para_manana === 1 ? "sale" : "salen"} mañana y no se cuenta${x.para_manana === 1 ? "" : "n"}.</small>` : "");
@@ -2008,14 +2018,15 @@ $("dTerminar").onclick = async () => {
     <div class="scroll">
       <div class="cabecera" style="text-align:center">
         <h1 style="font-size:84px;color:var(--ok)">${x.entregados.total}</h1>
-        <p>${x.entregados.total === 1 ? "paquete entregado" : "paquetes entregados"} a ${esc(MENS[m].nombre)}</p>
+        <p>${x.entregados.total === 1 ? "paquete entregado" : "paquetes entregados"} a ${esc(MENS[m].nombre)} hoy</p>
       </div>
       <div class="lista"><div class="rep">
         ${MENS[m].lineas.map(([t, rotulo]) => `<div style="display:flex;justify-content:space-between"><span>${rotulo}</span><b>${x.entregados[t]}</b></div>`).join("")}
         ${x.entregados.otro ? `<div style="display:flex;justify-content:space-between"><span>Mercado Libre vía Correo</span><b>${x.entregados.otro}</b></div>` : ""}
+        ${MENS[m].otro ? `<small>Hoy entre Zeta y Ninja: ${x.pool_entregados.total} (Zeta ${x.pool_por.zeta} · Ninja ${x.pool_por.ninja})</small>` : ""}
       </div></div>
       ${x.faltan.total
-        ? `<div class="avisos"><div class="aviso amarillo">Faltan entregar ${MENS[m].lineas.filter(([t]) => x.faltan[t]).map(([t, r]) => `${x.faltan[t]} de ${r}`).join(" y ")}.</div></div>
+        ? `<div class="avisos"><div class="aviso amarillo">Faltan entregar${COMPARTE(m)} ${MENS[m].lineas.filter(([t]) => x.faltan[t]).map(([t, r]) => `${x.faltan[t]} de ${r}`).join(" y ")}.</div></div>
            <div class="lista" style="padding:0 16px">${x.lista_faltan.map((f) => `<div class="d-fila"><div>${f.canal === "tn" ? `${nombreTienda(f.tienda)} · #${esc(f.pedido)}` : `${nombreTienda(f.tienda)} · Venta ${esc(f.pedido)}`}
              <small>${esc(f.etiqueta || "")}${f.cliente ? ` · ${esc(f.cliente)}` : ""}</small>${f.atrasado ? `<small class="atras">De un día anterior</small>` : ""}</div></div>`).join("")}</div>`
         : `<div class="avisos"><div class="aviso" style="background:var(--ok-soft);color:#11603a">No queda nada por entregar.</div></div>`}

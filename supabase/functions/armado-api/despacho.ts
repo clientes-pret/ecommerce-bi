@@ -5,7 +5,7 @@
 // (despacho_test.ts) con los códigos reales de las etiquetas.
 //
 // Qué trae el QR de cada etiqueta (verificado con escaneos reales; Andreani nunca se escaneó, ver abajo):
-//   - Zeta: {"did": …}                       Ninja: {"internalID": …}   → grupo zeta_ninja (una sola opción)
+//   - Zeta: {"did": …}                       Ninja: {"internalID": …}   → grupo zeta_ninja (se registra a cuál de los dos se entrega)
 //   - Mercado Libre Flex: {"id","sender_id"} → grupo zeta_ninja
 //   - Correo Argentino (Envío Nube): "<seguimiento>|DOM|…" o "…|Sucursal|…"  → grupo correo
 //   - Mercado Libre vía Correo: {"carrier_data": "HC…|Sucursal|…", "id", "t"} → grupo correo
@@ -15,8 +15,14 @@
 
 export const ZETA_TOKEN_SUFIJO = "d54df4s8a513";
 
-export type Mensajeria = "zeta_ninja" | "correo" | "andreani";
-export const MENSAJERIAS: Mensajeria[] = ["zeta_ninja", "correo", "andreani"];
+// A quién se le entrega (queda registrado, para poder reclamar un paquete perdido) y qué "grupo" de pendientes comparte:
+// Zeta y Ninja se eligen por separado, pero lo que hay que entregar de Flex y Tiendanube es un solo total entre los dos.
+export type Mensajeria = "zeta" | "ninja" | "correo" | "andreani";
+export const MENSAJERIAS: Mensajeria[] = ["zeta", "ninja", "correo", "andreani"];
+export type Pool = "zeta_ninja" | "correo" | "andreani";
+export const POOLS: Pool[] = ["zeta_ninja", "correo", "andreani"];
+export const poolDe = (m: Mensajeria): Pool => (m === "zeta" || m === "ninja" ? "zeta_ninja" : m);
+export const MIEMBROS: Record<Pool, Mensajeria[]> = { zeta_ninja: ["zeta", "ninja"], correo: ["correo"], andreani: ["andreani"] };
 export type TipoPaquete = "flex_ml" | "tn" | "otro";
 
 export type Formato =
@@ -25,8 +31,8 @@ export type Formato =
 
 export type Paquete = {
   formato: Formato;
-  /** A qué mensajería pertenece según el código; null si no lo dice (Colecta, desconocido, números a mano). */
-  grupo: Mensajeria | null;
+  /** De qué grupo de mensajerías es según el código (Zeta y Ninja son un grupo); null si no lo dice (Colecta, desconocido, números a mano). */
+  grupo: Pool | null;
   tipo: TipoPaquete | null;
   /** Identifica el paquete para no contarlo dos veces. */
   clave: string | null;
@@ -92,7 +98,7 @@ export function detectarPaquete(raw: string): Paquete | null {
  * (fulfillments[0].shipping.option.name, o shipping_option). null = no entra en Despacho
  * (retira en el local, o una opción que no se conoce).
  */
-export function grupoDeEnvioTN(nombreOpcion: string | null | undefined, carrier?: string | null): Mensajeria | null {
+export function grupoDeEnvioTN(nombreOpcion: string | null | undefined, carrier?: string | null): Pool | null {
   const n = `${nombreOpcion ?? ""} ${carrier ?? ""}`.toLowerCase();
   if (!n.trim()) return null;
   if (n.includes("andreani")) return "andreani";
@@ -104,6 +110,12 @@ export function grupoDeEnvioTN(nombreOpcion: string | null | undefined, carrier?
 }
 
 export const NOMBRE_MENSAJERIA: Record<Mensajeria, string> = {
+  zeta: "Zeta",
+  ninja: "Ninja",
+  correo: "Correo Argentino",
+  andreani: "Andreani",
+};
+export const NOMBRE_POOL: Record<Pool, string> = {
   zeta_ninja: "Zeta / Ninja",
   correo: "Correo Argentino",
   andreani: "Andreani",

@@ -25,8 +25,8 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
-  detectarPaquete, esParaManana, fechaHoraAR, grupoDeEnvioTN, MENSAJERIAS, NOMBRE_MENSAJERIA, ZETA_TOKEN_SUFIJO,
-  type Mensajeria, type Paquete, type TipoPaquete,
+  detectarPaquete, esParaManana, fechaHoraAR, grupoDeEnvioTN, MENSAJERIAS, MIEMBROS, NOMBRE_MENSAJERIA, NOMBRE_POOL, poolDe,
+  ZETA_TOKEN_SUFIJO, type Mensajeria, type Paquete, type Pool, type TipoPaquete,
 } from "./despacho.ts";
 
 const CORS_HEADERS = {
@@ -946,15 +946,18 @@ async function postProfundaCerrar(req: Request) {
 
 // ─── Despacho ───────────────────────────────────────────────────────────────
 // Cuando pasa una mensajería a retirar, se elige quién es y se escanea el QR de cada paquete (una fila por paquete
-// en armado_despachos). Zeta y Ninja son UNA opción ("zeta_ninja"): el reparto entre ellos lo define su equipo.
+// en armado_despachos, con la mensajería a la que se le entregó: zeta, ninja, correo o andreani; queda registrado
+// para poder reclamar un paquete perdido). Zeta y Ninja se eligen por separado, pero lo que hay que entregar de
+// Flex y Tiendanube es UN solo total entre los dos (el "pool" zeta_ninja).
 // El contador de lo que falta sale de lo pendiente en Tiendanube (por empaquetar o por enviar, de hoy o de antes) y
 // en Mercado Libre (Flex listo para despachar, hasta las 14 hs) menos lo ya entregado.
 //   - Cada escaneo se guarda al instante; el pedido al que corresponde se averigua en segundo plano.
-//   - Un QR de otra mensajería no se cuenta (estado "otra").
+//   - Un QR de otra mensajería (otro pool) no se cuenta (estado "otra"). Entre Zeta y Ninja no hay alarma: el
+//     equipo decide a quién le da cada paquete, y se registra el que se eligió.
 
 type PendienteDesp = {
   clave: string;             // 'tn|tienda|numero' o 'ml|envio': lo mismo que guarda pedido_clave al entregar
-  grupo: Mensajeria;
+  grupo: Pool;
   tipo: "flex_ml" | "tn";
   canal: "tn" | "ml";
   tienda: Tienda;
@@ -1063,20 +1066,29 @@ async function getDespachoEstado(url: URL) {
     for (const r of data ?? []) entregadas.add(r.pedido_clave);
   }
 
+  // Lo pendiente es un total por pool (Zeta y Ninja comparten); lo entregado se cuenta por mensajería y por pool
+  const filasHoy = hoyRows ?? [];
+  const cuenta = (rows: Json[], t: TipoPaquete) => rows.filter((r) => r.tipo === t).length;
   const grupos: Record<string, Json> = {};
-  for (const g of MENSAJERIAS) {
-    const ent = (hoyRows ?? []).filter((r) => r.mensajeria === g);
-    const entTipo = (t: TipoPaquete) => ent.filter((r) => r.tipo === t).length;
+  for (const m of MENSAJERIAS) {
+    const pool = poolDe(m);
+    const miembros: string[] = MIEMBROS[pool];
+    const propias = filasHoy.filter((r) => r.mensajeria === m);
+    const delPool = filasHoy.filter((r) => miembros.includes(r.mensajeria));
     // Un paquete entregado cuyo pedido no se pudo identificar no se puede tachar de la lista: se resta del número
-    const sinId = (t: TipoPaquete) => ent.filter((r) => r.tipo === t && !r.pedido_clave).length;
-    const faltan = pend.items.filter((p) => p.grupo === g && !entregadas.has(p.clave) && !p.para_manana);
+    const sinId = (t: TipoPaquete) => delPool.filter((r) => r.tipo === t && !r.pedido_clave).length;
+    const faltan = pend.items.filter((p) => p.grupo === pool && !entregadas.has(p.clave) && !p.para_manana);
     const faltanTipo = (t: "flex_ml" | "tn") => Math.max(0, faltan.filter((p) => p.tipo === t).length - sinId(t));
-    grupos[g] = {
-      nombre: NOMBRE_MENSAJERIA[g],
-      entregados: { flex_ml: entTipo("flex_ml"), tn: entTipo("tn"), otro: entTipo("otro"), total: ent.length },
+    grupos[m] = {
+      nombre: NOMBRE_MENSAJERIA[m],
+      pool,
+      nombre_pool: NOMBRE_POOL[pool],
+      entregados: { flex_ml: cuenta(propias, "flex_ml"), tn: cuenta(propias, "tn"), otro: cuenta(propias, "otro"), total: propias.length },
+      pool_entregados: { flex_ml: cuenta(delPool, "flex_ml"), tn: cuenta(delPool, "tn"), otro: cuenta(delPool, "otro"), total: delPool.length },
+      pool_por: Object.fromEntries(miembros.map((x) => [x, filasHoy.filter((r) => r.mensajeria === x).length])),
       faltan: { flex_ml: faltanTipo("flex_ml"), tn: faltanTipo("tn"), total: faltanTipo("flex_ml") + faltanTipo("tn") },
-      sin_identificar: ent.filter((r) => !r.pedido_clave).length,
-      para_manana: pend.items.filter((p) => p.grupo === g && !entregadas.has(p.clave) && p.para_manana).length,
+      sin_identificar: delPool.filter((r) => !r.pedido_clave).length,
+      para_manana: pend.items.filter((p) => p.grupo === pool && !entregadas.has(p.clave) && p.para_manana).length,
       lista_faltan: faltan.sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(0, 300).map((p) => ({
         tipo: p.tipo, canal: p.canal, tienda: p.tienda, pedido: p.pedido, etiqueta: p.etiqueta, fecha: p.fecha, cliente: p.cliente,
         atrasado: p.fecha ? fechaHoraAR(p.fecha).dia < hoy : false,
@@ -1197,8 +1209,8 @@ async function postDespachoEscanear(req: Request) {
   }
   const grupoDelPaquete = p.grupo;
   if (!grupoDelPaquete) return json({ estado: "no_reconocido", mensaje: "No reconozco ese código." });
-  if (grupoDelPaquete !== elegida) {
-    return json({ estado: "otra", grupo_detectado: grupoDelPaquete, mensaje: `Este paquete es de ${NOMBRE_MENSAJERIA[grupoDelPaquete]}.` });
+  if (grupoDelPaquete !== poolDe(elegida)) {
+    return json({ estado: "otra", grupo_detectado: grupoDelPaquete, mensaje: `Este paquete es de ${NOMBRE_POOL[grupoDelPaquete]}.` });
   }
 
   const repetido = async () => {
