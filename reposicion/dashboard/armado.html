@@ -964,11 +964,8 @@ const clavePed = (x) => `${x.tienda}|${x.canal}|${x.pedido}`;
 function calcularListos() {
   const { marcas, empaquetados } = listos;
   const hechos = new Set(empaquetados.map(clavePed));
+  // Las marcas ya vienen con lo empaquetado descontado (el servidor, marcasVigentes()).
   const disp = new Map([...marcas].map(([k, m]) => [k, m.encontradas]));
-  for (const e of empaquetados) for (const i of e.items) {
-    const m = marcas.get(i.sku);
-    if (m && e.at > m.marcado_at) disp.set(i.sku, (disp.get(i.sku) || 0) - i.cantidad);
-  }
   const peds = new Map();
   for (const l of listos.lineas) {
     const k = clavePed(l);

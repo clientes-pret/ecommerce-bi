@@ -503,7 +503,7 @@ async function getFaltantes() {
 // Lo pendiente de despachar desde el depósito, por línea de pedido:
 //   - Tiendanube: órdenes abiertas, pagas y sin empaquetar.
 //   - Mercado Libre: envíos listos para despachar que no son Full.
-// Lo que marca cada persona va a busqueda_marcas (una fila por SKU por día).
+// Lo que marca cada persona va a busqueda_marcas (una fila por SKU por día; vale hasta que se empaqueta, ver marcasVigentes).
 
 type Linea = {
   canal: "tn" | "ml";
@@ -530,6 +530,48 @@ const LOGISTICA_ML: Record<string, string> = {
 
 function hoyAR(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+}
+
+// Lo encontrado en Búsqueda sigue valiendo hasta que se empaqueta, aunque cambie el día (6/11/2026: Jair buscó
+// a la tarde, no se llegó a empaquetar todo y a la mañana la lista arrancó de cero). Se miran las marcas de los
+// últimos días (la más nueva de cada SKU gana) y se descuenta lo que se llevaron los paquetes cerrados después.
+// Antes del 5/11 casi no se empaquetaba con la app (el 4/11, 20 paquetes): sus marcas no se pueden descontar.
+const DIAS_MARCAS = 4, MARCAS_DESDE = "2026-11-05";
+function desdeMarcasAR(): string {
+  const d = new Date(Date.now() - (DIAS_MARCAS - 1) * 86400_000).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+  return d > MARCAS_DESDE ? d : MARCAS_DESDE;
+}
+
+/** Paquetes cerrados completos desde el inicio de la ventana de marcas. */
+async function controlesCompletos(): Promise<Json[]> {
+  const { data, error } = await supabase.from("armado_controles")
+    .select("canal, tienda, pedido, creado_at, armado_items(sku, cantidad, estado)")
+    .eq("resultado", "completo").gte("creado_at", `${desdeMarcasAR()}T00:00:00-03:00`).order("id");
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Marca vigente por SKU: la más nueva de la ventana, menos lo que ya se empaquetó después de marcarla. */
+async function marcasVigentes(controles: Json[]): Promise<Json[]> {
+  const { data, error } = await supabase.from("busqueda_marcas")
+    .select("fecha, sku, estado, requeridas, encontradas, por, marcado_at")
+    .gte("fecha", desdeMarcasAR()).order("marcado_at");
+  if (error) throw error;
+  const ultima = new Map<string, Json>();
+  for (const m of data ?? []) ultima.set(m.sku, m);
+  const out: Json[] = [];
+  for (const m of ultima.values()) {
+    const marcadoMs = Date.parse(m.marcado_at);
+    let usadas = 0;
+    for (const c of controles) {
+      if (Date.parse(c.creado_at) <= marcadoMs) continue;
+      for (const i of c.armado_items ?? []) if (i.estado === "ok" && i.sku === m.sku) usadas += Number(i.cantidad) || 0;
+    }
+    const requeridas = Math.max(0, m.requeridas - usadas);
+    if (!requeridas) continue; // ya se empaquetó todo lo que esperaba esta marca
+    out.push({ ...m, requeridas, encontradas: Math.max(0, m.encontradas - usadas) });
+  }
+  return out;
 }
 
 async function enParalelo<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
@@ -662,7 +704,10 @@ async function getPendientes(url: URL) {
     }
     cachePendientes = { at: Date.now(), lineas };
   }
-  return json({ actualizado_at: new Date(cachePendientes.at).toISOString(), fecha: hoyAR(), lineas: cachePendientes.lineas });
+  // Los de ML siguen "listos para despachar" hasta que salen: lo ya empaquetado completo no se vuelve a buscar.
+  const hechos = new Set((await controlesCompletos()).map((c) => `${c.tienda}|${c.canal}|${c.pedido}`));
+  const lineas = cachePendientes.lineas.filter((l) => !hechos.has(`${l.tienda}|${l.canal}|${l.pedido}`));
+  return json({ actualizado_at: new Date(cachePendientes.at).toISOString(), fecha: hoyAR(), lineas });
 }
 
 /** Marcas del día y quién está buscando en qué. Si viene `por`, registra dónde está esa persona. */
@@ -675,19 +720,17 @@ async function getEstado(url: URL) {
       visto_at: new Date().toISOString(),
     });
   }
-  const [marcas, presencia, controles] = await Promise.all([
-    supabase.from("busqueda_marcas").select("sku, estado, requeridas, encontradas, por, marcado_at").eq("fecha", hoyAR()),
+  const [controles, presencia] = await Promise.all([
+    controlesCompletos(),
     supabase.from("busqueda_presencia").select("por, categoria")
       .gte("visto_at", new Date(Date.now() - 120_000).toISOString()).not("categoria", "is", null),
-    // Paquetes cerrados completos hoy: en Empaquetado ("Pedidos listos") no se vuelven a ofrecer y lo que se
-    // llevaron ya no está disponible para otros pedidos. Los de ML siguen "listos para despachar" hasta que salen.
-    supabase.from("armado_controles").select("canal, tienda, pedido, creado_at, armado_items(sku, cantidad, estado)")
-      .eq("resultado", "completo").gte("creado_at", `${hoyAR()}T00:00:00-03:00`).order("id"),
   ]);
-  if (marcas.error) throw marcas.error;
+  const marcas = await marcasVigentes(controles);
+  const inicioHoy = Date.parse(`${hoyAR()}T00:00:00-03:00`);
   return json({
-    marcas: marcas.data ?? [], presencia: presencia.data ?? [],
-    empaquetados: (controles.data ?? []).map((c) => ({
+    marcas, presencia: presencia.data ?? [],
+    // Paquetes cerrados completos hoy (para el avance del día en el inicio de la app).
+    empaquetados: controles.filter((c) => Date.parse(c.creado_at) >= inicioHoy).map((c) => ({
       canal: c.canal, tienda: c.tienda, pedido: c.pedido, at: c.creado_at,
       items: (c.armado_items ?? []).filter((i: Json) => i.estado === "ok" && i.sku).map((i: Json) => ({ sku: i.sku, cantidad: i.cantidad })),
     })),
@@ -698,10 +741,18 @@ async function postMarcar(req: Request) {
   const b = await req.json();
   const sku = String(b.sku ?? "");
   if (!sku) return json({ error: "Falta el SKU" }, 400);
+  // Marcas de días anteriores de este SKU (siguen vigentes hasta que se empaqueta): desmarcar las quita, y una
+  // marca nueva las reemplaza, así que sus avisos a la búsqueda profunda se retiran.
+  const { data: viejas } = await supabase.from("busqueda_marcas").select("fecha")
+    .eq("sku", sku).gte("fecha", desdeMarcasAR()).neq("fecha", hoyAR());
+  const retirarViejas = async () => {
+    for (const v of viejas ?? []) await retirarReporte(sku, `b|${v.fecha}|${sku}`).catch((e) => console.error("búsqueda profunda", e));
+  };
   if (b.estado === "borrar") {
-    const { error } = await supabase.from("busqueda_marcas").delete().eq("fecha", hoyAR()).eq("sku", sku);
+    const { error } = await supabase.from("busqueda_marcas").delete().eq("sku", sku).gte("fecha", desdeMarcasAR());
     if (error) throw error;
     await retirarReporte(sku, `b|${hoyAR()}|${sku}`);
+    await retirarViejas();
     return json({ ok: true });
   }
   if (!["ok", "parcial", "no_hay"].includes(b.estado)) return json({ error: "Estado inválido" }, 400);
@@ -713,6 +764,7 @@ async function postMarcar(req: Request) {
     marcado_at: new Date().toISOString(),
   });
   if (error) throw error;
+  await retirarViejas();
   // Lo que falta va a la búsqueda profunda (si falla, la marca ya quedó guardada)
   const faltan = requeridas - encontradas;
   try {
