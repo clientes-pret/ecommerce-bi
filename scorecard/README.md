@@ -14,5 +14,9 @@ Pasos:
 1. `supabase db push` (aplica la migración).
 2. `venv/bin/python scorecard/migrar_desde_artifact.py --aplicar`.
 
-Pendiente: carga diaria automática (reemplaza al botón "Actualizar hoy" y a la carga manual) y
+Tiendanube (Pret y Laván) se carga solo todos los días con `reposicion/scorecard_tn_sync.py` (paso final de
+`cashflow_sync.yml`): ventas, órdenes, costo de productos y facturación neta, sin Excel. No carga `costo_envio`
+(su definición no coincide con ningún campo de la API). Para cargar historia: `gh workflow run cashflow_sync.yml -f desde=YYYY-MM-DD`.
+
+Pendiente (ML, ads, local): carga diaria automática (reemplaza al botón "Actualizar hoy" y a la carga manual) y
 que el Scorecard lea de acá en vez del artifact.

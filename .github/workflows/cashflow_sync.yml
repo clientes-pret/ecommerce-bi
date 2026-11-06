@@ -24,3 +24,10 @@ jobs:
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
           DESDE: ${{ github.event.inputs.desde }}
+      # Scorecard de Tiendanube (ventas, costo y neta de Pret y Laván) desde la API. Va después del paso anterior porque
+      # la neta usa los cobros de Pago Nube que calcula ese paso; corre aunque ese paso haya fallado.
+      - run: python3 -m reposicion.scorecard_tn_sync --aplicar ${DESDE:+--desde "$DESDE"}
+        if: always()
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          DESDE: ${{ github.event.inputs.desde }}
