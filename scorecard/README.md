@@ -18,5 +18,12 @@ Tiendanube (Pret y Laván) se carga solo todos los días con `reposicion/scoreca
 `cashflow_sync.yml`): ventas, órdenes, costo de productos y facturación neta, sin Excel. No carga `costo_envio`
 (su definición no coincide con ningún campo de la API). Para cargar historia: `gh workflow run cashflow_sync.yml -f desde=YYYY-MM-DD`.
 
-Pendiente (ML, ads, local): carga diaria automática (reemplaza al botón "Actualizar hoy" y a la carga manual) y
+Mercado Libre (Pret y Laván) también se carga solo con `reposicion/scorecard_ml_sync.py` (último paso del mismo workflow,
+siempre los últimos 4 días): ventas, órdenes, neto en MercadoPago y costo de productos, con los criterios de la planilla de
+rentabilidad de ML (día = cierre de la orden, solo órdenes con pago aprobado; costo de Tiendanube, y para SKUs que ya no
+están ahí la tabla `scorecard_costos_extra`). Verificado contra la exportación de la planilla: ventas idénticas casi todos
+los días, neta y costo dentro de ±1 %. Historia a mano: `python3 -m reposicion.scorecard_ml_sync --desde YYYY-MM-DD --aplicar`
+(tarda ~1 min por cada 300 órdenes).
+
+Pendiente (ads, local): carga diaria automática (reemplaza al botón "Actualizar hoy" y a la carga manual) y
 que el Scorecard lea de acá en vez del artifact.

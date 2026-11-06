@@ -31,3 +31,9 @@ jobs:
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
           DESDE: ${{ github.event.inputs.desde }}
+      # Scorecard de Mercado Libre (ventas, neto en MercadoPago y costo de Pret y Laván), mismos criterios que la planilla de
+      # rentabilidad de ML. Siempre los últimos 4 días (la carga histórica de ML se hace a mano: es lenta).
+      - run: python3 -m reposicion.scorecard_ml_sync --aplicar
+        if: always()
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
