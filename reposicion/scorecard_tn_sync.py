@@ -12,13 +12,19 @@ lo que ya había ese día):
 - facturación neta   = lo que queda después de Pago Nube: el neto de cf_pagonube_movimientos (real si se importó
                        el reporte, calculado si no) y, para órdenes que no pasan por Pago Nube (ej. Go Cuotas),
                        el total sin descuento. Por eso corre DESPUÉS de cashflow_sync.
-NO toca costo_envio: la definición que usaba el Scorecard no coincide con ningún campo de la API (pendiente).
+- costo de envío (solo Laván) = misma tarifa que paga Pret según la zona del cliente (CABA $2.800, GBA $4.500 /
+                       $6.000 / $7.750; punto de retiro $0), pedido del usuario el 6/11/2026: "idéntico a Pret a Home".
+                       La zona sale del código postal, con el tramo que Pret le asignó a ese código en sus órdenes de los
+                       últimos 75 días. Los envíos por Correo Argentino/Andreani no se suman (el monto no viene en la API,
+                       igual que en Pret): ese día queda subestimado y el log avisa cuántas órdenes faltaron.
+                       El envío de Pret NO se toca: lo sigue cargando la rutina de claude.ai (tabla por "shipping_option").
 
 Los últimos días se recalculan cada vez (un reembolso o cancelación posterior cambia un día ya cargado).
 
 Uso: python3 -m reposicion.scorecard_tn_sync                       (simula: últimos 7 días, no guarda)
      python3 -m reposicion.scorecard_tn_sync --aplicar             (guarda)
      python3 -m reposicion.scorecard_tn_sync --desde 2026-05-13 --aplicar   (carga histórica)
+     python3 -m reposicion.scorecard_tn_sync --solo tn_lavan --desde 2026-10-28 --aplicar   (una sola tienda)
 Pruebas: python3 -m reposicion.tests.test_scorecard_tn
 """
 
@@ -32,6 +38,10 @@ import requests
 from reposicion import core, db
 
 AR = timezone(timedelta(hours=-3))
+# Costo REAL que paga el dueño por cada envío propio de Pret (mismos valores que la rutina diaria, Paso 1c).
+TARIFA_PRET = {"Envío en el día - CABA": 2800.0, "Envío en el día - GBA 1": 4500.0,
+               "Envío en el día - GBA 2": 6000.0, "Envío en el día - GBA 3": 7750.0}
+DIAS_ZONAS = 75                      # historia de Pret para saber a qué tramo pertenece cada código postal
 TIENDAS = {  # canal del config -> (tienda de cf_pagonube_movimientos, clave del documento del Scorecard)
     "tn_pret": ("pret", "tn_pret_home"),
     "tn_lavan": ("lavan", "tn_casa_lavan"),
@@ -87,14 +97,50 @@ def netos_pagonube(config, tienda, desde):
     return netos
 
 
-def calcular(ordenes, netos, desde, hasta):
-    """Totales por día. Devuelve ({fecha ISO: {orders, revenue, costo, neta}}, avisos)."""
+def _cp(orden):
+    """Código postal de 4 dígitos del envío ('' si no hay)."""
+    return "".join(ch for ch in ((orden.get("shipping_address") or {}).get("zipcode") or "") if ch.isdigit())[:4]
+
+
+def mapa_zonas(ordenes_pret):
+    """{código postal: costo de envío} según el tramo que Pret le cobró a cada código (el más frecuente)."""
+    votos = defaultdict(lambda: defaultdict(int))
+    for o in ordenes_pret:
+        if o.get("status") == "cancelled" or o.get("payment_status") != "paid":
+            continue
+        costo = TARIFA_PRET.get(o.get("shipping_option") or "")
+        if costo is not None and _cp(o):
+            votos[_cp(o)][costo] += 1
+    return {cp: max(v.items(), key=lambda kv: (kv[1], -kv[0]))[0] for cp, v in votos.items()}
+
+
+def costo_envio(orden, zonas):
+    """(costo, motivo) del envío de una orden con la tarifa de Pret. motivo: None = ok, 'sin_dato' = Correo
+    Argentino/Andreani u otro envío cuyo monto no viene en la API, 'sin_zona' = código postal que no se pudo ubicar."""
+    opcion = orden.get("shipping_option") or ""
+    if opcion == "Punto de retiro":
+        return 0.0, None
+    if "Correo" in opcion or "Andreani" in opcion or "estándar" in opcion or not opcion:
+        return 0.0, "sin_dato"
+    cp = _cp(orden)
+    if cp in zonas:
+        return zonas[cp], None
+    if cp.isdigit() and 1000 <= int(cp) <= 1499:            # Capital Federal
+        return TARIFA_PRET["Envío en el día - CABA"], None
+    return 0.0, "sin_zona"
+
+
+def calcular(ordenes, netos, desde, hasta, zonas=None):
+    """Totales por día. Devuelve ({fecha ISO: {orders, revenue, costo, neta[, envio]}}, avisos).
+    Con `zonas` (mapa_zonas de Pret) calcula también el costo de envío."""
     dias = {}
     d = desde
     while d <= hasta:
         dias[d.isoformat()] = {"orders": 0, "revenue": 0.0, "costo": 0.0, "neta": 0.0}
+        if zonas is not None:
+            dias[d.isoformat()]["envio"] = 0.0
         d += timedelta(days=1)
-    avisos = {"sin_pagonube": 0, "productos_sin_costo": 0}
+    avisos = {"sin_pagonube": 0, "productos_sin_costo": 0, "envio_sin_dato": 0, "envio_sin_zona": 0}
     for o in ordenes:
         if o.get("status") == "cancelled" or o.get("payment_status") != "paid":
             continue
@@ -116,16 +162,24 @@ def calcular(ordenes, netos, desde, hasta):
                 avisos["sin_pagonube"] += 1
             neto = total
         t["neta"] += neto
+        if zonas is not None:
+            c, motivo = costo_envio(o, zonas)
+            t["envio"] += c
+            if motivo:
+                avisos["envio_" + motivo] += 1
     return dias, avisos
 
 
 def documento(clave, t):
     """Campos del día con las mismas claves que usa la rutina del Scorecard."""
-    return {
+    doc = {
         clave: {"orders": t["orders"], "revenue": round(t["revenue"], 2)},
         f"facturacion_neta_{clave}": round(t["neta"], 2),
         f"costo_productos_{clave}": round(t["costo"], 2),
     }
+    if "envio" in t:
+        doc[f"costo_envio_{clave}"] = round(t["envio"], 2)
+    return doc
 
 
 def guardar_dia(config, fecha, campos):
@@ -141,6 +195,7 @@ def main():
     ap.add_argument("--desde", help="YYYY-MM-DD (por defecto, los últimos --dias días hasta ayer)")
     ap.add_argument("--dias", type=int, default=7)
     ap.add_argument("--aplicar", action="store_true", help="guardar en Supabase (sin esto solo muestra)")
+    ap.add_argument("--solo", choices=list(TIENDAS), help="procesar una sola tienda (ej. tn_lavan)")
     args = ap.parse_args()
     config = db.load_config()
     hasta = datetime.now(AR).date() - timedelta(days=1)       # el día de hoy está a medias: se carga mañana
@@ -148,18 +203,27 @@ def main():
     errores = []
     for key, (tienda, clave) in TIENDAS.items():
         cfg = config["channels"].get(key, {})
+        if args.solo and key != args.solo:
+            continue
         if not cfg.get("enabled", True):
             continue
         try:
             ordenes = traer_ordenes(cfg, desde, hasta)
-            dias, avisos = calcular(ordenes, netos_pagonube(config, tienda, desde), desde, hasta)
+            zonas = None
+            if key == "tn_lavan":                                # Laván paga lo mismo que Pret según la zona
+                pret = config["channels"].get("tn_pret", {})
+                zonas = mapa_zonas(traer_ordenes(pret, hasta - timedelta(days=DIAS_ZONAS), hasta)) if pret else {}
+            dias, avisos = calcular(ordenes, netos_pagonube(config, tienda, desde), desde, hasta, zonas)
             for fecha, t in sorted(dias.items()):
-                core.tnlog(f"{key} {fecha}: {t['orders']} órdenes · ventas {t['revenue']:,.0f} · neta {t['neta']:,.0f} · costo {t['costo']:,.0f}")
+                core.tnlog(f"{key} {fecha}: {t['orders']} órdenes · ventas {t['revenue']:,.0f} · neta {t['neta']:,.0f} · costo {t['costo']:,.0f}"
+                           + (f" · envío {t['envio']:,.0f}" if "envio" in t else ""))
                 if args.aplicar:
                     guardar_dia(config, fecha, documento(clave, t))
             core.tnlog(f"  ✓ {cfg.get('label', key)}: {len(dias)} días {'guardados' if args.aplicar else '(simulación, no se guardó)'}"
                        + (f" · ⚠ {avisos['sin_pagonube']} órdenes de Pago Nube sin neto (se usó el total)" if avisos["sin_pagonube"] else "")
-                       + (f" · ⚠ {avisos['productos_sin_costo']} productos sin costo cargado" if avisos["productos_sin_costo"] else ""))
+                       + (f" · ⚠ {avisos['productos_sin_costo']} productos sin costo cargado" if avisos["productos_sin_costo"] else "")
+                       + (f" · ⚠ envío sin sumar en {avisos['envio_sin_dato']} órdenes (Correo/Andreani: el monto no viene en la API)" if avisos["envio_sin_dato"] else "")
+                       + (f" · ⚠ {avisos['envio_sin_zona']} órdenes con código postal sin zona (envío en 0)" if avisos["envio_sin_zona"] else ""))
         except Exception as e:
             errores.append(f"{key}: {e}")
             core.tnlog(f"  ⚠ {key}: {e}")

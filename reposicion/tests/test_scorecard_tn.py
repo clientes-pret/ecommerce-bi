@@ -5,7 +5,7 @@ Correr:  python3 -m reposicion.tests.test_scorecard_tn
 
 from datetime import date
 
-from reposicion.scorecard_tn_sync import calcular, documento
+from reposicion.scorecard_tn_sync import calcular, costo_envio, documento, mapa_zonas
 
 
 def orden(numero, creada, total, estado="paid", gateway="pago-nube", productos=(("A", 2, 100),), status="open"):
@@ -51,6 +51,40 @@ def test_dia_sin_ventas_queda_en_cero_y_documento():
     assert documento("tn_casa_lavan", dias["2026-10-19"]) == {
         "tn_casa_lavan": {"orders": 0, "revenue": 0.0}, "facturacion_neta_tn_casa_lavan": 0.0,
         "costo_productos_tn_casa_lavan": 0.0}
+
+
+def con_envio(numero, opcion, cp, creada="2026-10-19T15:00:00+0000", estado="paid"):
+    o = orden(numero, creada, 1000, estado=estado)
+    o.update({"shipping_option": opcion, "shipping_address": {"zipcode": cp}})
+    return o
+
+
+def test_mapa_zonas_toma_el_tramo_mas_frecuente_de_pret():
+    pret = [con_envio(1, "Envío en el día - GBA 1", "1714"), con_envio(2, "Envío en el día - GBA 1", "1714"),
+            con_envio(3, "Envío en el día - GBA 2", "1714"), con_envio(4, "Envío en el día - GBA 2", "1670"),
+            con_envio(5, "Envío en el día - Gratis", "1888"), con_envio(6, "Punto de retiro", "1900"),
+            con_envio(7, "Envío en el día - GBA 3", "1900", estado="refunded")]
+    z = mapa_zonas(pret)
+    assert z == {"1714": 4500.0, "1670": 6000.0}          # Gratis, retiro y no pagadas no cuentan
+
+
+def test_costo_envio_laván():
+    z = {"1714": 4500.0}
+    assert costo_envio(con_envio(1, "Ninja Flex - Flex", "1714-"), z) == (4500.0, None)
+    assert costo_envio(con_envio(2, "Envío Express 24/48 hs GBA", "1999"), z) == (0.0, "sin_zona")
+    assert costo_envio(con_envio(3, "Envio Express 24/48 hs. CABA", "1048"), z) == (2800.0, None)   # CABA por rango
+    assert costo_envio(con_envio(4, "Punto de retiro", ""), z) == (0.0, None)
+    assert costo_envio(con_envio(5, "Envío Nube - Correo Argentino Clásico a domicilio", "1714"), z) == (0.0, "sin_dato")
+
+
+def test_calcular_suma_envio_solo_con_zonas_y_documento():
+    ords = [con_envio(1, "Ninja Flex - Flex", "1714"), con_envio(2, "Envío Nube - Correo Argentino Clásico a domicilio", "1714"),
+            con_envio(3, "Punto de retiro", "")]
+    dias, avisos = calcular(ords, {}, D, D, {"1714": 4500.0})
+    assert dias["2026-10-19"]["envio"] == 4500 and avisos["envio_sin_dato"] == 1
+    assert documento("tn_casa_lavan", dias["2026-10-19"])["costo_envio_tn_casa_lavan"] == 4500.0
+    dias, _ = calcular(ords, {}, D, D)                      # sin zonas (Pret): no hay costo_envio, la rutina lo sigue cargando
+    assert "envio" not in dias["2026-10-19"] and "costo_envio_tn_pret_home" not in documento("tn_pret_home", dias["2026-10-19"])
 
 
 if __name__ == "__main__":
