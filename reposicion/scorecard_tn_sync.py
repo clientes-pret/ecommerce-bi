@@ -17,7 +17,8 @@ lo que ya había ese día):
                        La zona sale del código postal, con el tramo que Pret le asignó a ese código en sus órdenes de los
                        últimos 75 días. Los envíos por Correo Argentino/Andreani no se suman (el monto no viene en la API,
                        igual que en Pret): ese día queda subestimado y el log avisa cuántas órdenes faltaron.
-                       El envío de Pret NO se toca: lo sigue cargando la rutina de claude.ai (tabla por "shipping_option").
+                       Envío Nube (Correo Argentino / Andreani, ambas marcas) = la línea "Envío" de la venta
+                       (shipping_cost_customer). Pret (desde 7/11/2026): se calcula acá también; ya no depende de la rutina.
 
 Los últimos días se recalculan cada vez (un reembolso o cancelación posterior cambia un día ya cargado).
 
@@ -114,14 +115,34 @@ def mapa_zonas(ordenes_pret):
     return {cp: max(v.items(), key=lambda kv: (kv[1], -kv[0]))[0] for cp, v in votos.items()}
 
 
+def _es_envio_nube(orden):
+    return "Envío Nube" in (orden.get("shipping_option") or "") or orden.get("shipping_carrier_name") == "Envío Nube"
+
+
 def costo_envio(orden, zonas):
-    """(costo, motivo) del envío de una orden con la tarifa de Pret. motivo: None = ok, 'sin_dato' = Correo
-    Argentino/Andreani u otro envío cuyo monto no viene en la API, 'sin_zona' = código postal que no se pudo ubicar."""
+    """(costo, motivo) del envío de una orden. motivo: None = ok, 'sin_dato' = envío sin monto en la venta,
+    'sin_zona' = código postal que no se pudo ubicar.
+    - Envío Nube (Correo Argentino, Andreani, sucursal): lo que dice la línea "Envío" de la venta
+      (`shipping_cost_customer`, ej. $9.802 en Correo Clásico a domicilio). Pedido del usuario 7/11/2026.
+    - Envío en el día (CABA/GBA): la tarifa real que paga el dueño (TARIFA_PRET), no lo que cobra al cliente.
+    - Envío "Gratis" en el día: la tarifa de la zona (el cliente no paga, el dueño sí). Retiro propio: $0."""
     opcion = orden.get("shipping_option") or ""
-    if opcion == "Punto de retiro":
+    if _es_envio_nube(orden):
+        return _num(orden.get("shipping_cost_customer")), None
+    if opcion == "Punto de retiro" or opcion == "PRET A HOME":
         return 0.0, None
+    if opcion in TARIFA_PRET:
+        return TARIFA_PRET[opcion], None
+    if "Gratis" in opcion:                                  # el cliente no paga, pero el repartidor cobra la tarifa de la zona
+        cp = _cp(orden)
+        if cp in zonas:
+            return zonas[cp], None
+        if cp.isdigit() and 1000 <= int(cp) <= 1499:
+            return TARIFA_PRET["Envío en el día - CABA"], None
+        return 0.0, "sin_zona"
     if "Correo" in opcion or "Andreani" in opcion or "estándar" in opcion or not opcion:
-        return 0.0, "sin_dato"
+        monto = _num(orden.get("shipping_cost_customer"))
+        return (monto, None) if monto else (0.0, "sin_dato")
     cp = _cp(orden)
     if cp in zonas:
         return zonas[cp], None
@@ -210,7 +231,7 @@ def main():
         try:
             ordenes = traer_ordenes(cfg, desde, hasta)
             zonas = None
-            if key == "tn_lavan":                                # Laván paga lo mismo que Pret según la zona
+            if key in ("tn_pret", "tn_lavan"):                   # Laván paga lo mismo que Pret según la zona
                 pret = config["channels"].get("tn_pret", {})
                 zonas = mapa_zonas(traer_ordenes(pret, hasta - timedelta(days=DIAS_ZONAS), hasta)) if pret else {}
             dias, avisos = calcular(ordenes, netos_pagonube(config, tienda, desde), desde, hasta, zonas)

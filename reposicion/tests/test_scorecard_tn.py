@@ -53,9 +53,11 @@ def test_dia_sin_ventas_queda_en_cero_y_documento():
         "costo_productos_tn_casa_lavan": 0.0}
 
 
-def con_envio(numero, opcion, cp, creada="2026-10-19T15:00:00+0000", estado="paid"):
+def con_envio(numero, opcion, cp, creada="2026-10-19T15:00:00+0000", estado="paid", cobrado=None):
     o = orden(numero, creada, 1000, estado=estado)
     o.update({"shipping_option": opcion, "shipping_address": {"zipcode": cp}})
+    if cobrado is not None:                                  # línea "Envío" de la venta (shipping_cost_customer)
+        o["shipping_cost_customer"] = str(cobrado)
     return o
 
 
@@ -74,17 +76,36 @@ def test_costo_envio_laván():
     assert costo_envio(con_envio(2, "Envío Express 24/48 hs GBA", "1999"), z) == (0.0, "sin_zona")
     assert costo_envio(con_envio(3, "Envio Express 24/48 hs. CABA", "1048"), z) == (2800.0, None)   # CABA por rango
     assert costo_envio(con_envio(4, "Punto de retiro", ""), z) == (0.0, None)
-    assert costo_envio(con_envio(5, "Envío Nube - Correo Argentino Clásico a domicilio", "1714"), z) == (0.0, "sin_dato")
+    assert costo_envio(con_envio(5, "Envío Nube - Correo Argentino Clásico a domicilio", "1714", cobrado=9802), z) == (9802.0, None)
+
+
+def test_costo_envio_pret_usa_la_linea_envio_y_la_tarifa():
+    z = {}
+    nube = con_envio(1, "Envío Nube - Correo Argentino Clásico a domicilio", "1714", cobrado=9802)
+    assert costo_envio(nube, z) == (9802.0, None)                                           # lo que dice la venta
+    assert costo_envio(con_envio(2, "Envío Nube - Andreani a domicilio", "1714", cobrado=13930.8), z) == (13930.8, None)
+    sucursal = con_envio(3, "Punto de retiro", "1900", cobrado=5941.52)
+    sucursal["shipping_carrier_name"] = "Envío Nube"
+    assert costo_envio(sucursal, z) == (5941.52, None)                                      # retiro en sucursal del correo
+    assert costo_envio(con_envio(4, "Punto de retiro", "1900", cobrado=0), z) == (0.0, None)  # retiro propio
+    assert costo_envio(con_envio(5, "Envío en el día - CABA", "1048", cobrado=3250), z) == (2800.0, None)  # tarifa real, no lo cobrado
+    assert costo_envio(con_envio(6, "Envío en el día - Gratis", "1048", cobrado=0), z) == (2800.0, None)   # gratis para el cliente, no para vos
+    assert costo_envio(con_envio(8, "Envío en el día - Gratis", "1714", cobrado=0), {"1714": 4500.0}) == (4500.0, None)
+    assert costo_envio(con_envio(9, "Envío en el día - Gratis", "5000", cobrado=0), z) == (0.0, "sin_zona")
+    assert costo_envio(con_envio(7, "PRET A HOME", "", cobrado=0), z) == (0.0, None)
 
 
 def test_calcular_suma_envio_solo_con_zonas_y_documento():
     ords = [con_envio(1, "Ninja Flex - Flex", "1714"), con_envio(2, "Envío Nube - Correo Argentino Clásico a domicilio", "1714"),
             con_envio(3, "Punto de retiro", "")]
+    ords[1]["shipping_cost_customer"] = "9802"
     dias, avisos = calcular(ords, {}, D, D, {"1714": 4500.0})
-    assert dias["2026-10-19"]["envio"] == 4500 and avisos["envio_sin_dato"] == 1
-    assert documento("tn_casa_lavan", dias["2026-10-19"])["costo_envio_tn_casa_lavan"] == 4500.0
-    dias, _ = calcular(ords, {}, D, D)                      # sin zonas (Pret): no hay costo_envio, la rutina lo sigue cargando
+    assert dias["2026-10-19"]["envio"] == 4500 + 9802 and avisos["envio_sin_dato"] == 0
+    assert documento("tn_casa_lavan", dias["2026-10-19"])["costo_envio_tn_casa_lavan"] == 14302.0
+    dias, _ = calcular(ords, {}, D, D)                      # sin zonas (None): no calcula envío
     assert "envio" not in dias["2026-10-19"] and "costo_envio_tn_pret_home" not in documento("tn_pret_home", dias["2026-10-19"])
+    dias, _ = calcular(ords, {}, D, D, {})                  # Pret: zonas vacías → tarifa propia + línea Envío
+    assert documento("tn_pret_home", dias["2026-10-19"])["costo_envio_tn_pret_home"] == 9802.0
 
 
 if __name__ == "__main__":
