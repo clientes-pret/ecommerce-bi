@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stock perdido · Panel de control</title>
-  <link rel="icon" href="icon-192.png">
+  <title>Stock perdido · Operaciones Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
-  <link rel="stylesheet" href="estilo.css?v=11">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=11">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -17,10 +17,10 @@
 // La app del depósito (armado.html) lo carga; acá solo se mira, con el costo de Tiendanube del día en que se
 // confirmó (queda guardado aunque el costo cambie después). "TN decía" es el stock que Tiendanube creía tener:
 // sirve para corregirlo en la tienda (el sistema no lo toca). La marca sale de los pedidos que esperaban el producto.
-import { sb, $, $$, esc, guard, nav, peso0 } from './app.js';
-import { MESN } from './analisis.js?v=5';
+import { sb, $, $$, esc, guard, navOperaciones, peso0 } from '../proveedores/app.js';
+import { MESN } from '../proveedores/analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
-nav(perfil, 'perdido');
+navOperaciones(perfil, 'perdido');
 
 const AR = { timeZone: 'America/Argentina/Buenos_Aires' };
 const mesDe = (iso) => new Date(iso).toLocaleDateString('en-CA', AR).slice(0, 7);

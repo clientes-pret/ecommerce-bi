@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Proveedores · Proveedores</title>
+  <title>Cuenta corriente · Proveedores</title>
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
   <link rel="stylesheet" href="estilo.css?v=11">
@@ -22,7 +22,7 @@ const rows = (data || []).map((r) => ({ ...r, saldo: Number(r.saldo), chq: Numbe
 let orden = 'saldo', dir = -1;
 const conSaldo = rows.filter((r) => r.saldo > 1);
 const olvidados = conSaldo.filter((r) => (r.dPago ?? 999) > 60);
-$('#app').innerHTML = `<div class="cabecera"><div><h1>Proveedores</h1><p>Cuánto le debés a cada uno · al ${fecha(H)}</p></div>
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Cuenta corriente</h1><p>Proveedores · cuánto le debés a cada uno · al ${fecha(H)}</p></div>
   <div class="row wrapRow"><a class="btn" href="nuevo.html?tipo=comprobante">Cargar factura</a><a class="btn" href="agenda.html?nuevo=1">Agendar pago</a><a class="btn primary" href="nuevo.html?tipo=pago">Registrar pago</a></div></div>
 <div class="centro-comando">
   <div class="cc-card"><div class="cc-label">Deuda total</div><div class="cc-valor num">${peso0(conSaldo.reduce((a, r) => a + r.saldo, 0))}</div><div class="cc-sub">${conSaldo.length} proveedores con saldo, de ${rows.filter((r) => r.activo).length} activos</div></div>

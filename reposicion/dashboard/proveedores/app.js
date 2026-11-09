@@ -29,7 +29,9 @@ export const ESTADO = {
 };
 export const chipEstado = (e) => `<span class="chip ${ESTADO[e]?.[1] || ''}">${esc(ESTADO[e]?.[0] || e)}</span>`;
 
-export const rutaPara = (rol) => (rol === 'deposito' ? 'recibir.html' : 'admin.html');
+// Las rutas se resuelven contra esta carpeta (proveedores/) para que anden igual desde operaciones/.
+const aca = (p) => new URL(p, import.meta.url).href;
+export const rutaPara = (rol) => aca(rol === 'deposito' ? 'recibir.html' : 'admin.html');
 
 // Verifica sesión y rol. Si no corresponde, redirige. Devuelve el perfil.
 export async function guard(roles) {
@@ -38,14 +40,14 @@ export async function guard(roles) {
     throw new Error('anon key sin configurar');
   }
   const { data } = await sb.auth.getSession();
-  if (!data.session) { location.replace('index.html'); throw new Error('sin sesión'); }
+  if (!data.session) { location.replace(aca('index.html')); throw new Error('sin sesión'); }
   const { data: p } = await sb.from('cc_perfiles').select('id,nombre,rol').eq('id', data.session.user.id).maybeSingle();
-  if (!p) { await sb.auth.signOut(); location.replace('index.html'); throw new Error('sin perfil'); }
+  if (!p) { await sb.auth.signOut(); location.replace(aca('index.html')); throw new Error('sin perfil'); }
   if (!roles.includes(p.rol)) { location.replace(rutaPara(p.rol)); throw new Error('rol incorrecto'); }
   return p;
 }
 
-export async function salir() { await sb.auth.signOut(); location.href = 'index.html'; }
+export async function salir() { await sb.auth.signOut(); location.href = aca('index.html'); }
 
 // Rubros sugeridos para cargar costos (se puede escribir uno nuevo).
 export const RUBROS_COSTO = {
@@ -160,14 +162,28 @@ export function nav(perfil, activa) {
   el.className = 'side';
   el.setAttribute('aria-label', 'Panel de control');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Panel de control</div></div>' +
-    it('admin.html', 'Inicio', 'inicio') + it('ventas.html', 'Ventas', 'ventas') +
-    '<div class="grupo">Gestión</div>' + it('proveedores.html', 'Proveedores', 'prov') + it('agenda.html', 'Agenda de pagos', 'agenda', 'sub') + it('costos.html', 'Costos', 'costos') +
-    [['software', 'Software'], ['sueldos', 'Sueldos'], ['servicios', 'Servicios'], ['publicidad', 'Publicidad']]
-      .map(([k, t]) => it(`costos.html?rubro=${k}`, t, 'costos-' + k, 'sub')).join('') +
-    it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
-    it('empaquetado.html', 'Empaquetado', 'empaquetado') + it('perdido.html', 'Stock perdido', 'perdido') +
+    it('admin.html', 'Inicio', 'inicio') +
+    '<div class="grupo">Ventas</div>' + it('ventas.html', 'Scorecard', 'scorecard', 'sub') + it('ventas-dashboard.html', 'Dashboard', 'dashboard', 'sub') +
+    '<div class="grupo">Proveedores</div>' + it('proveedores.html', 'Cuenta corriente', 'prov', 'sub') + it('agenda.html', 'Agenda de pagos', 'agenda', 'sub') +
+    '<div class="grupo">Gestión</div>' + it('costos.html', 'Costos', 'costos') + it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
+    '<div class="grupo">Otras plataformas</div>' + it('../operaciones/empaquetado.html', 'Operaciones Pret a Home ↗', 'operaciones') +
     `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a>` +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
+  document.body.classList.add('panel');
+  document.body.prepend(el);
+  $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
+}
+
+// Menú de la plataforma Operaciones Pret a Home (empaquetado y stock perdido). Misma sesión y mismo estilo que el panel de control.
+export function navOperaciones(perfil, activa) {
+  const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}"${activa === k ? ' aria-current="page"' : ''}>${txt}</a>`;
+  const el = document.createElement('nav');
+  el.className = 'side';
+  el.setAttribute('aria-label', 'Operaciones Pret a Home');
+  el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Operaciones</div></div>' +
+    it('empaquetado.html', 'Empaquetado', 'empaquetado') + it('perdido.html', 'Stock perdido', 'perdido') +
+    '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel') +
+    `<span class="sp"></span><div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
   document.body.prepend(el);
   $('#salir').onclick = (e) => { e.preventDefault(); salir(); };

@@ -14,16 +14,10 @@
 import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy, RUBROS_COSTO, camposRepite, activarRepite, guardarCosto, peso, dolar, camposMoneda, montoEn, actualizarDolar, detalleDolar, ATRIB, camposAtribucion, leerAtribucion, textoAtribucion } from './app.js';
 import { graficoSimple, activarTooltips, etqMes, MESN } from './analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
-// Sub-menús de Costos: cada uno muestra solo los rubros que le corresponden (por nombre del rubro).
-const RUBROS = {
-  software: { titulo: 'Software', match: /software|suscrip/i, cat: 'Software y suscripciones', tipo: 'fijo' },
-  sueldos: { titulo: 'Sueldos', match: /sueldo|cargas sociales|horas extra/i, cat: 'Sueldos y cargas sociales', tipo: 'fijo' },
-  servicios: { titulo: 'Servicios', match: /servicio/i, cat: 'Servicios (luz, gas, internet)', tipo: 'fijo' },
-  publicidad: { titulo: 'Publicidad', match: /publicidad|marketing|influencer/i, cat: 'Publicidad', tipo: 'variable' },
-};
-const RUBRO_KEY = RUBROS[qs('rubro')] ? qs('rubro') : null, RUBRO = RUBROS[RUBRO_KEY];
-const enRubro = (c) => !RUBRO || RUBRO.match.test(c.categoria || '');
-nav(perfil, RUBRO_KEY ? 'costos-' + RUBRO_KEY : 'costos');
+// Filtro por categoría (rubro): ?categoria=Alquiler abre la pantalla ya filtrada. Sueldos y publicidad muestran un resumen extra.
+const esSueldos = (c) => /sueldo|cargas sociales|horas extra/i.test(c || ''), esPublicidad = (c) => /publicidad|marketing|influencer/i.test(c || '');
+let catF = qs('categoria') || '';
+nav(perfil, 'costos');
 const TIPOS = { fijo: { nombre: 'Fijo', color: '#2449B8', chip: 'info' }, variable: { nombre: 'Variable', color: '#E8935A', chip: 'warn' } };
 const mesDe = (s) => String(s).slice(0, 7);
 const addMes = (ym, n) => { let [y, m] = ym.split('-').map(Number); m += n; y += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1; return `${y}-${String(m).padStart(2, '0')}`; };
@@ -37,7 +31,7 @@ let tab = ['fijo', 'variable'].includes(qs('tipo')) ? qs('tipo') : 'all';
 
 async function cargar() {
   const { data } = await sb.from('cc_costos').select('*').order('periodo').order('id').limit(5000);
-  filas = (data || []).filter(enRubro).map((f) => ({ ...f, ym: mesDe(f.periodo), monto: Number(f.monto) }));
+  filas = (data || []).map((f) => ({ ...f, ym: mesDe(f.periodo), monto: Number(f.monto) }));
 }
 // Ventas por mes (todos los canales) del scorecard, para mostrar cada costo como % de lo vendido.
 async function cargarVentas() {
@@ -55,34 +49,34 @@ const recargar = async () => { await Promise.all([cargar(), cargarReglas()]); aw
 // Costos que se repiten: definiciones en cc_costos_recurrentes; cada mes se carga en cc_costos (cc_costos_al_dia).
 async function cargarReglas() {
   const { data } = await sb.from('cc_costos_recurrentes').select('*').order('desde').order('id');
-  reglas = (data || []).filter(enRubro).map((r) => ({ ...r, monto: Number(r.monto), d: mesDe(r.desde), h: r.hasta ? mesDe(r.hasta) : null }));
+  reglas = (data || []).map((r) => ({ ...r, monto: Number(r.monto), d: mesDe(r.desde), h: r.hasta ? mesDe(r.hasta) : null }));
 }
 await actualizarDolar(); // dólar oficial para los costos en USD (antes de cargar los meses que se repiten)
 await sb.rpc('cc_costos_al_dia'); // carga los meses que falten hasta el mes en curso (si falla, la pantalla sigue andando)
-// Extras de cada sub-menú: Sueldos (equipo y adelantos), Publicidad (inversión en ads del scorecard).
+// Extras según la categoría filtrada: Sueldos (equipo y adelantos), Publicidad (inversión en ads del scorecard).
 let equipo = [], adelantos = [], adsMes = {};
 async function cargarExtras() {
-  if (RUBRO_KEY === 'sueldos') {
+  {
     const [{ data: eq }, { data: ad }] = await Promise.all([
       sb.from('cc_equipo').select('area,sueldo,activo').eq('activo', true),
       sb.from('cc_adelantos_sueldo').select('fecha,empleado,monto,descuenta_mes').order('fecha', { ascending: false }).limit(500),
     ]);
     equipo = eq || []; adelantos = ad || [];
   }
-  if (RUBRO_KEY === 'publicidad') {
+  {
     const { data } = await sb.from('v_scorecard_ads_mensual').select('periodo,plataforma,inversion');
     adsMes = {}; for (const r of data || []) if (r.inversion != null) { const k = mesDe(r.periodo); (adsMes[k] ||= {}); adsMes[k][r.plataforma] = (adsMes[k][r.plataforma] || 0) + Number(r.inversion); }
   }
 }
 function extras() {
-  if (RUBRO_KEY === 'sueldos') {
+  if (esSueldos(catF)) {
     const masa = equipo.reduce((a, p) => a + Number(p.sueldo || 0), 0), cargado = total(mes);
     const delMes = adelantos.filter((a) => a.descuenta_mes.slice(0, 7) === mes), dados = adelantos.filter((a) => a.fecha.slice(0, 7) === mes);
     return `<div class="grid dos" style="margin-top:16px">
       <div class="cc-card"><div class="cc-label">Sueldos según Equipo</div><div class="cc-valor md num">${peso0(masa)}</div><div class="cc-sub">${equipo.length} personas activas · cargado en Costos este mes: ${peso0(cargado)}${masa && cargado ? ` (${Math.round(cargado / masa * 100)}%)` : ''} · <a href="equipo.html">ver Equipo</a></div></div>
       <div class="cc-card"><div class="cc-label">Adelantos de sueldo</div><div class="cc-valor md num">${peso0(delMes.reduce((a, x) => a + Number(x.monto), 0))}</div><div class="cc-sub">se descuentan del sueldo de ${nom(mes)}${dados.length ? ` · dados en ${nom(mes)}: ${dados.map((x) => esc(x.empleado.split(' ')[0]) + ' ' + peso0(x.monto)).join(', ')}` : ''} · <a href="nuevo.html?vista=adelanto">cargar adelanto</a></div></div></div>`;
   }
-  if (RUBRO_KEY === 'publicidad') {
+  if (esPublicidad(catF)) {
     const a = adsMes[mes] || {}, plat = [['meta', 'Meta Ads'], ['google', 'Google Ads'], ['ml', 'Mercado Libre Ads']], tot = plat.reduce((x, [k]) => x + (a[k] || 0), 0);
     return `<section class="card" style="margin-top:16px"><div class="row between wrapRow"><h2 style="margin:0">Inversión en anuncios · ${nom(mes)}</h2><span class="muted small">del scorecard, ambas marcas · total ${peso0(tot)}</span></div>
       <div class="centro-comando" style="margin:12px 0 0">${plat.map(([k, n]) => `<div class="cc-card"><div class="cc-label">${n}</div><div class="cc-valor md num">${a[k] != null ? peso0(a[k]) : '—'}</div></div>`).join('')}</div>
@@ -91,22 +85,26 @@ function extras() {
   return '';
 }
 await Promise.all([cargar(), cargarVentas(), cargarReglas(), cargarExtras(), cargarReparto()]);
-const total = (ym, t = 'all') => filas.filter((f) => f.ym === ym && (t === 'all' || f.tipo === t)).reduce((a, f) => a + f.monto, 0);
+const total = (ym, t = 'all', cat = '') => filas.filter((f) => f.ym === ym && (t === 'all' || f.tipo === t) && (!cat || f.categoria === cat)).reduce((a, f) => a + f.monto, 0);
 
 function pintar() {
   const delMes = filas.filter((f) => f.ym === mes), vtas = ventas[mes] || 0;
   const tot = total(mes), fij = total(mes, 'fijo'), vari = total(mes, 'variable');
   const prev = total(addMes(mes, -1)), var_ = prev > 0 ? ((tot / prev) - 1) * 100 : null;
   const porCat = Object.entries(delMes.reduce((o, f) => ((o[f.categoria] = (o[f.categoria] || 0) + f.monto), o), {})).sort((a, b) => b[1] - a[1]);
-  const visibles = delMes.filter((f) => tab === 'all' || f.tipo === tab).sort((a, b) => a.tipo.localeCompare(b.tipo) || b.monto - a.monto);
+  const visibles = delMes.filter((f) => (tab === 'all' || f.tipo === tab) && (!catF || f.categoria === catF)).sort((a, b) => a.tipo.localeCompare(b.tipo) || b.monto - a.monto);
   const totVis = visibles.reduce((a, f) => a + f.monto, 0);
-  const doce = Array.from({ length: 12 }, (_, i) => addMes(mes, i - 11)), serie = doce.map((m) => ({ mes: m, etq: etqMes(m), valor: total(m, tab) }));
+  const doce = Array.from({ length: 12 }, (_, i) => addMes(mes, i - 11)), serie = doce.map((m) => ({ mes: m, etq: etqMes(m), valor: total(m, tab, catF) }));
   const e = editId ? filas.find((f) => f.id === editId) : null;
-  const tipoForm = e?.tipo || (tab === 'variable' ? 'variable' : tab === 'fijo' ? 'fijo' : RUBRO?.tipo || 'fijo');
+  const tipoForm = e?.tipo || (tab === 'variable' ? 'variable' : tab === 'fijo' ? 'fijo' : 'fijo');
   const todasCats = [...new Set([...RUBROS_COSTO.fijo, ...RUBROS_COSTO.variable, ...filas.map((f) => f.categoria)])];
+  const catsMes = Object.entries(delMes.filter((f) => tab === 'all' || f.tipo === tab).reduce((o, f) => ((o[f.categoria] = (o[f.categoria] || 0) + f.monto), o), {})).sort((a, b) => b[1] - a[1]);
+  if (catF && !catsMes.some(([c]) => c === catF)) catsMes.push([catF, 0]);
+  const chipsCat = [['', 'Todas las categorías', null], ...catsMes.map(([c, m]) => [c, c, m])]
+    .map(([c, t, m]) => `<button type="button" class="btn sm${catF === c ? ' primary' : ''}" data-cat="${esc(c)}" aria-pressed="${catF === c}">${esc(t)}${m == null ? '' : ` · ${peso0(m)}`}</button>`).join('');
   const subVentas = vtas > 0 ? `de las ventas (${peso0(vtas)})` : 'de las ventas';
   const seg = [['all', 'Todos'], ['fijo', 'Fijos'], ['variable', 'Variables']].map(([k, t]) => `<button type="button" data-tab="${k}" aria-pressed="${tab === k}">${t}</button>`).join('');
-  $('#app').innerHTML = `<div class="cabecera"><div><h1>Costos${RUBRO ? ' · ' + RUBRO.titulo : ''} · ${Nom(mes)}</h1><p>${RUBRO ? `Rubros de ${RUBRO.titulo.toLowerCase()} · <a href="costos.html">ver todos los costos</a>` : 'Fijos: no dependen de cuánto vendés. Variables: suben y bajan con cada venta.'}</p></div>
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Costos · ${Nom(mes)}</h1><p>Fijos: no dependen de cuánto vendés. Variables: suben y bajan con cada venta.</p></div>
     <div class="row wrapRow"><button class="btn" id="ant" aria-label="Mes anterior">‹</button><input type="month" id="mes" value="${mes}" style="width:auto" aria-label="Mes"><button class="btn" id="sig" aria-label="Mes siguiente">›</button>
     <a class="btn primary" href="#nuevo-costo" id="irNuevo">＋ Nuevo costo</a></div></div>
   ${avisoVencen()}
@@ -119,6 +117,7 @@ function pintar() {
   </div>
   <section class="card tabla"><div class="cab"><div><h2>Detalle del mes</h2><span class="muted">${vtas > 0 ? `% sobre las ventas de ${nom(mes)} del scorecard` : 'Sin ventas del scorecard este mes para calcular el %'}</span></div>
     <div class="seg gris" role="group" aria-label="Tipo de costo">${seg}</div></div>
+    <div class="row wrapRow" role="group" aria-label="Filtrar por categoría" style="gap:8px;padding:0 24px 12px">${chipsCat}</div>
     <div class="scroll">${visibles.length ? `<table><thead><tr><th scope="col">Rubro</th><th scope="col">Tipo</th><th scope="col">Detalle</th><th scope="col" class="r">Importe</th><th scope="col" class="r">% ventas</th><th scope="col"><span class="muted" style="font-weight:400">&nbsp;</span></th></tr></thead><tbody>
     ${visibles.map((f) => `<tr><th scope="row">${esc(f.categoria)}${f.recurrente_id ? ' <span class="chip" title="Se carga solo todos los meses">recurrente</span>' : ''}</th><td><span class="chip cuadro ${TIPOS[f.tipo].chip}">${TIPOS[f.tipo].nombre}</span></td><td>${esc(f.concepto || '')}${atribHTML(f)}${f.nota ? `<div class="small muted">${esc(f.nota)}</div>` : ''}</td>
       <td class="r num"><b>${peso0(f.monto)}</b>${detalleDolar(f)}</td><td class="r num muted">${pct(f.monto, vtas)}</td>
@@ -132,7 +131,7 @@ function pintar() {
     <div class="muted small">Lo que se paga todos los meses (fijos) o lo que cambia según lo que se vende (variables).</div>
     <div class="campos">
       <div><label for="tipo">Tipo</label><select id="tipo"><option value="fijo" ${tipoForm === 'fijo' ? 'selected' : ''}>Fijo</option><option value="variable" ${tipoForm === 'variable' ? 'selected' : ''}>Variable</option></select></div>
-      <div><label for="cat">Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" value="${esc(e?.categoria || RUBRO?.cat || '')}"><datalist id="cats">${todasCats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div><label for="cat">Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" value="${esc(e?.categoria || catF || '')}"><datalist id="cats">${todasCats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
       <div><label for="con">Detalle (opcional)</label><input id="con" placeholder="Ej.: Alquiler local + depósito" value="${esc(e?.concepto || '')}"></div>
       <div><label for="monto">Importe</label><div class="row" style="gap:8px">${camposMoneda(e?.moneda)}<input id="monto" inputmode="decimal" placeholder="1.250.000,00" value="${e ? String(e.moneda === 'USD' ? e.monto_usd : e.monto).replace('.', ',') : ''}"></div>
         <div class="small muted" id="monedaAyuda" ${e?.moneda === 'USD' ? '' : 'hidden'}>Se pasa a pesos con el dólar oficial (Banco Nación, venta) del día 1 de cada mes.</div></div>
@@ -149,6 +148,11 @@ function pintar() {
   const ir = async (m) => { mes = m; editId = null; msg = ''; await cargarReparto(); pintar(); };
   $('#ant').onclick = () => ir(addMes(mes, -1)); $('#sig').onclick = () => ir(addMes(mes, 1)); $('#mes').onchange = (ev) => ev.target.value && ir(ev.target.value);
   $$('rect.hit[data-mes]').forEach((r) => (r.onclick = () => ir(r.dataset.mes)));
+  $$('[data-cat]').forEach((b) => (b.onclick = () => {
+    catF = b.dataset.cat; const u = new URL(location.href);
+    catF ? u.searchParams.set('categoria', catF) : u.searchParams.delete('categoria'); history.replaceState(null, '', u);
+    pintar();
+  }));
   $$('[data-tab]').forEach((b) => (b.onclick = () => {
     tab = b.dataset.tab; const u = new URL(location.href);
     tab === 'all' ? u.searchParams.delete('tipo') : u.searchParams.set('tipo', tab); history.replaceState(null, '', u);
@@ -231,7 +235,7 @@ function filaRegla(r) {
     <td class="r" style="white-space:nowrap">${vigente ? `<button class="btn sm" data-acc="monto" data-id="${r.id}">Cambiar monto</button> <button class="btn sm" data-acc="fin" data-id="${r.id}">Terminar</button> ` : ''}<button class="btn sm" data-acc="reparto" data-id="${r.id}">Reparto</button> <button class="btn sm danger" data-acc="borrar" data-id="${r.id}">Borrar</button></td></tr>${filaAccion(r)}`;
 }
 function seccionRecurrentes() {
-  const vis = reglas.filter((r) => tab === 'all' || r.tipo === tab);
+  const vis = reglas.filter((r) => (tab === 'all' || r.tipo === tab) && (!catF || r.categoria === catF));
   const vigentes = vis.filter((r) => !r.h || r.h >= MES_ACTUAL), terminados = vis.filter((r) => r.h && r.h < MES_ACTUAL);
   const cab = '<thead><tr><th scope="col">Rubro</th><th scope="col">Tipo</th><th scope="col">Detalle</th><th scope="col" class="r">Por mes</th><th scope="col">Desde</th><th scope="col">Hasta</th><th scope="col">Estado</th><th scope="col"></th></tr></thead>';
   const totalMes = vigentes.filter((r) => r.d <= MES_ACTUAL).reduce((a, r) => a + r.monto, 0);

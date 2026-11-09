@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Empaquetado · Panel de control</title>
-  <link rel="icon" href="icon-192.png">
+  <title>Empaquetado · Operaciones Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
-  <link rel="stylesheet" href="estilo.css?v=11">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=11">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -15,9 +15,9 @@
 // (armado.html → Empaquetado) queda una fila en armado_controles (+ sus productos en armado_items). Un mismo
 // pedido puede tener varias (por ejemplo, primero con faltante y después completo): acá se ve cada una.
 // El tiempo es desde que se escaneó la etiqueta hasta que se confirmó el último producto.
-import { sb, $, $$, esc, guard, nav } from './app.js';
+import { sb, $, $$, esc, guard, navOperaciones } from '../proveedores/app.js';
 const perfil = await guard(['admin', 'dueno']);
-nav(perfil, 'empaquetado');
+navOperaciones(perfil, 'empaquetado');
 
 const AR = { timeZone: 'America/Argentina/Buenos_Aires' };
 const diaDe = (iso) => new Date(iso).toLocaleDateString('en-CA', AR);
@@ -44,7 +44,8 @@ const hoy = diaDe(new Date().toISOString());
 const haceDias = (n) => { const d = new Date(); d.setDate(d.getDate() - n + 1); return diaDe(d.toISOString()); };
 const PERIODOS = [['hoy', 'Hoy'], ['7', 'Últimos 7 días'], ['30', 'Últimos 30 días'], ['todo', 'Todo']];
 const personas = [...new Set(controles.map((c) => c.armado_por || 'Sin nombre'))].sort((a, b) => a.localeCompare(b, 'es'));
-let periodo = '7', persona = 'todas', marca = 'todas', busca = '', dia = '';
+let periodo = '7', persona = 'todas', marca = 'todas', busca = '', dia = '', pagina = 1;
+const POR_PAG = 50;
 
 const tiempo = (s) => s === null ? '—' : s > MAX_SEG ? '<span class="muted">más de 30 min</span>'
   : s < 60 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')} s`;
@@ -101,16 +102,17 @@ function pintar() {
     <div><label for="busca" style="position:absolute;left:-9999px">Buscar</label><input id="busca" type="search" placeholder="Número de venta, envío o SKU" value="${esc(busca)}" style="min-width:260px"></div></div>
     <div class="scroll"><table style="min-width:900px"><thead><tr><th scope="col">Fecha</th><th scope="col">Pedido</th><th scope="col">Empaquetó</th><th scope="col">Resultado</th>
       <th scope="col">Productos</th><th scope="col" class="r">Unidades</th><th scope="col" class="r">Tiempo</th></tr></thead>
-    <tbody id="filas"></tbody></table></div></section>
+    <tbody id="filas"></tbody></table></div>
+    <div class="row" id="pager" style="justify-content:space-between;align-items:center;padding:10px 4px;gap:10px"></div></section>
   <p class="muted small" style="line-height:1.6">Si un pedido se escaneó más de una vez (por ejemplo, primero con faltante y después completo), aparece una fila por cada vez. "Tiempo típico" es la mediana: no la mueve un pedido que quedó abierto en el celular.</p>`;
 
   pintarFilas(conPersona);
-  $$('[data-periodo]').forEach((b) => (b.onclick = () => { periodo = b.dataset.periodo; dia = ''; pintar(); }));
-  $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; pintar(); }));
-  $$('[data-ver]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); persona = a.dataset.ver; pintar(); }));
-  $('#persona').onchange = (e) => { persona = e.target.value; pintar(); };
-  $('#dia').onchange = (e) => { dia = e.target.value; pintar(); };
-  $('#busca').oninput = (e) => { busca = e.target.value; pintarFilas(conPersona); };
+  $$('[data-periodo]').forEach((b) => (b.onclick = () => { periodo = b.dataset.periodo; dia = ''; pagina = 1; pintar(); }));
+  $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; pagina = 1; pintar(); }));
+  $$('[data-ver]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); persona = a.dataset.ver; pagina = 1; pintar(); }));
+  $('#persona').onchange = (e) => { persona = e.target.value; pagina = 1; pintar(); };
+  $('#dia').onchange = (e) => { dia = e.target.value; pagina = 1; pintar(); };
+  $('#busca').oninput = (e) => { busca = e.target.value; pagina = 1; pintarFilas(conPersona); };
 }
 
 function pintarFilas(lista) {
@@ -118,7 +120,10 @@ function pintarFilas(lista) {
   // Buscar por número ignora el período: sirve para ver quién armó un pedido de cualquier fecha.
   const filas = q ? controles.filter((c) => c.texto.includes(q)) : lista;
   $('#cuantos').textContent = q ? `${filas.length} resultado${filas.length === 1 ? '' : 's'} en todas las fechas` : `${filas.length} paquete${filas.length === 1 ? '' : 's'}`;
-  $('#filas').innerHTML = filas.slice(0, 500).map((c) => `<tr>
+  const paginas = Math.max(1, Math.ceil(filas.length / POR_PAG));
+  if (pagina > paginas) pagina = paginas;
+  const desde = (pagina - 1) * POR_PAG;
+  $('#filas').innerHTML = filas.slice(desde, desde + POR_PAG).map((c) => `<tr>
     <td class="num">${fechaHora(c.creado_at)}</td>
     <td><b>#${esc(c.pedido)}</b><div class="small muted">${TIENDAS[c.tienda] || esc(c.tienda)} · ${CANALES[c.canal] || esc(c.canal)}</div></td>
     <td>${esc(c.armado_por || 'Sin nombre')}</td>
@@ -126,6 +131,11 @@ function pintarFilas(lista) {
     <td class="small">${c.items.map((i) => `<div${i.estado === 'no_hay' ? ' style="color:var(--bad)"' : ''}>${i.estado === 'no_hay' ? 'Falta: ' : ''}${esc(i.nombre || i.sku || '')}${i.variante ? ` · ${esc(i.variante)}` : ''}${i.cantidad > 1 ? ` ×${i.cantidad}` : ''}</div>`).join('')}</td>
     <td class="r num">${c.unidades}</td><td class="r num">${tiempo(c.seg)}</td></tr>`).join('') ||
     `<tr><td colspan="7" class="muted">${q ? 'No encontré ese pedido.' : 'No hay pedidos empaquetados en este período.'}</td></tr>`;
+  $('#pager').innerHTML = filas.length <= POR_PAG ? '' : `<span class="muted small">${desde + 1}–${Math.min(desde + POR_PAG, filas.length)} de ${filas.length}</span>
+    <div class="row" style="gap:8px"><button type="button" class="btn" id="ant" ${pagina <= 1 ? 'disabled' : ''}>← Anterior</button><span class="small">Página ${pagina} de ${paginas}</span>
+    <button type="button" class="btn" id="sig" ${pagina >= paginas ? 'disabled' : ''}>Siguiente →</button></div>`;
+  if ($('#ant')) $('#ant').onclick = () => { pagina--; pintarFilas(lista); $('#filas').closest('section').scrollIntoView(); };
+  if ($('#sig')) $('#sig').onclick = () => { pagina++; pintarFilas(lista); $('#filas').closest('section').scrollIntoView(); };
 }
 pintar();
 </script>

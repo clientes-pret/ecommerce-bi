@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard de ventas · Panel de control</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=11">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Dashboard de ventas: cómo viene el día, la semana y el mes por canal, contra el promedio histórico, y la inversión en ads.
+// El Scorecard (lo que se mira desde el celular) está en ventas.html.
+import { sb, $, $$, esc, guard, nav, peso0, hoy } from './app.js';
+import { corto, MESN } from './analisis.js?v=5';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'dashboard');
+const { DAY, PRET, LAVAN, CANALES, PLATAFORMAS, fila, adsDia, ref, ddmm, ddmmaa, largo, lunes, primeroMes, sumaRango, sumaSeries, serie, inicio, evalDia, evalSemana, evalMes, badge, rentabilidad, pctTxt } = await import('./ventas-lib.js');
+let marca = 'all';
+
+function pintar() {
+  if (!ref) { $('#app').innerHTML = '<h1>Dashboard de ventas</h1><div class="card"><p class="muted">Todavía no hay ventas cargadas en el scorecard.</p></div>'; return; }
+  const vis = CANALES.filter((c) => marca === 'all' || c.marca === marca);
+  const sem = lunes(ref), mes = primeroMes(ref), atraso = Math.round((Date.parse(hoy()) - Date.parse(ref)) / DAY);
+  const series = vis.map(serie), total = sumaSeries(series), desdeTotal = inicio(series);
+  const ordenes = (canal, a) => vis.filter((c) => c.canal === canal).reduce((t, c) => t + Object.values(fila[`${c.marca}_${c.canal}`] || {}).filter((f) => f.fecha >= a && f.fecha <= ref).reduce((x, f) => x + (f.ordenes || 0), 0), 0);
+  const kpis = [[`Último día · ${ddmm(ref)}`, ref, evalDia(total, ref, desdeTotal)], [`Semana · desde el lunes ${ddmm(sem)}`, sem, evalSemana(total, ref, desdeTotal)], [`Mes · ${MESN[+ref.slice(5, 7) - 1]}`, mes, evalMes(total, ref, desdeTotal)]];
+  const ventasMes = sumaRango(total, mes, ref) || 0;
+  const tabs = [['all', 'Consolidado'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']].map(([k, t]) => `<button type="button" data-marca="${k}" aria-pressed="${marca === k}">${t}</button>`).join('');
+  const dot = (c) => `<span class="dot" style="background:${c.marca === 'pret' ? PRET : LAVAN}"></span>`;
+  const nombreMarca = marca === 'all' ? 'Ambas marcas' : marca === 'pret' ? 'Pret a Home' : 'Casa Laván';
+  const filasCanal = vis.map((c, i) => {
+    const s = series[i], r = rentabilidad(c);
+    const v = (a) => { const x = sumaRango(s, a, ref); return x == null ? '—' : peso0(x); };
+    const pend = '<span class="chip">Pendiente</span>', na = '<span class="chip">No aplica</span>';
+    const pct = (x, base) => (base > 0 ? ` <span class="small" style="font-weight:700;color:${x >= 0 ? 'var(--ok)' : 'var(--warn)'}">${pctTxt(x / base)}</span>` : '');
+    return `<tr><th scope="row" style="white-space:nowrap"><span class="row" style="gap:8px">${dot(c)}${esc(c.nombre)}</span></th>
+      <td class="r num">${v(ref)}</td><td class="r num">${v(sem)}</td><td class="r num"><b>${v(mes)}</b></td>
+      <td class="r num" style="color:var(--ink-soft)">${!r ? na : !r.n ? pend : peso0(r.prom)}</td>
+      <td class="r num" style="white-space:nowrap">${!r ? na : !r.n ? pend : `<b>${peso0(r.neta)}</b>${pct(r.neta, r.rev)}`}</td></tr>`;
+  }).join('');
+  const filasEval = vis.map((c, i) => {
+    const s = series[i], desde = inicio([s]);
+    return `<tr><th scope="row" style="white-space:nowrap"><span class="row" style="gap:8px">${dot(c)}${esc(c.nombre)}</span></th>
+      ${[evalDia(s, ref, desde), evalSemana(s, ref, desde), evalMes(s, ref, desde)].map((ev) => `<td><span class="row" style="gap:8px"><span class="num" style="min-width:64px">${ev.actual == null ? '—' : corto(ev.actual)}</span>${badge(ev)}</span></td>`).join('')}</tr>`;
+  }).join('');
+  const marcasAds = marca === 'all' ? ['pret', 'lavan'] : [marca];
+  const tarjetasAds = PLATAFORMAS.map(([p, n]) => {
+    let t = 0, hay = false;
+    for (const m of marcasAds) for (const [d, v] of Object.entries(adsDia[`${m}_${p}`] || {})) if (d >= mes && d <= ref) { t += v; hay = true; }
+    return `<div class="cc-card"><div class="cc-label row between">${n}<span class="chip ${hay ? 'ok' : ''}">${hay ? 'Cargado' : 'Sin datos'}</span></div>
+      <div class="cc-valor md num">${hay ? peso0(t) : '—'}</div><div class="cc-sub">${hay && ventasMes > 0 ? `${(t / ventasMes * 100).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% de las ventas del mes` : '&nbsp;'}</div></div>`;
+  }).join('');
+
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Dashboard de ventas</h1><p>${largo(ref)}</p></div>
+    <span class="row small muted" style="gap:6px"><span class="dot" style="background:${atraso <= 1 ? 'var(--ok)' : '#B54708'}"></span>Datos cargados hasta el ${ddmm(ref)}${atraso > 1 ? ` · ${atraso} días de atraso` : ''}</span></div>
+  <div class="seg" role="group" aria-label="Marca" style="margin-top:20px">${tabs}</div>
+  <div class="centro-comando">${kpis.map(([l, a, ev]) => {
+    const v = sumaRango(total, a, ref);
+    return `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor num">${v == null ? 'Sin datos' : peso0(v)}</div>
+      <div class="cc-sub"><span>${ordenes('tn', a)} órdenes TN · ${ordenes('ml', a)} órdenes ML</span>${badge(ev)}</div></div>`;
+  }).join('')}</div>
+  <section class="card tabla"><div class="cab"><div><h2>Ventas por canal</h2><span class="muted">Rentabilidad = facturación neta − costo de productos − envío − ads, en lo que va del mes (solo días con neta y costo cargados)</span></div></div>
+    <div class="scroll"><table style="min-width:820px"><thead><tr><th scope="col">Canal</th><th scope="col" class="r">Último día</th><th scope="col" class="r">Semana</th><th scope="col" class="r">Mes</th><th scope="col" class="r">Rentab. por día</th><th scope="col" class="r">Rentab. neta del mes</th></tr></thead>
+    <tbody>${filasCanal}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>¿Cómo viene el período?</h2><span class="muted">Contra el promedio histórico de cada canal (solo semanas y meses completos): mismo día de semana para el último día, ritmo proyectado para semana y mes</span></div></div>
+    <div class="scroll"><table style="min-width:620px"><thead><tr><th scope="col">Canal</th><th scope="col">Último día</th><th scope="col">Semana</th><th scope="col">Mes</th></tr></thead>
+    <tbody>${filasEval}</tbody></table></div></section>
+  <div class="row between wrapRow" style="align-items:baseline;margin-top:28px"><h2 style="margin:0">Inversión publicitaria · ${MESN[+ref.slice(5, 7) - 1]} ${ref.slice(0, 4)}</h2><span class="muted small">${nombreMarca}</span></div>
+  <div class="centro-comando" style="margin-top:12px">${tarjetasAds}</div>
+  <p class="muted small" style="line-height:1.6">Misma lógica que el Scorecard diario. La rutina diaria (11:00) carga el día anterior directo en Supabase; lo mismo usan P&amp;L y Cashflow.</p>`;
+  $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; pintar(); }));
+}
+pintar();
+</script>
+</body>
+</html>
