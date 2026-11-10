@@ -233,7 +233,7 @@ let excluirEstrella = false; // botón "Excluir productos estrella": arranca apa
 // Proveedores conocidos que deben aparecer como opción aunque todavía no
 // tengan ningún SKU asignado (ej. un proveedor nuevo del que se va a cargar
 // stock por primera vez).
-const PROVEEDORES_CONOCIDOS = ["Guiwi"];
+const PROVEEDORES_CONOCIDOS = ["Guiwi", "Sueño Fueguino"];
 
 function listaProveedores() {
   return Array.from(new Set([...PRODUCTOS.map((p) => p.proveedor), ...PROVEEDORES_CONOCIDOS])).sort();
