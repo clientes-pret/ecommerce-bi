@@ -147,6 +147,13 @@ export function periodosSc(marcas, canal, gran) {
     // Solo se cargan ~10 meses de historia: el más viejo puede venir cortado, y el último está en curso.
     return Object.keys(mm).sort().reverse().map((p) => ({ et: `${MESN[+p.slice(5, 7) - 1]} ${p.slice(0, 4)}${p === primeroMes(ref) ? ' (en curso)' : p < desde ? ' (parcial)' : ''}`, dias: mm[p] }));
   }
+  if (gran === 'ml') {
+    // Período de facturación de Mercado Libre: del 11 de un mes al 10 del siguiente (la factura llega el 11).
+    const inicioML = (d) => { let y = +d.slice(0, 4), m = +d.slice(5, 7); if (+d.slice(8, 10) < 11) { m -= 1; if (m === 0) { m = 12; y -= 1; } } return `${y}-${String(m).padStart(2, '0')}-11`; };
+    const finML = (p) => { let y = +p.slice(0, 4), m = +p.slice(5, 7) + 1; if (m === 13) { m = 1; y += 1; } return `${y}-${String(m).padStart(2, '0')}-10`; };
+    const pp = {}; for (const d of dias) (pp[inicioML(d)] ??= []).push(d);
+    return Object.keys(pp).sort().reverse().map((p) => ({ et: `${ddmmaa(p)} al ${ddmmaa(finML(p))}${finML(p) > ref ? ' (en curso)' : p < desde ? ' (parcial)' : ''}`, dias: pp[p] }));
+  }
   const sem = {}; for (const d of dias) (sem[lunes(d)] ??= []).push(d);
   return Object.keys(sem).sort().reverse().map((l) => ({ et: `${ddmmaa(l)} al ${ddmmaa(masDias(l, 6))}`, dias: sem[l] }));
 }

@@ -68,7 +68,7 @@ function pintar() {
   const visibles = periodos.slice(sc.pag * POR_PAGINA, (sc.pag + 1) * POR_PAGINA).map((p) => [p.et, sumar(p.dias, marcas, sc.canal)]);
   const filasSc = visibles.map(([et, t]) => `<tr><th scope="row" class="num" style="white-space:nowrap;font-weight:500">${et}</th>${celdasSc(t, sc.canal)}</tr>`).join('');
   const cardsSc = visibles.map(([et, t]) => tarjeta(et, t, sc.canal)).join('');
-  const unidad = { dia: 'días', semana: 'semanas', mes: 'meses' }[sc.gran];
+  const unidad = { dia: 'días', semana: 'semanas', mes: 'meses', ml: 'períodos ML' }[sc.gran];
   const pager = `<div class="row between" style="padding:12px 16px 4px"><button class="btn sm" type="button" id="scMas" ${sc.pag <= 0 ? 'disabled' : ''}>← Recientes</button>
       <span class="small muted">Pág. ${sc.pag + 1} de ${paginas} · ${periodos.length} ${unidad}</span>
       <button class="btn sm" type="button" id="scMenos" ${sc.pag >= paginas - 1 ? 'disabled' : ''}>Antiguos →</button></div>`;
@@ -79,9 +79,9 @@ function pintar() {
   <section class="card tabla"><div class="cab"><div><h2>Último día · ${ddmmaa(ref)}</h2><span class="muted">${nombreMarca}, por canal</span></div></div>
     <div class="sc-tabla scroll"><table style="min-width:1000px"><thead>${cabSc('tn', 'Canal', true)}</thead><tbody>${ultTabla}</tbody></table></div>
     <div class="sc-cards">${ultCards}</div></section>
-  <section class="card tabla"><div class="cab"><div><h2>Scorecard por canal</h2><span class="muted">${nombreMarca} · por día, semana (lunes a domingo) o mes</span></div>
-      <div class="row wrapRow" style="gap:8px">${segSc('canal', [['tn', 'Tienda Nube'], ['ml', 'Mercado Libre']])}${segSc('gran', [['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes']])}</div></div>
-    <div class="sc-tabla scroll"><table style="min-width:1100px"><thead>${cabSc(sc.canal, { dia: 'Fecha', semana: 'Semana', mes: 'Mes' }[sc.gran])}</thead><tbody>${filasSc || '<tr><td colspan="11" class="muted">Sin datos todavía.</td></tr>'}</tbody></table></div>
+  <section class="card tabla"><div class="cab"><div><h2>Scorecard por canal</h2><span class="muted">${nombreMarca} · por día, semana (lunes a domingo), mes o período ML (del 11 al 10)</span></div>
+      <div class="row wrapRow" style="gap:8px">${segSc('canal', [['tn', 'Tienda Nube'], ['ml', 'Mercado Libre']])}${segSc('gran', [['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes'], ['ml', 'Período ML']])}</div></div>
+    <div class="sc-tabla scroll"><table style="min-width:1100px"><thead>${cabSc(sc.canal, { dia: 'Fecha', semana: 'Semana', mes: 'Mes', ml: 'Período ML (11 al 10)' }[sc.gran])}</thead><tbody>${filasSc || '<tr><td colspan="11" class="muted">Sin datos todavía.</td></tr>'}</tbody></table></div>
     <div class="sc-cards">${cardsSc || '<p class="muted">Sin datos todavía.</p>'}</div>
     ${pager}</section>
   <p class="muted small" style="line-height:1.6">Rentabilidad s/ads = neta − costo de productos − envío (en Mercado Libre el envío ya viene dentro de la neta). Para ver cómo viene el período contra el promedio, está el <a href="ventas-dashboard.html">Dashboard</a>.</p>`;
