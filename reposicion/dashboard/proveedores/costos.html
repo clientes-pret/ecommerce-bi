@@ -7,11 +7,13 @@
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
   <link rel="stylesheet" href="estilo.css?v=11">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD" crossorigin="anonymous"></script>
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy, RUBROS_COSTO, camposRepite, activarRepite, guardarCosto, peso, dolar, camposMoneda, montoEn, actualizarDolar, detalleDolar, ATRIB, camposAtribucion, leerAtribucion, textoAtribucion } from './app.js';
+import { sb, $, $$, esc, guard, nav, qs, peso0, parseMonto, hoy, RUBROS_COSTO, camposRepite, activarRepite, guardarCosto, peso, dolar, camposMoneda, montoEn, actualizarDolar, detalleDolar, ATRIB, camposAtribucion, leerAtribucion, textoAtribucion, leerTodo } from './app.js';
+import { montarCostos } from './costos-graficos.js';
 import { graficoSimple, activarTooltips, etqMes, MESN } from './analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
 // Filtro por categoría (rubro): ?categoria=Alquiler abre la pantalla ya filtrada. Sueldos y publicidad muestran un resumen extra.
@@ -24,10 +26,13 @@ const addMes = (ym, n) => { let [y, m] = ym.split('-').map(Number); m += n; y +=
 const nom = (ym) => `${MESN[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
 const Nom = (ym) => nom(ym).charAt(0).toUpperCase() + nom(ym).slice(1);
 const pct = (v, base) => (base > 0 ? (v / base * 100).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%' : '—');
-let filas = [], ventas = {}, reglas = [], mes = hoy().slice(0, 7), editId = null, borrarId = null, msg = '';
+let filas = [], ventas = {}, ventasOk = new Set(), reglas = [], mes = hoy().slice(0, 7), editId = null, borrarId = null, msg = '';
 let accion = null, msgRec = ''; // accion = { id, que: 'monto' | 'fin' | 'borrar' } sobre un costo que se repite
 const MES_ACTUAL = hoy().slice(0, 7);
 let tab = ['fijo', 'variable'].includes(qs('tipo')) ? qs('tipo') : 'all';
+let vista = ['resumen', 'detalle', 'dashboard', 'cargar'].includes(qs('vista')) ? qs('vista') : qs('vista') === 'recurrentes' ? 'detalle' : 'resumen';
+let recAbierto = false; // el bloque "Administrar costos recurrentes" del Detalle recuerda si estaba abierto
+let areaF = Object.keys(ATRIB.areas.ops).includes(qs('area')) ? qs('area') : '';
 
 async function cargar() {
   const { data } = await sb.from('cc_costos').select('*').order('periodo').order('id').limit(5000);
@@ -35,9 +40,16 @@ async function cargar() {
 }
 // Ventas por mes (todos los canales) del scorecard, para mostrar cada costo como % de lo vendido.
 async function cargarVentas() {
-  const { data } = await sb.from('v_scorecard_mensual').select('periodo,ventas');
-  ventas = {};
-  for (const r of data || []) if (r.ventas != null) ventas[mesDe(r.periodo)] = (ventas[mesDe(r.periodo)] || 0) + Number(r.ventas);
+  const { data } = await sb.from('v_scorecard_mensual').select('periodo,marca,canal,ventas,dias');
+  ventas = {}; ventasOk = new Set();
+  const dias = {};
+  for (const r of data || []) {
+    if (r.ventas != null) ventas[mesDe(r.periodo)] = (ventas[mesDe(r.periodo)] || 0) + Number(r.ventas);
+    // Un mes tiene las ventas completas si Tienda Nube y Mercado Libre de Pret tienen todos los días cargados
+    // (antes de agosto solo estaba el local, y el mes en curso llega hasta ayer): solo ahí el % sobre ventas es comparable.
+    if (r.marca === 'pret' && (r.canal === 'tn' || r.canal === 'ml')) { const k = mesDe(r.periodo); dias[k] = dias[k] || {}; dias[k][r.canal] = Number(r.dias); }
+  }
+  for (const [ym, c] of Object.entries(dias)) { const [y, m] = ym.split('-').map(Number); const n = new Date(Date.UTC(y, m, 0)).getUTCDate(); if (c.tn >= n && c.ml >= n) ventasOk.add(ym); }
 }
 // Reparto del mes por marca/canal/área (v_costos_atribucion: mix por ventas del mes, áreas en partes iguales).
 let reparto = [];
@@ -87,70 +99,125 @@ function extras() {
 await Promise.all([cargar(), cargarVentas(), cargarReglas(), cargarExtras(), cargarReparto()]);
 const total = (ym, t = 'all', cat = '') => filas.filter((f) => f.ym === ym && (t === 'all' || f.tipo === t) && (!cat || f.categoria === cat)).reduce((a, f) => a + f.monto, 0);
 
+// ---- Sub-menús de la pantalla: cada vista muestra una parte (antes era una sola página larguísima) ----
+const VISTAS = [['resumen', 'Resumen'], ['detalle', 'Detalle'], ['dashboard', 'Dashboard'], ['cargar', 'Cargar costo']];
+const AREAS = ATRIB.areas.ops;
+const areaTxt = (f) => (!f.areas || f.areas.length >= Object.keys(AREAS).length ? 'Todas las áreas' : f.areas.map((a) => AREAS[a] || a).join(', '));
+function setVista(v) {
+  vista = v; const u = new URL(location.href);
+  v === 'resumen' ? u.searchParams.delete('vista') : u.searchParams.set('vista', v);
+  history.replaceState(null, '', u); pintar(); window.scrollTo(0, 0);
+}
+// Los últimos 12 meses de reparto por área/marca/canal, para el Dashboard (se lee solo al entrar).
+let reparto12 = [], rep12Mes = '';
+async function cargarReparto12() {
+  if (rep12Mes === mes) return;
+  const desdeM = addMes(mes, -11) + '-01';
+  reparto12 = (await leerTodo('v_costos_atribucion', 'periodo,costo_id,marca,canal,area,monto', ['periodo', 'costo_id', 'marca', 'canal', 'area'], (q) => q.gte('periodo', desdeM).lte('periodo', mes + '-01'))).map((r) => ({ ...r, monto: Number(r.monto) }));
+  rep12Mes = mes;
+}
+async function pintarDashboard() {
+  const cont = $('#cdash'); if (!cont) return;
+  try {
+    await cargarReparto12();
+    if (vista !== 'dashboard' || !$('#cdash')) return;
+    if (!window.Chart) { cont.innerHTML = '<p class="muted small">No se pudieron cargar los gráficos (sin conexión a la librería).</p>'; return; }
+    montarCostos(cont, { filas, ventas, ventasOk, mes, reparto: reparto12, addMes, nom, onMes: (m) => ir(m) });
+  } catch (err) { cont.innerHTML = `<p class="err">No pude armar el dashboard: ${esc(err.message)}</p>`; }
+}
+const ir = async (m) => { mes = m; editId = null; msg = ''; await cargarReparto(); pintar(); };
+
 function pintar() {
   const delMes = filas.filter((f) => f.ym === mes), vtas = ventas[mes] || 0;
   const tot = total(mes), fij = total(mes, 'fijo'), vari = total(mes, 'variable');
   const prev = total(addMes(mes, -1)), var_ = prev > 0 ? ((tot / prev) - 1) * 100 : null;
   const porCat = Object.entries(delMes.reduce((o, f) => ((o[f.categoria] = (o[f.categoria] || 0) + f.monto), o), {})).sort((a, b) => b[1] - a[1]);
-  const visibles = delMes.filter((f) => (tab === 'all' || f.tipo === tab) && (!catF || f.categoria === catF)).sort((a, b) => a.tipo.localeCompare(b.tipo) || b.monto - a.monto);
+  const visibles = delMes.filter((f) => (tab === 'all' || f.tipo === tab) && (!catF || f.categoria === catF) && (!areaF || !f.areas || f.areas.includes(areaF))).sort((a, b) => a.tipo.localeCompare(b.tipo) || b.monto - a.monto);
   const totVis = visibles.reduce((a, f) => a + f.monto, 0);
-  const doce = Array.from({ length: 12 }, (_, i) => addMes(mes, i - 11)), serie = doce.map((m) => ({ mes: m, etq: etqMes(m), valor: total(m, tab, catF) }));
+  const doce = Array.from({ length: 12 }, (_, i) => addMes(mes, i - 11)), serie = doce.map((m) => ({ mes: m, etq: etqMes(m), valor: total(m) }));
   const e = editId ? filas.find((f) => f.id === editId) : null;
-  const tipoForm = e?.tipo || (tab === 'variable' ? 'variable' : tab === 'fijo' ? 'fijo' : 'fijo');
+  const tipoForm = e?.tipo || (tab === 'variable' ? 'variable' : 'fijo');
   const todasCats = [...new Set([...RUBROS_COSTO.fijo, ...RUBROS_COSTO.variable, ...filas.map((f) => f.categoria)])];
   const catsMes = Object.entries(delMes.filter((f) => tab === 'all' || f.tipo === tab).reduce((o, f) => ((o[f.categoria] = (o[f.categoria] || 0) + f.monto), o), {})).sort((a, b) => b[1] - a[1]);
   if (catF && !catsMes.some(([c]) => c === catF)) catsMes.push([catF, 0]);
-  const chipsCat = [['', 'Todas las categorías', null], ...catsMes.map(([c, m]) => [c, c, m])]
+  const chipsCat = [['', 'Todos los rubros', null], ...catsMes.map(([c, m]) => [c, c, m])]
     .map(([c, t, m]) => `<button type="button" class="btn sm${catF === c ? ' primary' : ''}" data-cat="${esc(c)}" aria-pressed="${catF === c}">${esc(t)}${m == null ? '' : ` · ${peso0(m)}`}</button>`).join('');
+  const chipsArea = [['', 'Todas las áreas'], ...Object.entries(AREAS)]
+    .map(([k, t]) => `<button type="button" class="btn sm${areaF === k ? ' primary' : ''}" data-area="${k}" aria-pressed="${areaF === k}">${esc(t)}</button>`).join('');
   const subVentas = vtas > 0 ? `de las ventas (${peso0(vtas)})` : 'de las ventas';
   const seg = [['all', 'Todos'], ['fijo', 'Fijos'], ['variable', 'Variables']].map(([k, t]) => `<button type="button" data-tab="${k}" aria-pressed="${tab === k}">${t}</button>`).join('');
-  $('#app').innerHTML = `<div class="cabecera"><div><h1>Costos · ${Nom(mes)}</h1><p>Fijos: no dependen de cuánto vendés. Variables: suben y bajan con cada venta.</p></div>
-    <div class="row wrapRow"><button class="btn" id="ant" aria-label="Mes anterior">‹</button><input type="month" id="mes" value="${mes}" style="width:auto" aria-label="Mes"><button class="btn" id="sig" aria-label="Mes siguiente">›</button>
-    <a class="btn primary" href="#nuevo-costo" id="irNuevo">＋ Nuevo costo</a></div></div>
-  ${avisoVencen()}
-  ${extras()}
-  <div class="centro-comando">
+  const menu = `<div class="seg" role="group" aria-label="Secciones de Costos" style="margin:18px 0 22px">${VISTAS.map(([k, t]) => `<button type="button" data-vista="${k}" aria-pressed="${vista === k}">${t}</button>`).join('')}</div>`;
+
+  const kpis = `<div class="centro-comando">
     <div class="cc-card"><div class="cc-label">Total costos</div><div class="cc-valor num">${peso0(tot)}</div><div class="cc-sub"><span>${pct(tot, vtas)} ${subVentas}</span>${var_ == null ? '' : `<span>${var_ >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(var_))}% vs ${nom(addMes(mes, -1))}</span>`}</div></div>
     <div class="cc-card"><div class="cc-label">Fijos</div><div class="cc-valor num">${peso0(fij)}</div><div class="cc-sub">${pct(fij, vtas)} de las ventas</div></div>
     <div class="cc-card"><div class="cc-label">Variables</div><div class="cc-valor num">${peso0(vari)}</div><div class="cc-sub">${pct(vari, vtas)} de las ventas</div></div>
     <div class="cc-card"><div class="cc-label">Mayor rubro del mes</div><div class="cc-valor md">${porCat[0] ? esc(porCat[0][0]) : '—'}</div><div class="cc-sub">${porCat[0] ? `${peso0(porCat[0][1])} · ${Math.round((porCat[0][1] / tot) * 100)}% del total` : 'nada cargado'}</div></div>
-  </div>
-  <section class="card tabla"><div class="cab"><div><h2>Detalle del mes</h2><span class="muted">${vtas > 0 ? `% sobre las ventas de ${nom(mes)} del scorecard` : 'Sin ventas del scorecard este mes para calcular el %'}</span></div>
+  </div>`;
+
+  const tipoDe = (cat) => [...new Set(delMes.filter((f) => f.categoria === cat).map((f) => TIPOS[f.tipo].nombre))].join(' y ');
+  const vResumen = `${avisoVencen()}${kpis}
+  <section class="card tabla"><div class="cab"><div><h2>Por rubro</h2><span class="muted">${vtas > 0 ? `% sobre las ventas de ${nom(mes)} del scorecard` : 'Sin ventas del scorecard este mes para calcular el %'} · tocá un rubro para ver su detalle</span></div></div>
+    <div class="scroll">${porCat.length ? `<table><thead><tr><th scope="col">Rubro</th><th scope="col">Tipo</th><th scope="col" class="r">Importe</th><th scope="col" class="r">% del total</th><th scope="col" class="r">% ventas</th></tr></thead><tbody>
+    ${porCat.map(([c, m]) => `<tr><th scope="row"><a href="#" class="prov" data-ver-cat="${esc(c)}">${esc(c)}</a></th><td>${tipoDe(c)}</td><td class="r num"><b>${peso0(m)}</b></td><td class="r num muted">${pct(m, tot)}</td><td class="r num muted">${pct(m, vtas)}</td></tr>`).join('')}
+    <tr class="total"><th scope="row">Total</th><td></td><td class="r num">${peso0(tot)}</td><td class="r num muted">100%</td><td class="r num muted">${pct(tot, vtas)}</td></tr></tbody></table>` : `<p class="muted" style="padding:0 24px 12px">Todavía no hay costos cargados en ${nom(mes)}.</p>`}</div></section>
+  ${seccionReparto(new Set(delMes.map((f) => f.id)))}
+  <div class="card chart"><h2 style="margin-top:0">Últimos 12 meses <span class="muted small" style="font-weight:400">(tocá una columna para ver ese mes)</span></h2>${serie.some((s) => s.valor > 0) ? graficoSimple(serie, '#3A3F47', mes) : '<p class="muted">El gráfico aparece cuando haya costos cargados en alguno de estos 12 meses.</p>'}</div>
+  <p class="muted small" style="line-height:1.6">Las ventas para calcular los porcentajes salen del scorecard (Tienda Nube, Mercado Libre y local, ambas marcas).</p>`;
+
+  const vDetalle = `<section class="card tabla"><div class="cab"><div><h2>Detalle del mes</h2><span class="muted">${vtas > 0 ? `% sobre las ventas de ${nom(mes)} del scorecard` : 'Sin ventas del scorecard este mes para calcular el %'}</span></div>
     <div class="seg gris" role="group" aria-label="Tipo de costo">${seg}</div></div>
-    <div class="row wrapRow" role="group" aria-label="Filtrar por categoría" style="gap:8px;padding:0 24px 12px">${chipsCat}</div>
-    <div class="scroll">${visibles.length ? `<table><thead><tr><th scope="col">Rubro</th><th scope="col">Tipo</th><th scope="col">Detalle</th><th scope="col" class="r">Importe</th><th scope="col" class="r">% ventas</th><th scope="col"><span class="muted" style="font-weight:400">&nbsp;</span></th></tr></thead><tbody>
-    ${visibles.map((f) => `<tr><th scope="row">${esc(f.categoria)}${f.recurrente_id ? ' <span class="chip" title="Se carga solo todos los meses">recurrente</span>' : ''}</th><td><span class="chip cuadro ${TIPOS[f.tipo].chip}">${TIPOS[f.tipo].nombre}</span></td><td>${esc(f.concepto || '')}${atribHTML(f)}${f.nota ? `<div class="small muted">${esc(f.nota)}</div>` : ''}</td>
+    <div style="padding:0 24px 4px"><div class="small muted" style="margin-bottom:6px">Rubro: qué es el gasto (sueldos, alquiler…)</div><div class="row wrapRow" role="group" aria-label="Filtrar por rubro" style="gap:8px;margin-bottom:12px">${chipsCat}</div>
+      <div class="small muted" style="margin-bottom:6px">Área: en qué se usa (marketing, ventas, operaciones…)</div><div class="row wrapRow" role="group" aria-label="Filtrar por área" style="gap:8px;margin-bottom:12px">${chipsArea}</div>${areaF ? '<div class="small muted" style="margin:-4px 0 8px">Incluye también los costos que se reparten entre varias áreas (la columna Área lo dice).</div>' : ''}</div>
+    <div style="padding:0 24px">${extras()}</div>
+    <div class="scroll">${visibles.length ? `<table><thead><tr><th scope="col">Rubro</th><th scope="col">Área</th><th scope="col">Tipo</th><th scope="col">Detalle</th><th scope="col" class="r">Importe</th><th scope="col" class="r">% ventas</th><th scope="col"><span class="muted" style="font-weight:400">&nbsp;</span></th></tr></thead><tbody>
+    ${visibles.map((f) => `<tr><th scope="row">${esc(f.categoria)}${f.recurrente_id ? ' <span class="chip" title="Se carga solo todos los meses. Se administra más abajo, en Administrar costos recurrentes">recurrente</span>' : ''}</th><td>${esc(areaTxt(f))}</td><td><span class="chip cuadro ${TIPOS[f.tipo].chip}">${TIPOS[f.tipo].nombre}</span></td><td>${esc(f.concepto || '')}${atribHTML(f)}${f.nota ? `<div class="small muted">${esc(f.nota)}</div>` : ''}</td>
       <td class="r num"><b>${peso0(f.monto)}</b>${detalleDolar(f)}</td><td class="r num muted">${pct(f.monto, vtas)}</td>
       <td class="r" style="white-space:nowrap"><button class="btn sm" data-ed="${f.id}">Editar</button> <button class="btn sm danger" data-del="${f.id}">${borrarId === f.id ? '¿Seguro? Borrar' : 'Borrar'}</button></td></tr>`).join('')}
-    <tr class="total"><th scope="row">Total</th><td></td><td></td><td class="r num">${peso0(totVis)}</td><td class="r num muted">${pct(totVis, vtas)}</td><td></td></tr></tbody></table>`
-    : `<p class="muted" style="padding:0 24px 12px">Todavía no hay costos ${tab === 'fijo' ? 'fijos ' : tab === 'variable' ? 'variables ' : ''}cargados en ${nom(mes)}.</p>`}</div></section>
-  ${seccionReparto(new Set(visibles.map((f) => f.id)))}
-  ${seccionRecurrentes()}
-  <div class="card chart"><h2 style="margin-top:0">Últimos 12 meses${tab === 'all' ? '' : ` · ${tab === 'fijo' ? 'fijos' : 'variables'}`} <span class="muted small" style="font-weight:400">(tocá una columna para ver ese mes)</span></h2>${serie.some((s) => s.valor > 0) ? graficoSimple(serie, tab === 'all' ? '#3A3F47' : TIPOS[tab].color, mes) : '<p class="muted">El gráfico aparece cuando haya costos cargados en alguno de estos 12 meses.</p>'}</div>
-  <section class="card" id="nuevo-costo"><h2 style="margin-top:0">${e ? 'Editar costo' : 'Cargar un costo'}</h2>
+    <tr class="total"><th scope="row">Total</th><td></td><td></td><td></td><td class="r num">${peso0(totVis)}</td><td class="r num muted">${pct(totVis, vtas)}</td><td></td></tr></tbody></table>`
+    : `<p class="muted" style="padding:0 24px 12px">No hay costos ${tab === 'fijo' ? 'fijos ' : tab === 'variable' ? 'variables ' : ''}${catF || areaF ? 'con ese filtro ' : 'cargados '}en ${nom(mes)}.</p>`}</div></section>
+  <details id="recDet" style="margin-bottom:16px" ${recAbierto || accion ? 'open' : ''}><summary class="btn" style="display:inline-flex;margin-bottom:12px;cursor:pointer">Administrar costos recurrentes</summary>
+    <p class="muted small" style="margin:0 0 12px">Los que llevan la etiqueta "recurrente" en la lista de arriba. Acá cambiás el monto de acá en adelante, los terminás, les cambiás el reparto o los borrás.</p>${seccionRecurrentes()}</details>`;
+
+  const vCargar = `<section class="card" id="nuevo-costo"><h2 style="margin-top:0">${e ? 'Editar costo' : 'Cargar un costo'}</h2>
     <div class="muted small">Lo que se paga todos los meses (fijos) o lo que cambia según lo que se vende (variables).</div>
     <div class="campos">
       <div><label for="tipo">Tipo</label><select id="tipo"><option value="fijo" ${tipoForm === 'fijo' ? 'selected' : ''}>Fijo</option><option value="variable" ${tipoForm === 'variable' ? 'selected' : ''}>Variable</option></select></div>
-      <div><label for="cat">Rubro</label><input id="cat" list="cats" placeholder="Elegí o escribí uno nuevo" value="${esc(e?.categoria || catF || '')}"><datalist id="cats">${todasCats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
-      <div><label for="con">Detalle (opcional)</label><input id="con" placeholder="Ej.: Alquiler local + depósito" value="${esc(e?.concepto || '')}"></div>
+      <div><label for="cat">Rubro (qué es el gasto)</label><input id="cat" list="cats" placeholder="Ej.: Sueldos y cargas sociales" value="${esc(e?.categoria || catF || '')}"><datalist id="cats">${todasCats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div><label for="con">Detalle (opcional)</label><input id="con" placeholder="Ej.: Sofía Ellauri" value="${esc(e?.concepto || '')}"></div>
       <div><label for="monto">Importe</label><div class="row" style="gap:8px">${camposMoneda(e?.moneda)}<input id="monto" inputmode="decimal" placeholder="1.250.000,00" value="${e ? String(e.moneda === 'USD' ? e.monto_usd : e.monto).replace('.', ',') : ''}"></div>
         <div class="small muted" id="monedaAyuda" ${e?.moneda === 'USD' ? '' : 'hidden'}>Se pasa a pesos con el dólar oficial (Banco Nación, venta) del día 1 de cada mes.</div></div>
       <div><label for="per">${e ? 'Mes' : 'Mes (o primer mes)'}</label><input type="month" id="per" value="${e ? e.ym : mes}"></div>
       ${e ? '' : camposRepite(tipoForm, mes)}
       <div class="${e ? '' : 'ancho'}"><label for="nota">Nota (opcional)</label><input id="nota" value="${esc(e?.nota || '')}"></div>
-      <div class="ancho"><div class="small" style="font-weight:600;margin:4px 0 8px">¿De qué es este costo?</div>${camposAtribucion(e || {})}
-        <p class="muted small" style="margin:-4px 0 12px">Si tildás varias marcas o canales, el costo se reparte según lo que vendió cada uno ese mes. Entre áreas, en partes iguales.</p></div>
+      <div class="ancho"><div class="small" style="font-weight:600;margin:4px 0 8px">¿A qué marca, canal y área corresponde?</div>${camposAtribucion(e || {})}
+        <p class="muted small" style="margin:-4px 0 12px">El rubro dice qué es el gasto (ej. Sueldos); el área dice en qué se usa (ej. Marketing). Si tildás varias marcas o canales, el costo se reparte según lo que vendió cada uno ese mes. Entre áreas, en partes iguales.</p></div>
     </div>
-    ${e?.recurrente_id ? '<p class="cc-nota">Este costo se repite todos los meses: acá cambiás solo este mes. Para cambiar el monto de acá en adelante usá "Cambiar monto" en Costos Recurrentes.</p>' : ''}
+    ${e?.recurrente_id ? '<p class="cc-nota">Este costo se repite todos los meses: acá cambiás solo este mes. Para cambiar el monto de acá en adelante usá "Cambiar monto" en Detalle, en Administrar costos recurrentes.</p>' : ''}
     <div class="pie"><p class="err">${esc(msg)}</p>${e ? '<button class="btn" id="cancelar">Cancelar</button>' : ''}<button class="btn primary" id="guardar">${e ? 'Guardar cambios' : 'Guardar'}</button></div>
-  </section>
-  <p class="muted small" style="line-height:1.6">Las ventas para calcular los porcentajes salen del scorecard (Tienda Nube, Mercado Libre y local, ambas marcas).</p>`;
-  const ir = async (m) => { mes = m; editId = null; msg = ''; await cargarReparto(); pintar(); };
+  </section>`;
+
+  const cuerpo = { resumen: vResumen, detalle: vDetalle, dashboard: '<div id="cdash"><p class="muted">Armando los gráficos…</p></div>', cargar: vCargar }[vista];
+
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Costos · ${Nom(mes)}</h1><p>Fijos: no dependen de cuánto vendés. Variables: suben y bajan con cada venta.</p></div>
+    <div class="row wrapRow"><button class="btn" id="ant" aria-label="Mes anterior">‹</button><input type="month" id="mes" value="${mes}" style="width:auto" aria-label="Mes"><button class="btn" id="sig" aria-label="Mes siguiente">›</button>
+    <a class="btn primary" href="#" id="irNuevo">＋ Nuevo costo</a></div></div>
+  ${menu}
+  ${cuerpo}`;
+
+  $$('[data-vista]').forEach((b) => (b.onclick = () => { if (b.dataset.vista === 'cargar') { editId = null; msg = ''; } setVista(b.dataset.vista); }));
+  $('#irNuevo').onclick = (ev) => { ev.preventDefault(); editId = null; msg = ''; setVista('cargar'); };
   $('#ant').onclick = () => ir(addMes(mes, -1)); $('#sig').onclick = () => ir(addMes(mes, 1)); $('#mes').onchange = (ev) => ev.target.value && ir(ev.target.value);
   $$('rect.hit[data-mes]').forEach((r) => (r.onclick = () => ir(r.dataset.mes)));
+  $$('[data-ver-cat]').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); catF = a.dataset.verCat; const u = new URL(location.href); u.searchParams.set('categoria', catF); history.replaceState(null, '', u); setVista('detalle'); }));
   $$('[data-cat]').forEach((b) => (b.onclick = () => {
     catF = b.dataset.cat; const u = new URL(location.href);
     catF ? u.searchParams.set('categoria', catF) : u.searchParams.delete('categoria'); history.replaceState(null, '', u);
+    pintar();
+  }));
+  $$('[data-area]').forEach((b) => (b.onclick = () => {
+    areaF = b.dataset.area; const u = new URL(location.href);
+    areaF ? u.searchParams.set('area', areaF) : u.searchParams.delete('area'); history.replaceState(null, '', u);
     pintar();
   }));
   $$('[data-tab]').forEach((b) => (b.onclick = () => {
@@ -158,13 +225,20 @@ function pintar() {
     tab === 'all' ? u.searchParams.delete('tipo') : u.searchParams.set('tipo', tab); history.replaceState(null, '', u);
     pintar();
   }));
-  $('#guardar').onclick = guardar; if ($('#cancelar')) $('#cancelar').onclick = () => { editId = null; msg = ''; pintar(); };
-  $('#moneda').onchange = () => ($('#monedaAyuda').hidden = $('#moneda').value !== 'USD');
-  if (!e) { activarRepite(); $('#tipo').onchange = () => { $('#rep').value = $('#tipo').value === 'fijo' ? 'siempre' : 'no'; $('#rep').onchange(); }; }
-  activarRecurrentes();
-  $$('[data-ed]').forEach((b) => (b.onclick = () => { editId = +b.dataset.ed; msg = ''; pintar(); $('#nuevo-costo').scrollIntoView(); }));
-  $$('[data-del]').forEach((b) => (b.onclick = async () => { const i = +b.dataset.del; if (borrarId !== i) { borrarId = i; pintar(); return; } await sb.from('cc_costos').delete().eq('id', i); borrarId = null; await recargar(); }));
+  if (vista === 'cargar') {
+    $('#guardar').onclick = guardar; if ($('#cancelar')) $('#cancelar').onclick = () => { editId = null; msg = ''; setVista('detalle'); };
+    $('#moneda').onchange = () => ($('#monedaAyuda').hidden = $('#moneda').value !== 'USD');
+    if (!e) { activarRepite(); $('#tipo').onchange = () => { $('#rep').value = $('#tipo').value === 'fijo' ? 'siempre' : 'no'; $('#rep').onchange(); }; }
+  }
+  if (vista === 'detalle') {
+    activarRecurrentes();
+    $('#recDet').addEventListener('toggle', (ev) => { recAbierto = ev.target.open; });
+    $$('[data-ed]').forEach((b) => (b.onclick = () => { editId = +b.dataset.ed; msg = ''; setVista('cargar'); }));
+    $$('[data-del]').forEach((b) => (b.onclick = async () => { const i = +b.dataset.del; if (borrarId !== i) { borrarId = i; pintar(); return; } await sb.from('cc_costos').delete().eq('id', i); borrarId = null; await recargar(); }));
+  }
+  if (vista === 'dashboard') pintarDashboard();
 }
+
 async function guardar() {
   const tipo = $('#tipo').value, categoria = $('#cat').value.trim(), monto = parseMonto($('#monto').value), per = $('#per').value;
   if (!categoria) { msg = 'Elegí o escribí el rubro.'; return pintar(); }
@@ -177,7 +251,7 @@ async function guardar() {
     ? await sb.from('cc_costos').update({ tipo, categoria, concepto, ...montoEn(moneda, monto), ...atrib, periodo: per + '-01', nota }).eq('id', editId)
     : await guardarCosto({ tipo, categoria, concepto, monto, mes: per, nota, moneda, atrib });
   if (error) { msg = 'No se pudo guardar: ' + error.message; return pintar(); }
-  msg = ''; editId = null; mes = per; await recargar();
+  msg = ''; editId = null; mes = per; await recargar(); setVista('detalle');
 }
 
 // ---- Atribución: texto bajo el detalle y reparto del mes por marca/canal y por área ----
@@ -235,7 +309,7 @@ function filaRegla(r) {
     <td class="r" style="white-space:nowrap">${vigente ? `<button class="btn sm" data-acc="monto" data-id="${r.id}">Cambiar monto</button> <button class="btn sm" data-acc="fin" data-id="${r.id}">Terminar</button> ` : ''}<button class="btn sm" data-acc="reparto" data-id="${r.id}">Reparto</button> <button class="btn sm danger" data-acc="borrar" data-id="${r.id}">Borrar</button></td></tr>${filaAccion(r)}`;
 }
 function seccionRecurrentes() {
-  const vis = reglas.filter((r) => (tab === 'all' || r.tipo === tab) && (!catF || r.categoria === catF));
+  const vis = reglas;
   const vigentes = vis.filter((r) => !r.h || r.h >= MES_ACTUAL), terminados = vis.filter((r) => r.h && r.h < MES_ACTUAL);
   const cab = '<thead><tr><th scope="col">Rubro</th><th scope="col">Tipo</th><th scope="col">Detalle</th><th scope="col" class="r">Por mes</th><th scope="col">Desde</th><th scope="col">Hasta</th><th scope="col">Estado</th><th scope="col"></th></tr></thead>';
   const totalMes = vigentes.filter((r) => r.d <= MES_ACTUAL).reduce((a, r) => a + r.monto, 0);
