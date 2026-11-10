@@ -7,6 +7,7 @@
   <link rel="icon" href="icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
   <link rel="stylesheet" href="estilo.css?v=11">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD" crossorigin="anonymous"></script>
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -18,6 +19,7 @@ import { corto, MESN } from './analisis.js?v=5';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'dashboard');
 const { DAY, PRET, LAVAN, CANALES, PLATAFORMAS, fila, adsDia, ref, ddmm, ddmmaa, largo, lunes, primeroMes, sumaRango, sumaSeries, serie, inicio, evalDia, evalSemana, evalMes, badge, rentabilidad, pctTxt } = await import('./ventas-lib.js');
+const { montarGraficos } = await import('./ventas-graficos.js');
 let marca = 'all';
 
 function pintar() {
@@ -62,6 +64,7 @@ function pintar() {
     return `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor num">${v == null ? 'Sin datos' : peso0(v)}</div>
       <div class="cc-sub"><span>${ordenes('tn', a)} órdenes TN · ${ordenes('ml', a)} órdenes ML</span>${badge(ev)}</div></div>`;
   }).join('')}</div>
+  <div id="graficos" style="margin-top:8px"></div>
   <section class="card tabla"><div class="cab"><div><h2>Ventas por canal</h2><span class="muted">Rentabilidad = facturación neta − costo de productos − envío − ads, en lo que va del mes (solo días con neta y costo cargados)</span></div></div>
     <div class="scroll"><table style="min-width:820px"><thead><tr><th scope="col">Canal</th><th scope="col" class="r">Último día</th><th scope="col" class="r">Semana</th><th scope="col" class="r">Mes</th><th scope="col" class="r">Rentab. por día</th><th scope="col" class="r">Rentab. neta del mes</th></tr></thead>
     <tbody>${filasCanal}</tbody></table></div></section>
@@ -71,6 +74,7 @@ function pintar() {
   <div class="row between wrapRow" style="align-items:baseline;margin-top:28px"><h2 style="margin:0">Inversión publicitaria · ${MESN[+ref.slice(5, 7) - 1]} ${ref.slice(0, 4)}</h2><span class="muted small">${nombreMarca}</span></div>
   <div class="centro-comando" style="margin-top:12px">${tarjetasAds}</div>
   <p class="muted small" style="line-height:1.6">Misma lógica que el Scorecard diario. La rutina diaria (11:00) carga el día anterior directo en Supabase; lo mismo usan P&amp;L y Cashflow.</p>`;
+  if (window.Chart) montarGraficos($('#graficos'), marca); else $('#graficos').innerHTML = '<p class="muted small">No se pudieron cargar los gráficos (sin conexión a la librería). El resto del tablero sigue funcionando.</p>';
   $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; pintar(); }));
 }
 pintar();

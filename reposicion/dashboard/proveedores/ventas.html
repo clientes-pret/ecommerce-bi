@@ -58,11 +58,6 @@ function pintar() {
   const tabs = [['all', 'Consolidado'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']].map(([k, t]) => `<button type="button" data-marca="${k}" aria-pressed="${marca === k}">${t}</button>`).join('');
   const segSc = (k, opciones) => `<div class="seg" role="group">${opciones.map(([v, t]) => `<button type="button" data-sc-${k}="${v}" aria-pressed="${sc[k] === v}">${t}</button>`).join('')}</div>`;
 
-  // Último día cargado, por canal
-  const canalesUlt = [['tn', 'Tienda Nube'], ['ml', 'Mercado Libre']].map(([c, n]) => [c, n, sumar([ref], marcas, c)]);
-  const ultTabla = canalesUlt.map(([c, n, t]) => `<tr><th scope="row" style="white-space:nowrap">${n}</th>${celdasSc(t, c, true)}</tr>`).join('');
-  const ultCards = canalesUlt.map(([c, n, t]) => tarjeta(n, t, c)).join('');
-
   const periodos = periodosSc(marcas, sc.canal, sc.gran), paginas = Math.max(1, Math.ceil(periodos.length / POR_PAGINA));
   sc.pag = Math.min(sc.pag, paginas - 1);
   const visibles = periodos.slice(sc.pag * POR_PAGINA, (sc.pag + 1) * POR_PAGINA).map((p) => [p.et, sumar(p.dias, marcas, sc.canal)]);
@@ -75,10 +70,7 @@ function pintar() {
 
   $('#app').innerHTML = `<div class="cabecera"><div><h1>Scorecard</h1><p>${largo(ref)}</p></div>
     <span class="row small muted" style="gap:6px"><span class="dot" style="background:${atraso <= 1 ? 'var(--ok)' : '#B54708'}"></span>Datos hasta el ${ddmm(ref)}${atraso > 1 ? ` · ${atraso} días de atraso` : ''}</span></div>
-  <div class="seg" role="group" aria-label="Marca" style="margin-top:16px">${tabs}</div>
-  <section class="card tabla"><div class="cab"><div><h2>Último día · ${ddmmaa(ref)}</h2><span class="muted">${nombreMarca}, por canal</span></div></div>
-    <div class="sc-tabla scroll"><table style="min-width:1000px"><thead>${cabSc('tn', 'Canal', true)}</thead><tbody>${ultTabla}</tbody></table></div>
-    <div class="sc-cards">${ultCards}</div></section>
+  <div class="seg" role="group" aria-label="Marca" style="margin:16px 0 28px">${tabs}</div>
   <section class="card tabla"><div class="cab"><div><h2>Scorecard por canal</h2><span class="muted">${nombreMarca} · por día, semana (lunes a domingo), mes o período ML (del 11 al 10)</span></div>
       <div class="row wrapRow" style="gap:8px">${segSc('canal', [['tn', 'Tienda Nube'], ['ml', 'Mercado Libre']])}${segSc('gran', [['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes'], ['ml', 'Período ML']])}</div></div>
     <div class="sc-tabla scroll"><table style="min-width:1100px"><thead>${cabSc(sc.canal, { dia: 'Fecha', semana: 'Semana', mes: 'Mes', ml: 'Período ML (11 al 10)' }[sc.gran])}</thead><tbody>${filasSc || '<tr><td colspan="11" class="muted">Sin datos todavía.</td></tr>'}</tbody></table></div>
