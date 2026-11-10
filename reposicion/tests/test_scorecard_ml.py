@@ -75,21 +75,40 @@ def _resp(codigo, cuerpo=None):
     return r
 
 
-def test_ads_dias_sin_gasto_valen_cero_y_se_devuelven_todos_los_dias():
-    cuerpo = {"results": [{"date": "2026-11-07", "cost": 656429.774}, {"date": "2026-11-09", "cost": 921888.95}]}
-    with mock.patch.object(scorecard_ml_sync.requests, "get", return_value=_resp(200, cuerpo)):
-        ads = traer_ads("tok", 27450, date(2026, 11, 7), date(2026, 11, 9))
-    assert ads == {"2026-11-07": 656429.77, "2026-11-08": 0.0, "2026-11-09": 921888.95}
+def _api_ads(url, headers=None, params=None, timeout=None):
+    if "product_ads" in url:
+        return _resp(200, {"results": [{"date": "2026-11-07", "cost": 100.004}, {"date": "2026-11-09", "cost": 50.0}]})
+    if url.endswith("/display/campaigns"):
+        return _resp(200, {"results": [{"campaign_id": 1}, {"campaign_id": 2}]})
+    if url.endswith("/campaigns/1/metrics"):
+        return _resp(200, {"metrics": [{"date": "2026-11-07", "consumed_budget": 10.0}, {"date": "2026-11-08", "consumed_budget": 5.5}]})
+    return _resp(200, {"metrics": [{"date": "2026-11-08", "consumed_budget": 4.5}]})
 
 
-def test_ads_si_la_api_falla_no_inventa_ceros():
-    with mock.patch.object(scorecard_ml_sync.requests, "get", return_value=_resp(403, "forbidden")):
+def test_ads_suma_product_ads_y_display_y_los_dias_sin_gasto_valen_cero():
+    with mock.patch.object(scorecard_ml_sync.requests, "get", side_effect=_api_ads):
+        ads = traer_ads("tok", 27450, date(2026, 11, 7), date(2026, 11, 10))
+    assert ads == {"2026-11-07": 110.0, "2026-11-08": 10.0, "2026-11-09": 50.0, "2026-11-10": 0.0}
+
+
+def test_ads_si_cualquier_consulta_falla_no_inventa_ni_guarda_parciales():
+    def falla_display(url, **kw):
+        return _resp(403, "forbidden") if "/display/" in url else _api_ads(url)
+    with mock.patch.object(scorecard_ml_sync.requests, "get", side_effect=falla_display):
         try:
             traer_ads("tok", 27450, date(2026, 11, 7), date(2026, 11, 9))
         except RuntimeError as e:
             assert "403" in str(e)
         else:
             raise AssertionError("tenía que fallar")
+
+
+def test_ads_cuenta_sin_display_cuenta_solo_product_ads():
+    def sin_display(url, **kw):
+        return _resp(401, "unauthorized") if url.endswith("/display/campaigns") else _api_ads(url)
+    with mock.patch.object(scorecard_ml_sync.requests, "get", side_effect=sin_display):
+        ads = traer_ads("tok", 1144462, date(2026, 11, 7), date(2026, 11, 9))
+    assert ads == {"2026-11-07": 100.0, "2026-11-08": 0.0, "2026-11-09": 50.0}
 
 
 if __name__ == "__main__":

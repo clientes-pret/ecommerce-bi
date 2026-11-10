@@ -16,7 +16,8 @@ Por cada día y cuenta calcula y guarda en Supabase con scorecard_guardar_dia() 
 - costo de productos = costo de Tiendanube de cada SKU (con IVA) × cantidad: primero el catálogo de la
                        propia marca, después el de la otra, y por último la tabla scorecard_costos_extra
                        (SKUs que ya no están en Tiendanube, cargados de la planilla).
-- inversión en ML Ads = costo diario de Product Ads (API de publicidad de ML), clave ml_ads_pret / ml_ads_lavan.
+- inversión en ML Ads = Product Ads + Display/Brand Ads (API de publicidad de ML; coincide con el panel "Publicidad"),
+                       clave ml_ads_pret / ml_ads_lavan.
                        Un día sin campañas con gasto es 0, no "pendiente".
 Si falta algún pago de MercadoPago de un día, ese día NO guarda la neta (queda lo que había) y avisa.
 
@@ -116,24 +117,46 @@ def sku_de(item):
     return str(it.get("seller_sku") or it.get("seller_custom_field") or "").strip()
 
 
-def traer_ads(token, advertiser, desde, hasta):
-    """Costo de Product Ads por día (str YYYY-MM-DD -> pesos) entre desde y hasta. Los días sin gasto valen 0.
-    Si la API falla lanza error: nunca se guarda un 0 por no haber podido leer."""
-    url = f"https://api.mercadolibre.com/advertising/MLA/advertisers/{advertiser}/product_ads/campaigns/search"
-    params = {"limit": 1, "offset": 0, "date_from": desde.isoformat(), "date_to": hasta.isoformat(),
-              "metrics": "cost", "aggregation_type": "DAILY"}
+def _get_ads(url, token, params=None):
+    """GET a la API de publicidad de ML (header api-version 2). Reintenta 429/5xx; si falla lanza error."""
     for intento in range(4):
         r = requests.get(url, headers={"Authorization": f"Bearer {token}", "api-version": "2"}, params=params, timeout=30)
         if r.status_code == 200:
-            por_dia = {x["date"]: _num(x.get("cost")) for x in r.json().get("results", []) if x.get("date")}
-            dias = (hasta - desde).days + 1
-            return {(desde + timedelta(days=i)).isoformat(): round(por_dia.get((desde + timedelta(days=i)).isoformat(), 0.0), 2)
-                    for i in range(dias)}
+            return r.json()
         if r.status_code in (429, 500, 502, 503):
             time.sleep(3 * (intento + 1))
             continue
         break
-    raise RuntimeError(f"ML Ads {advertiser}: {r.status_code} {r.text[:200]}")
+    raise RuntimeError(f"ML Ads {url.split('/advertising/')[-1]}: {r.status_code} {r.text[:200]}")
+
+
+def traer_ads(token, advertiser, desde, hasta):
+    """Inversión en publicidad de ML por día (str YYYY-MM-DD -> pesos) entre desde y hasta = lo que muestra el panel
+    "Publicidad" de ML: Product Ads (costo de las campañas de productos) + Display y Brand Ads (consumed_budget de cada
+    campaña). Verificado el 10/11/2026 contra el panel de Pret (30 días): 20.289.908 + 7.216.325 = 27.506.233 vs 27.505.645.
+    Los días sin gasto valen 0. Si cualquier consulta falla lanza error: nunca se guarda un total incompleto."""
+    base = "https://api.mercadolibre.com/advertising"
+    rango = {"date_from": desde.isoformat(), "date_to": hasta.isoformat()}
+    total = {}
+    prod = _get_ads(f"{base}/MLA/advertisers/{advertiser}/product_ads/campaigns/search", token,
+                    {"limit": 1, "offset": 0, "metrics": "cost", "aggregation_type": "DAILY", **rango})
+    for x in prod.get("results", []):
+        if x.get("date"):
+            total[x["date"]] = total.get(x["date"], 0.0) + _num(x.get("cost"))
+    try:
+        camp = _get_ads(f"{base}/advertisers/{advertiser}/display/campaigns", token)
+    except RuntimeError as e:
+        if ": 401 " not in str(e):
+            raise
+        camp = {}   # la cuenta no tiene el producto Display (la API responde "sin acceso"): solo cuenta Product Ads
+    for c in camp.get("results", []):
+        m = _get_ads(f"{base}/advertisers/{advertiser}/display/campaigns/{c['campaign_id']}/metrics", token, rango)
+        for x in m.get("metrics", []):
+            if x.get("date"):
+                total[x["date"]] = total.get(x["date"], 0.0) + _num(x.get("consumed_budget"))
+    dias = (hasta - desde).days + 1
+    fechas = [(desde + timedelta(days=i)).isoformat() for i in range(dias)]
+    return {f: round(total.get(f, 0.0), 2) for f in fechas}
 
 
 def calcular(ordenes, pagos, costos, desde, hasta):
