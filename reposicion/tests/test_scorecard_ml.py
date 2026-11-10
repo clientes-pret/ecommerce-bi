@@ -5,7 +5,10 @@ Correr:  python3 -m reposicion.tests.test_scorecard_ml
 
 from datetime import date
 
-from reposicion.scorecard_ml_sync import calcular, cuenta, dia_cierre, documento
+from unittest import mock
+
+from reposicion import scorecard_ml_sync
+from reposicion.scorecard_ml_sync import calcular, cuenta, dia_cierre, documento, traer_ads
 
 D = date(2026, 10, 22)
 
@@ -64,6 +67,29 @@ def test_documento_completo():
     assert documento("ml_casa_lavan", dias["2026-10-22"]) == {
         "ml_casa_lavan": {"orders": 0, "revenue": 0.0}, "costo_productos_ml_casa_lavan": 0.0,
         "facturacion_neta_ml_casa_lavan": 0.0}
+
+
+def _resp(codigo, cuerpo=None):
+    r = mock.Mock(status_code=codigo, text=str(cuerpo))
+    r.json.return_value = cuerpo
+    return r
+
+
+def test_ads_dias_sin_gasto_valen_cero_y_se_devuelven_todos_los_dias():
+    cuerpo = {"results": [{"date": "2026-11-07", "cost": 656429.774}, {"date": "2026-11-09", "cost": 921888.95}]}
+    with mock.patch.object(scorecard_ml_sync.requests, "get", return_value=_resp(200, cuerpo)):
+        ads = traer_ads("tok", 27450, date(2026, 11, 7), date(2026, 11, 9))
+    assert ads == {"2026-11-07": 656429.77, "2026-11-08": 0.0, "2026-11-09": 921888.95}
+
+
+def test_ads_si_la_api_falla_no_inventa_ceros():
+    with mock.patch.object(scorecard_ml_sync.requests, "get", return_value=_resp(403, "forbidden")):
+        try:
+            traer_ads("tok", 27450, date(2026, 11, 7), date(2026, 11, 9))
+        except RuntimeError as e:
+            assert "403" in str(e)
+        else:
+            raise AssertionError("tenía que fallar")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,8 @@ Por cada día y cuenta calcula y guarda en Supabase con scorecard_guardar_dia() 
 - costo de productos = costo de Tiendanube de cada SKU (con IVA) × cantidad: primero el catálogo de la
                        propia marca, después el de la otra, y por último la tabla scorecard_costos_extra
                        (SKUs que ya no están en Tiendanube, cargados de la planilla).
+- inversión en ML Ads = costo diario de Product Ads (API de publicidad de ML), clave ml_ads_pret / ml_ads_lavan.
+                       Un día sin campañas con gasto es 0, no "pendiente".
 Si falta algún pago de MercadoPago de un día, ese día NO guarda la neta (queda lo que había) y avisa.
 
 Los últimos días se recalculan cada vez (devoluciones y reclamos cambian días ya cargados).
@@ -31,6 +33,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
+import requests
+
 from reposicion import core, db
 from reposicion.scorecard_tn_sync import guardar_dia
 
@@ -40,6 +44,7 @@ CUENTAS = {  # canal del config -> (clave del documento del Scorecard, canal TN 
     "ml_pret": ("ml_pret_home", "tn_pret", "tn_lavan"),
     "ml_lavan": ("ml_casa_lavan", "tn_lavan", "tn_pret"),
 }
+ADVERTISERS = {"ml_pret": (27450, "ml_ads_pret"), "ml_lavan": (1144462, "ml_ads_lavan")}  # ids estables de Product Ads
 
 
 def _num(v):
@@ -109,6 +114,26 @@ def traer_pagos(token, ordenes):
 def sku_de(item):
     it = item.get("item") or {}
     return str(it.get("seller_sku") or it.get("seller_custom_field") or "").strip()
+
+
+def traer_ads(token, advertiser, desde, hasta):
+    """Costo de Product Ads por día (str YYYY-MM-DD -> pesos) entre desde y hasta. Los días sin gasto valen 0.
+    Si la API falla lanza error: nunca se guarda un 0 por no haber podido leer."""
+    url = f"https://api.mercadolibre.com/advertising/MLA/advertisers/{advertiser}/product_ads/campaigns/search"
+    params = {"limit": 1, "offset": 0, "date_from": desde.isoformat(), "date_to": hasta.isoformat(),
+              "metrics": "cost", "aggregation_type": "DAILY"}
+    for intento in range(4):
+        r = requests.get(url, headers={"Authorization": f"Bearer {token}", "api-version": "2"}, params=params, timeout=30)
+        if r.status_code == 200:
+            por_dia = {x["date"]: _num(x.get("cost")) for x in r.json().get("results", []) if x.get("date")}
+            dias = (hasta - desde).days + 1
+            return {(desde + timedelta(days=i)).isoformat(): round(por_dia.get((desde + timedelta(days=i)).isoformat(), 0.0), 2)
+                    for i in range(dias)}
+        if r.status_code in (429, 500, 502, 503):
+            time.sleep(3 * (intento + 1))
+            continue
+        break
+    raise RuntimeError(f"ML Ads {advertiser}: {r.status_code} {r.text[:200]}")
 
 
 def calcular(ordenes, pagos, costos, desde, hasta):
@@ -220,6 +245,17 @@ def main():
         except Exception as e:
             errores.append(f"{key}: {e}")
             core.tnlog(f"  ⚠ {key}: {e}")
+        try:                                                     # la pauta va aparte: si falla no frena las ventas
+            adv, clave_ads = ADVERTISERS[key]
+            ads = traer_ads(core.ml_ensure_token(key, cfg), adv, desde, hasta)
+            for fecha, costo in sorted(ads.items()):
+                if args.aplicar:
+                    guardar_dia(config, fecha, {clave_ads: costo})
+            core.tnlog(f"  ✓ ML Ads {cfg.get('label', key)}: " + " · ".join(f"{f[5:]} {c:,.0f}" for f, c in sorted(ads.items()))
+                       + ("" if args.aplicar else " (simulación, no se guardó)"))
+        except Exception as e:
+            errores.append(f"{key} ads: {e}")
+            core.tnlog(f"  ⚠ {key} ads: {e}")
     if errores:
         raise SystemExit("Terminó con errores:\n" + "\n".join(errores))
 
