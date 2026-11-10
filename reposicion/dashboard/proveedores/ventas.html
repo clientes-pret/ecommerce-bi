@@ -84,7 +84,7 @@ function pintar() {
     <div class="sc-tabla scroll"><table style="min-width:1100px"><thead>${cabSc(sc.canal, { dia: 'Fecha', semana: 'Semana', mes: 'Mes', ml: 'Período ML (11 al 10)' }[sc.gran])}</thead><tbody>${filasSc || '<tr><td colspan="11" class="muted">Sin datos todavía.</td></tr>'}</tbody></table></div>
     <div class="sc-cards">${cardsSc || '<p class="muted">Sin datos todavía.</p>'}</div>
     ${pager}</section>
-  <p class="muted small" style="line-height:1.6">Rentabilidad s/ads = neta − costo de productos − envío (en Mercado Libre el envío ya viene dentro de la neta). Para ver cómo viene el período contra el promedio, está el <a href="ventas-dashboard.html">Dashboard</a>.</p>`;
+  <p class="muted small" style="line-height:1.6">Rentabilidad s/ads = neta − costo de productos − envío (en Mercado Libre el envío ya viene dentro de la neta). La pauta de Mercado Libre se muestra con 21 % de IVA incluido. Para ver cómo viene el período contra el promedio, está el <a href="ventas-dashboard.html">Dashboard</a>.</p>`;
   $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; sc.pag = 0; pintar(); }));
   $$('[data-sc-canal]').forEach((b) => (b.onclick = () => { sc.canal = b.dataset.scCanal; sc.pag = 0; pintar(); }));
   $$('[data-sc-gran]').forEach((b) => (b.onclick = () => { sc.gran = b.dataset.scGran; sc.pag = 0; pintar(); }));

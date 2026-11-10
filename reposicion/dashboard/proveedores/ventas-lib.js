@@ -12,7 +12,7 @@ export const CANALES = [
   { marca: 'lavan', canal: 'tn', nombre: 'Tienda Nube · Casa Laván', ads: ['meta', 'google'] },
   { marca: 'lavan', canal: 'ml', nombre: 'Mercado Libre · Casa Laván', ads: ['ml'] },
 ];
-export const PLATAFORMAS = [['meta', 'Meta Ads'], ['google', 'Google Ads'], ['ml', 'Mercado Libre Ads']];
+export const PLATAFORMAS = [['meta', 'Meta Ads'], ['google', 'Google Ads'], ['ml', 'Mercado Libre Ads (c/ IVA)']];
 export const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
 export const iso = (d) => d.toISOString().slice(0, 10);
@@ -52,7 +52,10 @@ try {
 export const fila = {}; // `${marca}_${canal}` -> { fecha -> fila }
 for (const f of filas) ((fila[`${f.marca}_${f.canal}`] ??= {})[f.fecha] = f);
 export const adsDia = {}; // `${marca}_${plataforma}` -> { fecha -> inversion }
-for (const a of ads) if (a.inversion != null) ((adsDia[`${a.marca}_${a.plataforma}`] ??= {})[a.fecha] = Number(a.inversion));
+// Mercado Libre informa la pauta sin IVA: acá se suma el 21 % (pedido del usuario, 10/11/2026). En la base queda el valor
+// sin IVA, así que P&L y Cashflow no cambian. Meta y Google se muestran como vienen.
+export const IVA_ADS_ML = 1.21;
+for (const a of ads) if (a.inversion != null) ((adsDia[`${a.marca}_${a.plataforma}`] ??= {})[a.fecha] = Number(a.inversion) * (a.plataforma === 'ml' ? IVA_ADS_ML : 1));
 
 // "Hoy" del tablero = último día con ventas cargadas en Tienda Nube o Mercado Libre (la carga va con atraso; no inventamos
 // el día de hoy). El local no cuenta: su caja se carga el mismo día y adelantaba la fecha, dejando el "último día" vacío.
@@ -108,7 +111,7 @@ export function rentabilidad(c) {
 // ---- Scorecard por canal (igual que el artifact): una fila por día o por semana, sumando las marcas elegidas ----
 // Suma solo los datos reales: un campo queda null ("Pendiente") si ningún día/marca lo tiene; si alguno lo tiene, suma esos.
 export const POR_PAGINA = 10;
-export const ADS_DE = { tn: [['meta', 'Meta Ads'], ['google', 'Google Ads']], ml: [['ml', 'ML Ads']] };
+export const ADS_DE = { tn: [['meta', 'Meta Ads'], ['google', 'Google Ads']], ml: [['ml', 'ML Ads (c/ IVA)']] };
 export function sumar(dias, marcas, canal) {
   const t = { ventas: null, ordenes: null, neta: null, costo: null, envio: null, ads: {} };
   const mas = (k, v) => { if (v != null) t[k] = (t[k] || 0) + Number(v); };
