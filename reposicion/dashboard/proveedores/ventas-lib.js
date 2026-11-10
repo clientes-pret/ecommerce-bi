@@ -54,8 +54,10 @@ for (const f of filas) ((fila[`${f.marca}_${f.canal}`] ??= {})[f.fecha] = f);
 export const adsDia = {}; // `${marca}_${plataforma}` -> { fecha -> inversion }
 for (const a of ads) if (a.inversion != null) ((adsDia[`${a.marca}_${a.plataforma}`] ??= {})[a.fecha] = Number(a.inversion));
 
-// "Hoy" del tablero = último día con ventas cargadas (la carga va con atraso; no inventamos el día de hoy).
-export const ref = filas.filter((f) => f.ventas != null).reduce((m, f) => (f.fecha > m ? f.fecha : m), '');
+// "Hoy" del tablero = último día con ventas cargadas en Tienda Nube o Mercado Libre (la carga va con atraso; no inventamos
+// el día de hoy). El local no cuenta: su caja se carga el mismo día y adelantaba la fecha, dejando el "último día" vacío.
+const ultimoDia = (soloOnline) => filas.filter((f) => f.ventas != null && (!soloOnline || f.canal === 'tn' || f.canal === 'ml')).reduce((m, f) => (f.fecha > m ? f.fecha : m), '');
+export const ref = ultimoDia(true) || ultimoDia(false);
 
 // Serie fecha -> ventas de un canal (solo días con dato).
 export const serie = (c) => Object.fromEntries(Object.entries(fila[`${c.marca}_${c.canal}`] || {}).filter(([, f]) => f.ventas != null).map(([d, f]) => [d, Number(f.ventas)]));
