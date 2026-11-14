@@ -76,15 +76,23 @@ body.panel > .wrap { flex: 999 1 560px; min-width: 0; max-width: 1680px; margin:
 .side a.reg.on { box-shadow: 0 0 0 2px var(--brand); }
 .side .usuario { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 12px 0; font-size: 13px; color: var(--side-muted); }
 .side .usuario a { padding: 6px 8px; font-size: 13px; color: var(--side-muted); }
+.side .links { display: contents; }
+/* Celular: arriba logo + usuario, abajo los links en una fila que se desliza (ocupa ~90 px en vez de ~170 px). */
 @media (max-width: 760px) {
-  .side { flex-basis: 100%; max-width: none; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; gap: 2px; }
-  .side .marca { flex-direction: row; align-items: center; padding: 4px 8px; width: 100%; }
-  .side .marca img { width: 110px; }
-  .side .grupo, .side .sp { display: none; }
-  .side a { padding: 10px 12px; }
-  .side a.reg { margin: 0 0 0 4px; }
-  .side .usuario { width: 100%; padding: 4px 8px 0; }
-  body.panel > .wrap { padding: 20px 16px 40px; }
+  .side { flex: 0 0 100%; min-width: 0; max-width: none; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px 8px; gap: 8px 12px; overflow: visible; }
+  .side .marca { order: 1; flex: 1 1 auto; flex-direction: row; align-items: center; padding: 0 4px; }
+  .side .marca img { width: 100px; }
+  .side .titulo, .side .grupo, .side .sp { display: none; }
+  .side .usuario { order: 2; padding: 0; gap: 2px; }
+  .side .usuario span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side .usuario a { padding: 10px 10px; }
+  .side .links { order: 3; display: flex; flex: none; width: calc(100% + 24px); margin: 0 -12px; padding: 0 12px 2px; gap: 6px; position: relative; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .side .links::-webkit-scrollbar { display: none; }
+  .side .links > * { flex: none; }
+  .side .links a, .side .links a.sub { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 14px; font-size: 14px; color: var(--side-ink); background: rgba(255,255,255,.07); border-radius: 999px; }
+  .side .links a.on, .side .links a.sub.on { background: var(--brand); color: #fff; }
+  .side .links a.reg { margin: 0; background: #fff; color: var(--ink); }
+  body.panel > .wrap { padding: 16px 16px 40px; }
 }
 
 /* Formularios a lo ancho: campos en grilla y botón Guardar abajo a la derecha */
@@ -136,3 +144,57 @@ tr.diff td { background: var(--warn-bg); } tr.bad-row td { background: var(--bad
 .chart rect.hit { fill: transparent; cursor: pointer; } .chart rect.hit:hover { fill: rgba(27,29,33,.05); }
 #tip { position: fixed; display: none; z-index: 50; pointer-events: none; background: var(--ink); color: #fff; border-radius: 8px; padding: 8px 10px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.18); white-space: nowrap; }
 #tip b { display: block; margin-bottom: 2px; text-transform: capitalize; } #tip div { font-variant-numeric: tabular-nums; }
+
+/* ---- Celular: filtros, tarjetas de métricas y tablas apiladas (se activan con clases, no tocan las pantallas que no las usan) ---- */
+.filtros > input, .filtros > select { width: auto; }
+.busca { min-width: 260px; }
+.solo-movil { display: none; }
+@media (max-width: 760px) {
+  /* iOS hace zoom al enfocar un campo con letra menor a 16 px: con esto no salta la pantalla */
+  input, select, textarea { font-size: 16px; }
+
+  /* Selectores tipo pestañas a lo ancho (Hoy / 7 días / 30 días / Todo) */
+  .seg.full { display: flex; flex-wrap: nowrap; width: 100%; }
+  .seg.full button { flex: 1 1 auto; padding: 10px 6px; font-size: 13px; white-space: nowrap; }
+  .filtros { gap: 10px; }
+  .filtros > .seg { flex: 1 1 100%; }
+  .filtros > .seg[aria-label="Marca"] { order: 1; }
+  .filtros > input, .filtros > select { order: 2; flex: 1 1 calc(50% - 5px); min-width: 0; }
+  .ancho-m { flex: 1 1 100% !important; } .ancho-m select, .ancho-m input { width: 100%; }
+  .busca { min-width: 0; width: 100%; }
+  .cabecera { gap: 12px; } .cabecera p { font-size: 14px; }
+
+  /* Métricas en 2 columnas */
+  .centro-comando.compacto { grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+  .centro-comando.compacto .cc-card { padding: 14px; }
+  .centro-comando.compacto .cc-label { font-size: 12px; }
+  .centro-comando.compacto .cc-valor { font-size: 22px; overflow-wrap: anywhere; }
+  .centro-comando.compacto .cc-valor.md { font-size: 20px; }
+  .centro-comando.compacto .cc-sub { font-size: 12px; margin-top: 4px; }
+
+  .card.tabla { padding: 16px 0 4px; }
+  .card.tabla > .cab { padding: 0 16px 12px; }
+  .card.tabla table th:first-child, .card.tabla table td:first-child { padding-left: 16px; } .card.tabla table th:last-child, .card.tabla table td:last-child { padding-right: 16px; }
+
+  /* Tabla apilada: cada fila pasa a ser una tarjeta con el dato arriba y su rótulo (data-label) */
+  table.apilar { min-width: 0 !important; }
+  table.apilar, table.apilar tbody { display: block; }
+  table.apilar thead { display: none; }
+  table.apilar tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; padding: 14px 16px; border-bottom: 1px solid var(--line-soft); }
+  table.apilar tr:last-child { border-bottom: 0; }
+  table.apilar.c3 tr { grid-template-columns: repeat(3, 1fr); }
+  table.apilar td, table.apilar th { display: block; padding: 0 !important; border: 0; text-align: left !important; min-width: 0; overflow-wrap: anywhere; }
+  table.apilar td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted); margin-bottom: 1px; }
+  table.apilar td[colspan] { grid-column: 1 / -1; }
+  table.apilar .tit { grid-column: 1 / -1; order: -2; font-size: 15px; }
+  table.apilar .full { grid-column: 1 / -1; }
+  table.apilar .sube { order: -1; }
+  table.apilar .baja { order: 5; }
+
+  .pager { flex-direction: column; align-items: stretch !important; text-align: center; }
+  .pager .row { justify-content: space-between; }
+  .pager .btn { flex: none; }
+
+  .solo-desktop { display: none; }
+  .solo-movil { display: block; }
+}

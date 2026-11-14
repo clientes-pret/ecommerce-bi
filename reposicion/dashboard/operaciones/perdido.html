@@ -6,7 +6,7 @@
   <title>Stock perdido · Operaciones Pret a Home</title>
   <link rel="icon" href="../proveedores/icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
-  <link rel="stylesheet" href="../proveedores/estilo.css?v=11">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -69,34 +69,35 @@ function pintar() {
 
   $('#app').innerHTML = `
   <div class="cabecera"><div><h1>Stock perdido</h1><p>Lo que el depósito no encontró ni en la búsqueda profunda · valuado al costo de Tiendanube del día en que se confirmó</p></div>
-    <div><label for="mes" style="position:absolute;left:-9999px">Mes</label><select id="mes">
+    <div class="ancho-m"><label for="mes" style="position:absolute;left:-9999px">Mes</label><select id="mes">
       ${meses.map((m) => `<option value="${m}" ${m === mes ? 'selected' : ''}>${nombreMes(m)}</option>`).join('')}<option value="todos" ${mes === 'todos' ? 'selected' : ''}>Todos los meses</option></select></div></div>
-  <div class="seg" role="group" aria-label="Marca" style="margin-bottom:14px">${segMarca}</div>
-  <div class="centro-comando">
+  <div class="seg full" role="group" aria-label="Marca" style="margin-bottom:14px">${segMarca}</div>
+  <div class="centro-comando compacto">
     <div class="cc-card ${uPerdidas ? 'alerta' : ''}"><div class="cc-label">Unidades perdidas · ${titMes}</div><div class="cc-valor num">${uPerdidas}</div><div class="cc-sub">${perdidos.length} producto${perdidos.length === 1 ? '' : 's'}${uProveedor ? ` · ${uProveedor} se ${uProveedor === 1 ? 'pidió' : 'pidieron'} al proveedor` : ''}</div></div>
     <div class="cc-card ${plata ? 'alerta' : ''}"><div class="cc-label">Plata perdida al costo</div><div class="cc-valor num">${peso0(plata)}</div><div class="cc-sub">${sinCosto ? `${sinCosto} sin costo cargado en Tiendanube` : 'costo de Tiendanube al confirmar'}</div></div>
     <div class="cc-card"><div class="cc-label">Aparecieron en la búsqueda profunda</div><div class="cc-valor num">${uEnc}</div><div class="cc-sub">${uRep ? `de ${uRep} unidades cerradas (${Math.round(uEnc / uRep * 100)} %)` : 'nada cerrado todavía'}</div></div>
     <div class="cc-card"><div class="cc-label">Buscándose ahora</div><div class="cc-valor num">${suma(pendientes, (c) => c.unidades)}</div><div class="cc-sub">${pendientes.length} producto${pendientes.length === 1 ? '' : 's'} en la búsqueda profunda</div></div>
   </div>
   <section class="card tabla"><div class="cab"><div><h2>Por mes</h2><span class="muted">Últimos 6 meses</span></div></div>
-    <div class="scroll"><table><thead><tr><th scope="col"></th>${ult6.map((m) => `<th scope="col" class="r">${nombreMes(m)}</th>`).join('')}</tr></thead>
+    <div class="scroll solo-desktop"><table><thead><tr><th scope="col"></th>${ult6.map((m) => `<th scope="col" class="r">${nombreMes(m)}</th>`).join('')}</tr></thead>
     <tbody><tr><th scope="row">Unidades</th>${ult6.map((m) => `<td class="r num">${porMes[m].u}</td>`).join('')}</tr>
-    <tr><th scope="row">Al costo</th>${ult6.map((m) => `<td class="r num"><b>${peso0(porMes[m].p)}</b></td>`).join('')}</tr></tbody></table></div></section>
+    <tr><th scope="row">Al costo</th>${ult6.map((m) => `<td class="r num"><b>${peso0(porMes[m].p)}</b></td>`).join('')}</tr></tbody></table></div>
+    <div class="solo-movil"><table class="apilar"><tbody>${[...ult6].reverse().map((m) => `<tr><th scope="row" class="tit">${nombreMes(m)}</th><td class="num" data-label="Unidades">${porMes[m].u}</td><td class="num" data-label="Al costo"><b>${peso0(porMes[m].p)}</b></td></tr>`).join('')}</tbody></table></div></section>
   <section class="card tabla"><div class="cab"><div><h2>Perdidos · ${titMes}</h2><span class="muted">"TN decía": el stock que figuraba en Tiendanube al confirmar. Si es mayor a cero, conviene corregirlo en la tienda.</span></div></div>
-    <div class="scroll"><table style="min-width:960px"><thead><tr><th scope="col">Producto</th><th scope="col">Qué pasó</th><th scope="col">Marca</th><th scope="col">Confirmó</th><th scope="col">Fecha</th>
+    <div class="scroll"><table class="apilar" style="min-width:960px"><thead><tr><th scope="col">Producto</th><th scope="col">Qué pasó</th><th scope="col">Marca</th><th scope="col">Confirmó</th><th scope="col">Fecha</th>
       <th scope="col" class="r">Unidades</th><th scope="col" class="r">Costo unit.</th><th scope="col" class="r">Total</th><th scope="col" class="r">TN decía</th></tr></thead>
-    <tbody>${perdidos.map((c) => `<tr><td><b>${esc(c.nombre || c.sku)}</b>${c.variante ? ` · ${esc(c.variante)}` : ''}<div class="small muted">${esc(c.sku)}</div></td>
-      <td>${c.al_proveedor >= c.perdidas ? '<span class="chip info">Se pidió al proveedor</span>'
+    <tbody>${perdidos.map((c) => `<tr><td class="tit"><b>${esc(c.nombre || c.sku)}</b>${c.variante ? ` · ${esc(c.variante)}` : ''}<div class="small muted">${esc(c.sku)}</div></td>
+      <td class="full sube">${c.al_proveedor >= c.perdidas ? '<span class="chip info">Se pidió al proveedor</span>'
         : c.al_proveedor ? `No está · ${c.al_proveedor} se ${c.al_proveedor === 1 ? 'pidió' : 'pidieron'} al proveedor` : 'No está'}</td>
-      <td>${c.marcas.map((k) => MARCAS[k] || k).join(', ')}</td><td>${esc(c.cerrado_por || c.tomado_por || '')}</td><td class="num">${dm(fechaPerdida(c))}</td>
-      <td class="r num">${c.perdidas}</td><td class="r num">${c.costo_unitario === null ? '<span class="muted">sin costo</span>' : peso0(c.costo_unitario)}</td>
-      <td class="r num"><b>${c.costo_total === null ? '—' : peso0(c.costo_total)}</b></td>
-      <td class="r num">${c.stock_tn === null ? '—' : c.stock_tn > 0 ? `<span class="chip">${c.stock_tn}</span>` : 0}</td></tr>`).join('') ||
+      <td data-label="Marca">${c.marcas.map((k) => MARCAS[k] || k).join(', ')}</td><td data-label="Confirmó">${esc(c.cerrado_por || c.tomado_por || '')}</td><td class="num" data-label="Fecha">${dm(fechaPerdida(c))}</td>
+      <td class="r num" data-label="Unidades">${c.perdidas}</td><td class="r num" data-label="Costo unit.">${c.costo_unitario === null ? '<span class="muted">sin costo</span>' : peso0(c.costo_unitario)}</td>
+      <td class="r num" data-label="Total"><b>${c.costo_total === null ? '—' : peso0(c.costo_total)}</b></td>
+      <td class="r num" data-label="TN decía">${c.stock_tn === null ? '—' : c.stock_tn > 0 ? `<span class="chip">${c.stock_tn}</span>` : 0}</td></tr>`).join('') ||
       '<tr><td colspan="9" class="muted">No se perdió nada en este período.</td></tr>'}</tbody></table></div></section>
   <section class="card tabla"><div class="cab"><div><h2>Aparecieron · ${titMes}</h2><span class="muted">Dónde estaba lo que nadie encontraba</span></div></div>
-    <div class="scroll"><table style="min-width:640px"><thead><tr><th scope="col">Producto</th><th scope="col">Dónde estaba</th><th scope="col">Lo encontró</th><th scope="col" class="r">Unidades</th></tr></thead>
-    <tbody>${aparecidos.map((c) => `<tr><td><b>${esc(c.nombre || c.sku)}</b>${c.variante ? ` · ${esc(c.variante)}` : ''}<div class="small muted">${esc(c.sku)}</div></td>
-      <td>${esc(c.donde || '—')}</td><td>${esc(c.cerrado_por || c.tomado_por || '')}</td><td class="r num">${c.encontradas}</td></tr>`).join('') ||
+    <div class="scroll"><table class="apilar" style="min-width:640px"><thead><tr><th scope="col">Producto</th><th scope="col">Dónde estaba</th><th scope="col">Lo encontró</th><th scope="col" class="r">Unidades</th></tr></thead>
+    <tbody>${aparecidos.map((c) => `<tr><td class="tit"><b>${esc(c.nombre || c.sku)}</b>${c.variante ? ` · ${esc(c.variante)}` : ''}<div class="small muted">${esc(c.sku)}</div></td>
+      <td class="full" data-label="Dónde estaba">${esc(c.donde || '—')}</td><td data-label="Lo encontró">${esc(c.cerrado_por || c.tomado_por || '')}</td><td class="r num" data-label="Unidades">${c.encontradas}</td></tr>`).join('') ||
       '<tr><td colspan="4" class="muted">Nada en este período.</td></tr>'}</tbody></table></div></section>
   <p class="muted small" style="line-height:1.6">Entra a la búsqueda profunda todo lo que alguien marca como "no hay" en la app del depósito (Búsqueda o Empaquetado). Si aparece, sale de la lista; si quien la busca confirma que no está, o lo resuelve pidiéndolo al proveedor, pasa acá con su costo. El sistema no cambia el stock de Tiendanube.</p>`;
 

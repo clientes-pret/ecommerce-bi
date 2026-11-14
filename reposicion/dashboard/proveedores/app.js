@@ -161,17 +161,25 @@ export function nav(perfil, activa) {
   const el = document.createElement('nav');
   el.className = 'side';
   el.setAttribute('aria-label', 'Panel de control');
+  // Los links van dentro de .links: en la compu es transparente al layout (display: contents); en el celular es una fila que se desliza.
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Panel de control</div></div>' +
-    it('admin.html', 'Inicio', 'inicio') +
+    '<div class="links">' + it('admin.html', 'Inicio', 'inicio') +
     '<div class="grupo">Ventas</div>' + it('ventas.html', 'Scorecard', 'scorecard', 'sub') + it('ventas-dashboard.html', 'Dashboard', 'dashboard', 'sub') +
     '<div class="grupo">Proveedores</div>' + it('proveedores.html', 'Cuenta corriente', 'prov', 'sub') + it('agenda.html', 'Agenda de pagos', 'agenda', 'sub') +
     '<div class="grupo">Gestión</div>' + it('costos.html', 'Costos', 'costos') + it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
     '<div class="grupo">Otras plataformas</div>' + it('../operaciones/empaquetado.html', 'Operaciones Pret a Home ↗', 'operaciones') +
-    `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a>` +
+    `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a></div>` +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
   document.body.prepend(el);
+  centrarActiva(el);
   $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
+}
+
+// En el celular los links del menú se deslizan: deja a la vista el de la pantalla actual.
+function centrarActiva(el) {
+  const links = $('.links', el), on = $('a.on', el);
+  if (links && on) links.scrollLeft = Math.max(0, on.offsetLeft - 24);
 }
 
 // Menú de la plataforma Operaciones Pret a Home (empaquetado y stock perdido). Misma sesión y mismo estilo que el panel de control.
@@ -181,11 +189,12 @@ export function navOperaciones(perfil, activa) {
   el.className = 'side';
   el.setAttribute('aria-label', 'Operaciones Pret a Home');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Operaciones</div></div>' +
-    it('empaquetado.html', 'Empaquetado', 'empaquetado') + it('perdido.html', 'Stock perdido', 'perdido') +
-    '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel') +
-    `<span class="sp"></span><div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
+    '<div class="links">' + it('empaquetado.html', 'Empaquetado', 'empaquetado') + it('perdido.html', 'Stock perdido', 'perdido') +
+    '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel') + '<span class="sp"></span></div>' +
+    `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
   document.body.prepend(el);
+  centrarActiva(el);
   $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
 }
 

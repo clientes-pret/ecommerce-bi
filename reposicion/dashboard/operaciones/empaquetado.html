@@ -6,7 +6,7 @@
   <title>Empaquetado · Operaciones Pret a Home</title>
   <link rel="icon" href="../proveedores/icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
-  <link rel="stylesheet" href="../proveedores/estilo.css?v=11">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -45,7 +45,7 @@ const haceDias = (n) => { const d = new Date(); d.setDate(d.getDate() - n + 1); 
 const PERIODOS = [['hoy', 'Hoy'], ['7', 'Últimos 7 días'], ['30', 'Últimos 30 días'], ['todo', 'Todo']];
 const personas = [...new Set(controles.map((c) => c.armado_por || 'Sin nombre'))].sort((a, b) => a.localeCompare(b, 'es'));
 let periodo = '7', persona = 'todas', marca = 'todas', busca = '', dia = '', pagina = 1;
-const POR_PAG = 50;
+const POR_PAG = matchMedia('(max-width: 760px)').matches ? 20 : 50;  // en el celular cada pedido es una tarjeta alta: páginas más cortas
 
 const tiempo = (s) => s === null ? '—' : s > MAX_SEG ? '<span class="muted">más de 30 min</span>'
   : s < 60 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')} s`;
@@ -79,31 +79,31 @@ function pintar() {
 
   $('#app').innerHTML = `
   <div class="cabecera"><div><h1>Empaquetado</h1><p>Quién empaquetó cada pedido con la app del depósito</p></div></div>
-  <div class="row wrapRow" style="margin:14px 0">
-    <div class="seg" role="group" aria-label="Período">${seg(PERIODOS, 'periodo', dia ? '' : periodo)}</div>
-    <label for="dia" style="position:absolute;left:-9999px">Día</label><input type="date" id="dia" value="${dia}" max="${hoy}" style="width:auto" title="Ver un día puntual">
-    <div class="seg" role="group" aria-label="Marca">${seg([['todas', 'Las dos marcas'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']], 'marca', marca)}</div>
-    <label for="persona" style="position:absolute;left:-9999px">Persona</label><select id="persona" style="width:auto">
+  <div class="row wrapRow filtros" style="margin:14px 0">
+    <div class="seg full" role="group" aria-label="Período">${seg(PERIODOS, 'periodo', dia ? '' : periodo)}</div>
+    <label for="dia" style="position:absolute;left:-9999px">Día</label><input type="date" id="dia" value="${dia}" max="${hoy}" title="Ver un día puntual">
+    <div class="seg full" role="group" aria-label="Marca">${seg([['todas', 'Las dos marcas'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']], 'marca', marca)}</div>
+    <label for="persona" style="position:absolute;left:-9999px">Persona</label><select id="persona">
       <option value="todas">Todas las personas</option>${personas.map((p) => `<option ${p === persona ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
   </div>
-  <div class="centro-comando">
+  <div class="centro-comando compacto">
     <div class="cc-card"><div class="cc-label">Pedidos empaquetados · ${esc(titPer)}</div><div class="cc-valor num">${pedidos.size}</div><div class="cc-sub">${persona === 'todas' ? 'todas las personas' : esc(persona)}</div></div>
     <div class="cc-card"><div class="cc-label">Unidades</div><div class="cc-valor num">${unidades}</div><div class="cc-sub">productos confirmados en los paquetes</div></div>
     <div class="cc-card ${faltante.length ? 'alerta' : ''}"><div class="cc-label">Con faltante</div><div class="cc-valor num">${faltante.length}</div><div class="cc-sub">${faltante.length ? 'paquetes que se cerraron sin algún producto' : 'todos salieron completos'}</div></div>
     <div class="cc-card"><div class="cc-label">Tiempo típico por pedido</div><div class="cc-valor md num">${tiempo(mediana(conPersona.map((c) => c.seg)))}</div><div class="cc-sub">de escanear la etiqueta a confirmar</div></div>
   </div>
   <section class="card tabla"><div class="cab"><div><h2>Por persona</h2><span class="muted">${esc(titPer)}</span></div></div>
-    <div class="scroll"><table style="min-width:620px"><thead><tr><th scope="col">Persona</th><th scope="col" class="r">Pedidos</th><th scope="col" class="r">Unidades</th>
+    <div class="scroll"><table class="apilar c3" style="min-width:620px"><thead><tr><th scope="col">Persona</th><th scope="col" class="r">Pedidos</th><th scope="col" class="r">Unidades</th>
       <th scope="col" class="r">Con faltante</th><th scope="col" class="r">Días que empaquetó</th><th scope="col" class="r">Tiempo típico</th></tr></thead>
-    <tbody>${filasPersona.map(([k, p]) => `<tr><th scope="row"><a href="#" data-ver="${esc(k)}">${esc(k)}</a></th><td class="r num">${p.n}</td><td class="r num">${p.u}</td>
-      <td class="r num">${p.f || 0}</td><td class="r num">${p.dias.size}</td><td class="r num">${tiempo(mediana(p.segs))}</td></tr>`).join('') ||
+    <tbody>${filasPersona.map(([k, p]) => `<tr><th scope="row" class="tit"><a href="#" data-ver="${esc(k)}">${esc(k)}</a></th><td class="r num" data-label="Pedidos">${p.n}</td><td class="r num" data-label="Unidades">${p.u}</td>
+      <td class="r num" data-label="Con faltante">${p.f || 0}</td><td class="r num" data-label="Días">${p.dias.size}</td><td class="r num" data-label="Tiempo típico">${tiempo(mediana(p.segs))}</td></tr>`).join('') ||
       '<tr><td colspan="6" class="muted">Nadie empaquetó en este período.</td></tr>'}</tbody></table></div></section>
   <section class="card tabla"><div class="cab"><div><h2>Pedidos</h2><span class="muted" id="cuantos"></span></div>
-    <div><label for="busca" style="position:absolute;left:-9999px">Buscar</label><input id="busca" type="search" placeholder="Número de venta, envío o SKU" value="${esc(busca)}" style="min-width:260px"></div></div>
-    <div class="scroll"><table style="min-width:900px"><thead><tr><th scope="col">Fecha</th><th scope="col">Pedido</th><th scope="col">Empaquetó</th><th scope="col">Resultado</th>
+    <div class="ancho-m"><label for="busca" style="position:absolute;left:-9999px">Buscar</label><input id="busca" class="busca" type="search" placeholder="Número de venta, envío o SKU" value="${esc(busca)}"></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:900px"><thead><tr><th scope="col">Fecha</th><th scope="col">Pedido</th><th scope="col">Empaquetó</th><th scope="col">Resultado</th>
       <th scope="col">Productos</th><th scope="col" class="r">Unidades</th><th scope="col" class="r">Tiempo</th></tr></thead>
     <tbody id="filas"></tbody></table></div>
-    <div class="row" id="pager" style="justify-content:space-between;align-items:center;padding:10px 4px;gap:10px"></div></section>
+    <div class="row pager" id="pager" style="justify-content:space-between;align-items:center;padding:10px 4px;gap:10px"></div></section>
   <p class="muted small" style="line-height:1.6">Si un pedido se escaneó más de una vez (por ejemplo, primero con faltante y después completo), aparece una fila por cada vez. "Tiempo típico" es la mediana: no la mueve un pedido que quedó abierto en el celular.</p>`;
 
   pintarFilas(conPersona);
@@ -124,12 +124,12 @@ function pintarFilas(lista) {
   if (pagina > paginas) pagina = paginas;
   const desde = (pagina - 1) * POR_PAG;
   $('#filas').innerHTML = filas.slice(desde, desde + POR_PAG).map((c) => `<tr>
-    <td class="num">${fechaHora(c.creado_at)}</td>
-    <td><b>#${esc(c.pedido)}</b><div class="small muted">${TIENDAS[c.tienda] || esc(c.tienda)} · ${CANALES[c.canal] || esc(c.canal)}</div></td>
-    <td>${esc(c.armado_por || 'Sin nombre')}</td>
-    <td>${c.resultado === 'completo' ? '<span class="chip ok">Completo</span>' : '<span class="chip bad">Con faltante</span>'}</td>
-    <td class="small">${c.items.map((i) => `<div${i.estado === 'no_hay' ? ' style="color:var(--bad)"' : ''}>${i.estado === 'no_hay' ? 'Falta: ' : ''}${esc(i.nombre || i.sku || '')}${i.variante ? ` · ${esc(i.variante)}` : ''}${i.cantidad > 1 ? ` ×${i.cantidad}` : ''}</div>`).join('')}</td>
-    <td class="r num">${c.unidades}</td><td class="r num">${tiempo(c.seg)}</td></tr>`).join('') ||
+    <td class="num" data-label="Fecha">${fechaHora(c.creado_at)}</td>
+    <td class="tit"><b>#${esc(c.pedido)}</b><div class="small muted">${TIENDAS[c.tienda] || esc(c.tienda)} · ${CANALES[c.canal] || esc(c.canal)}</div></td>
+    <td data-label="Empaquetó">${esc(c.armado_por || 'Sin nombre')}</td>
+    <td class="full sube">${c.resultado === 'completo' ? '<span class="chip ok">Completo</span>' : '<span class="chip bad">Con faltante</span>'}</td>
+    <td class="small full baja" data-label="Productos">${c.items.map((i) => `<div${i.estado === 'no_hay' ? ' style="color:var(--bad)"' : ''}>${i.estado === 'no_hay' ? 'Falta: ' : ''}${esc(i.nombre || i.sku || '')}${i.variante ? ` · ${esc(i.variante)}` : ''}${i.cantidad > 1 ? ` ×${i.cantidad}` : ''}</div>`).join('')}</td>
+    <td class="r num" data-label="Unidades">${c.unidades}</td><td class="r num" data-label="Tiempo">${tiempo(c.seg)}</td></tr>`).join('') ||
     `<tr><td colspan="7" class="muted">${q ? 'No encontré ese pedido.' : 'No hay pedidos empaquetados en este período.'}</td></tr>`;
   $('#pager').innerHTML = filas.length <= POR_PAG ? '' : `<span class="muted small">${desde + 1}–${Math.min(desde + POR_PAG, filas.length)} de ${filas.length}</span>
     <div class="row" style="gap:8px"><button type="button" class="btn" id="ant" ${pagina <= 1 ? 'disabled' : ''}>← Anterior</button><span class="small">Página ${pagina} de ${paginas}</span>
