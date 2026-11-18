@@ -242,7 +242,12 @@ function generarPDF(proveedor, lineas, unidad = "unidades", oc = null, extra = "
     14, y
   );
 
-  doc.save(`${oc ? `OC_${oc}_` : "pedido_"}${proveedor.replace(/\s+/g, "_")}_${hoy.replace(/\//g, "-")}.pdf`);
+  // El archivo se llama igual que el título ("OC 131 - City Blanco - Funda para sillón.pdf"), así cada OC baja con su
+  // propio nombre. Sin número (borrador, antes de confirmar) arranca con "Borrador". Se sacan los caracteres que
+  // los sistemas de archivos no admiten.
+  const nombreArchivo = (oc ? tituloPDF : ["Borrador", proveedor, String(extra || "").trim()].filter(Boolean).join(" - "))
+    .replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim();
+  doc.save(`${nombreArchivo}.pdf`);
 }
 
 const NAV_LINKS = [
