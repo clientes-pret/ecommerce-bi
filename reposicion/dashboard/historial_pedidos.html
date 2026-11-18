@@ -40,7 +40,7 @@
 </head>
 <body>
 <main>
-  <h1>📋 Historial de pedidos</h1>
+  <h1>📋 Historial de pedidos (órdenes de compra)</h1>
   <div class="filtros-estado">
     <label><input type="checkbox" class="filtro-estado" value="enviado" checked> Enviado</label>
     <label><input type="checkbox" class="filtro-estado" value="recibido_parcial" checked> Recibido parcial</label>
@@ -54,7 +54,7 @@
 <script src="config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="assets/logo-black-base64.js"></script>
-<script src="app.js?v=20261015"></script>
+<script src="app.js?v=20261118"></script>
 <script>
 renderNav("pedidos");
 
@@ -98,7 +98,7 @@ function renderPedido(p) {
   const grupos = agruparItemsPorSku(p.items || []);
   el.innerHTML = `
     <div class="pedido-header">
-      <span class="proveedor">📦 ${p.proveedor}</span>
+      <span class="proveedor">📦 <span class="titulo-oc"></span></span>
       <span class="muted">${new Date(p.creado_at).toLocaleDateString("es-AR")} · ${p.creado_por}${p.unidad_medida === "bultos" ? " · en bultos" : ""}</span>
       <span class="muted">${p.items_recibidos}/${p.total_items} líneas recibidas (${pct}%)</span>
       <span class="badge ${p.estado}">${ESTADO_LABEL[p.estado] || p.estado}</span>
@@ -132,6 +132,9 @@ function renderPedido(p) {
       </table>
       ${p.notas ? `<p class="muted">Notas: ${p.notas}</p>` : ""}
       <div class="pedido-acciones">
+        <label class="unidad-medida">Título a mano:
+          <input type="text" class="titulo-extra" maxlength="120" value="${(p.titulo_extra || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;")}" placeholder="ej. Sábanas 1200 hilos" style="width:230px;background:#0f1115;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px"></label>
+        <button class="secondary btn-guardar-titulo">💾 Guardar título</button>
         ${selectorUnidad(p.unidad_medida || "unidades", !editable)}
         <button class="secondary btn-descargar-pdf">⬇️ Descargar PDF</button>
         ${editable ? `<button class="secondary btn-guardar-cantidades">💾 Guardar cambios</button>` : ""}
@@ -139,6 +142,24 @@ function renderPedido(p) {
       </div>
     </div>
   `;
+  const pintarTitulo = () => { el.querySelector(".titulo-oc").textContent = tituloOC(p.id, p.proveedor, p.titulo_extra); };
+  pintarTitulo();
+  // El título a mano se puede cambiar en cualquier estado (no toca las cantidades).
+  el.querySelector(".btn-guardar-titulo").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget, texto = el.querySelector(".titulo-extra").value.trim();
+    btn.disabled = true;
+    try {
+      await apiFetch(`/pedidos/${p.id}/titulo`, { method: "POST", body: JSON.stringify({ titulo_extra: texto }) });
+      p.titulo_extra = texto || null;
+      pintarTitulo();
+      btn.textContent = "✓ Guardado";
+      setTimeout(() => { btn.textContent = "💾 Guardar título"; btn.disabled = false; }, 1500);
+    } catch (err) {
+      alert(`No se pudo guardar el título: ${err.message}`);
+      btn.disabled = false;
+    }
+  });
   el.querySelector(".pedido-header").addEventListener("click", () => {
     const det = el.querySelector(".detalle");
     det.style.display = det.style.display === "block" ? "none" : "block";
@@ -146,7 +167,7 @@ function renderPedido(p) {
 
   el.querySelector(".btn-descargar-pdf").addEventListener("click", (e) => {
     e.stopPropagation();
-    generarPDF(p.proveedor, p.items || [], el.querySelector(".sel-unidad").value);
+    generarPDF(p.proveedor, p.items || [], el.querySelector(".sel-unidad").value, p.id, el.querySelector(".titulo-extra").value);
   });
 
   el.querySelectorAll(".btn-recibido").forEach((btn) => {
@@ -192,7 +213,7 @@ function renderPedido(p) {
   if (btnCancelar) {
     btnCancelar.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!confirm(`¿Cancelar el pedido a ${p.proveedor} del ${new Date(p.creado_at).toLocaleDateString("es-AR")}?`)) return;
+      if (!confirm(`¿Cancelar la ${tituloOC(p.id, p.proveedor, p.titulo_extra)} del ${new Date(p.creado_at).toLocaleDateString("es-AR")}?`)) return;
       btnCancelar.disabled = true;
       try {
         await apiFetch(`/pedidos/${p.id}/cancelar`, { method: "POST", body: JSON.stringify({ por: getUser() }) });

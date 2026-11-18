@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Órdenes de compra · Proveedores</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=12">
+  <style>
+    .oc-barra { height: 8px; border-radius: 999px; background: var(--line-soft); overflow: hidden; min-width: 90px; }
+    .oc-barra > i { display: block; height: 100%; background: var(--ok); }
+    tr.oc-ok td { background: var(--ok-bg); }
+    .oc-qty { width: 96px; text-align: right; }
+    .oc-chk { width: 22px; height: 22px; min-height: 0; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, $$, esc, guard, nav, qs, peso0, fecha } from './app.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'ordenes');
+
+// La OC es un pedido de reposición (repo_pedidos) y su número es el id del pedido.
+const EST = { enviado: ['Enviado', 'warn'], recibido_parcial: ['Recibido parcial', 'warn'], recibido_completo: ['Recibido completo', 'ok'], cancelado: ['Cancelado', ''] };
+const chipOC = (e) => { const [t, c] = EST[e] || [e, '']; return `<span class="chip ${c}">${esc(t)}</span>`; };
+const tituloOC = (o) => [`OC ${o.id} - ${o.proveedor}`, (o.titulo_extra || '').trim()].filter(Boolean).join(' - ');
+const ABIERTAS = ['enviado', 'recibido_parcial'];
+const ocId = Number(qs('id')) || null;
+
+if (ocId) await detalle(ocId); else await lista();
+
+// ───────────────────────── Lista ─────────────────────────
+async function lista() {
+  $('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando órdenes de compra…</p>';
+  const [{ data: ocs, error }, { data: movs }] = await Promise.all([
+    sb.from('repo_pedidos').select('id,proveedor,titulo_extra,creado_at,creado_por,estado,unidad_medida,repo_pedido_items(cantidad_pedida,cantidad_recibida)').order('id', { ascending: false }).limit(1000),
+    sb.from('cc_movimientos').select('oc_id,ingreso,pago').not('oc_id', 'is', null).limit(1000),
+  ]);
+  if (error) { $('#app').innerHTML = `<p class="err">No pude cargar las órdenes de compra: ${esc(error.message)}</p>`; return; }
+  const fin = {};
+  for (const m of movs || []) { const f = (fin[m.oc_id] ||= { fac: 0, pag: 0 }); f.fac += Number(m.ingreso); f.pag += Number(m.pago); }
+  const filas = (ocs || []).map((o) => {
+    const items = o.repo_pedido_items || [];
+    return { ...o, ped: items.reduce((s, i) => s + i.cantidad_pedida, 0), rec: items.reduce((s, i) => s + Math.min(i.cantidad_recibida, i.cantidad_pedida), 0), fac: fin[o.id]?.fac || 0, pag: fin[o.id]?.pag || 0 };
+  });
+  let ver = 'abiertas';
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Órdenes de compra</h1><p>Cada pedido de reposición es una OC con su número · marcá lo que ingresó y relacioná facturas y pagos</p></div></div>
+  <section class="card tabla" style="margin-top:16px"><div class="cab"><div><h2>OC</h2><span class="muted" id="cuenta"></span></div>
+    <div class="row wrapRow"><input id="q" style="max-width:280px" placeholder="Buscar número o proveedor…" aria-label="Buscar OC">
+    <div class="seg gris" role="group" aria-label="Qué OC ver">${[['abiertas', 'Abiertas'], ['todas', 'Todas']].map(([k, t]) => `<button type="button" data-ver="${k}" aria-pressed="${ver === k}">${t}</button>`).join('')}</div></div></div>
+  <div class="scroll"><table style="min-width:820px"><thead><tr><th scope="col">OC</th><th scope="col">Fecha</th><th scope="col">Estado</th><th scope="col">Ingresó</th><th scope="col" class="r">Facturado</th><th scope="col" class="r">Pagado</th></tr></thead><tbody id="tb"></tbody></table></div></section>`;
+  const pintar = () => {
+    const q = $('#q').value.trim().toLowerCase().replace(/^oc\s*/, '');
+    const v = filas.filter((o) => (ver === 'todas' || ABIERTAS.includes(o.estado)) && (!q || String(o.id) === q || o.proveedor.toLowerCase().includes(q)));
+    $('#cuenta').textContent = `${v.length} ${v.length === 1 ? 'orden' : 'órdenes'}`;
+    $('#tb').innerHTML = v.map((o) => {
+      const u = o.unidad_medida === 'bultos' ? 'bultos' : 'u.', pct = o.ped ? Math.round((o.rec / o.ped) * 100) : 0;
+      return `<tr class="click" onclick="location.href='ordenes.html?id=${o.id}'"><th scope="row"><a class="prov" href="ordenes.html?id=${o.id}">${esc(tituloOC(o))}</a></th>
+      <td>${fecha(o.creado_at)}<div class="muted small">${esc(o.creado_por)}</div></td><td>${chipOC(o.estado)}</td>
+      <td><div class="num small">${o.rec} de ${o.ped} ${u} (${pct}%)</div><div class="oc-barra"><i style="width:${Math.min(100, pct)}%"></i></div></td>
+      <td class="r num">${o.fac ? peso0(o.fac) : ''}</td><td class="r num">${o.pag ? peso0(o.pag) : ''}</td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="muted">No hay órdenes de compra con ese filtro.</td></tr>';
+  };
+  $('#q').oninput = pintar;
+  $$('[data-ver]').forEach((b) => (b.onclick = () => { ver = b.dataset.ver; $$('[data-ver]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); pintar(); }));
+  pintar();
+}
+
+// ───────────────────────── Detalle + checklist ─────────────────────────
+async function detalle(id) {
+  const [{ data: oc, error }, { data: items }, { data: movs }, { data: recs }, { data: provs }] = await Promise.all([
+    sb.from('repo_pedidos').select('id,proveedor,titulo_extra,creado_at,creado_por,estado,notas,unidad_medida').eq('id', id).maybeSingle(),
+    sb.from('repo_pedido_items').select('id,sku,destino,cantidad_pedida,cantidad_recibida,recibido_completo,recibido_manual').eq('pedido_id', id).order('sku').order('destino').limit(1000),
+    sb.from('cc_movimientos').select('id,fecha,tipo,detalle,ingreso,pago').eq('oc_id', id).order('fecha').order('id'),
+    sb.from('cc_recepciones').select('id,fecha,nro_remito,bultos,estado').eq('oc_id', id).neq('estado', 'anulada').order('fecha'),
+    sb.from('cc_proveedores').select('id,nombre,repo_nombres'),
+  ]);
+  if (error || !oc) { $('#app').innerHTML = `<p class="small"><a href="ordenes.html">← Órdenes de compra</a></p><p>No encontré la OC ${id}.</p>`; return; }
+  const prov = (provs || []).find((p) => (p.repo_nombres || []).includes(oc.proveedor));
+  const lineas = items || [];
+  const info = {};
+  const skus = [...new Set(lineas.map((i) => i.sku))];
+  for (let k = 0; k < skus.length; k += 100) {
+    const { data } = await sb.from('cc_productos').select('sku,producto,color,medida').in('sku', skus.slice(k, k + 100));
+    (data || []).forEach((x) => (info[x.sku] = x));
+  }
+  const cancelada = oc.estado === 'cancelado', u = oc.unidad_medida === 'bultos' ? 'bultos' : 'u.';
+  let solo = 'todo', texto = '';
+  const nombre = (s) => [info[s]?.producto, info[s]?.color, info[s]?.medida].filter(Boolean).join(' · ');
+
+  function estadoLocal() {
+    if (cancelada) return 'cancelado';
+    if (lineas.length && lineas.every((i) => i.recibido_completo)) return 'recibido_completo';
+    if (lineas.some((i) => i.recibido_completo || i.cantidad_recibida > 0)) return 'recibido_parcial';
+    return 'enviado';
+  }
+  function resumen() {
+    const ped = lineas.reduce((s, i) => s + i.cantidad_pedida, 0), rec = lineas.reduce((s, i) => s + Math.min(i.cantidad_recibida, i.cantidad_pedida), 0);
+    const ok = lineas.filter((i) => i.recibido_completo).length, pct = ped ? Math.round((rec / ped) * 100) : 0;
+    return `<div class="row wrapRow" style="gap:24px"><div><div class="cc-label">Ingresó</div><b class="num">${rec} de ${ped} ${u}</b> <span class="muted">(${pct}%)</span></div>
+      <div><div class="cc-label">Líneas completas</div><b class="num">${ok} de ${lineas.length}</b></div><div style="flex:1;min-width:140px"><div class="oc-barra"><i style="width:${Math.min(100, pct)}%"></i></div></div></div>`;
+  }
+  function filaHTML(i) {
+    return `<tr data-i="${i.id}" class="${i.recibido_completo ? 'oc-ok' : ''}"><td><input type="checkbox" class="oc-chk" data-chk="${i.id}" ${i.recibido_completo ? 'checked' : ''} ${cancelada ? 'disabled' : ''} aria-label="Ingresó completo ${esc(i.sku)}"></td>
+      <td><b>${esc(i.sku)}</b><div class="small muted">${esc(nombre(i.sku))}</div></td><td>${esc(i.destino.replace('_', ' '))}</td>
+      <td class="r num">${i.cantidad_pedida}</td><td class="r"><input type="number" min="0" class="oc-qty" data-qty="${i.id}" value="${i.cantidad_recibida}" ${cancelada ? 'disabled' : ''} aria-label="Cantidad que ingresó de ${esc(i.sku)}"></td>
+      <td class="r num ${i.recibido_completo ? '' : 'warn-t'}" data-pend="${i.id}">${Math.max(0, i.cantidad_pedida - i.cantidad_recibida) || ''}</td></tr>`;
+  }
+  function visibles() {
+    const q = texto.trim().toLowerCase();
+    return lineas.filter((i) => (solo === 'todo' || !i.recibido_completo) && (!q || i.sku.toLowerCase().includes(q) || nombre(i.sku).toLowerCase().includes(q)));
+  }
+  function pintarTabla() {
+    const v = visibles();
+    $('#tb').innerHTML = v.map(filaHTML).join('') || '<tr><td colspan="6" class="muted">No hay líneas con ese filtro.</td></tr>';
+    $('#cuentaL').textContent = `${v.length} de ${lineas.length} líneas`;
+    enganchar();
+  }
+  function refrescarFila(i) {
+    const tr = $(`tr[data-i="${i.id}"]`); if (!tr) return;
+    if (solo === 'pend' && i.recibido_completo) { pintarTabla(); return; }
+    tr.className = i.recibido_completo ? 'oc-ok' : '';
+    $('[data-chk]', tr).checked = i.recibido_completo; $('[data-qty]', tr).value = i.cantidad_recibida;
+    const p = $('[data-pend]', tr); p.textContent = Math.max(0, i.cantidad_pedida - i.cantidad_recibida) || ''; p.className = `r num ${i.recibido_completo ? '' : 'warn-t'}`;
+  }
+  function refrescarCabecera() { $('#resumen').innerHTML = resumen(); $('#estado').innerHTML = chipOC(estadoLocal()); }
+
+  async function marcar(i, cant) {
+    cant = Math.max(0, Math.floor(Number(cant)) || 0);
+    const { error: e } = await sb.rpc('oc_marcar_recibido', { p_item_id: i.id, p_cantidad: cant });
+    if (e) { alert('No se pudo guardar: ' + e.message); refrescarFila(i); return; }
+    i.cantidad_recibida = cant; i.recibido_completo = cant >= i.cantidad_pedida; i.recibido_manual = true;
+    refrescarFila(i); refrescarCabecera();
+  }
+  function enganchar() {
+    $$('[data-chk]').forEach((c) => (c.onchange = () => { const i = lineas.find((x) => x.id === +c.dataset.chk); marcar(i, c.checked ? i.cantidad_pedida : 0); }));
+    $$('[data-qty]').forEach((c) => (c.onchange = () => { const i = lineas.find((x) => x.id === +c.dataset.qty); if (String(c.value).trim() === '') { c.value = i.cantidad_recibida; return; } marcar(i, c.value); }));
+  }
+
+  const fac = (movs || []).reduce((s, m) => s + Number(m.ingreso), 0), pag = (movs || []).reduce((s, m) => s + Number(m.pago), 0);
+  const prm = prov ? `proveedor=${prov.id}&oc=${id}` : null;
+  $('#app').innerHTML = `<p class="small"><a href="ordenes.html">← Órdenes de compra</a></p>
+  <div class="cabecera"><div><div class="row" style="gap:10px"><h1>${esc(tituloOC(oc))}</h1><span id="estado">${chipOC(estadoLocal())}</span></div>
+    <p>${fecha(oc.creado_at)} · pedida por ${esc(oc.creado_por)} · en ${oc.unidad_medida === 'bultos' ? 'bultos' : 'unidades'}${prov ? ` · <a href="proveedor.html?id=${prov.id}">ver cuenta corriente</a>` : ''}</p></div>
+    <div class="row wrapRow">${prm ? `<a class="btn" href="nuevo.html?${prm}&tipo=comprobante">Cargar factura de esta OC</a><a class="btn" href="nuevo.html?${prm}&tipo=pago">Registrar pago de esta OC</a>`
+      : `<span class="muted small">Para relacionar facturas y pagos, vinculá "${esc(oc.proveedor)}" con un proveedor de la cuenta corriente (pestaña Pedidos del proveedor).</span>`}</div></div>
+  ${oc.notas ? `<p class="muted">${esc(oc.notas)}</p>` : ''}
+  <div class="card" style="margin-top:16px" id="resumen">${resumen()}</div>
+  ${oc.unidad_medida === 'bultos' ? '<div class="cc-nota" style="margin:-8px 0 12px">Esta OC está en bultos: la estimación automática no cuenta bultos, acá lo que marques es lo que vale.</div>' : ''}
+  <section class="card tabla"><div class="cab"><div><h2>Checklist de ingreso</h2><span class="muted" id="cuentaL"></span></div>
+    <div class="row wrapRow"><input id="qL" style="max-width:240px" placeholder="Buscar SKU o producto…" aria-label="Buscar en la OC">
+      <div class="seg gris" role="group" aria-label="Qué líneas ver">${[['todo', 'Todas'], ['pend', 'Solo pendientes']].map(([k, t]) => `<button type="button" data-solo="${k}" aria-pressed="${solo === k}">${t}</button>`).join('')}</div>
+      ${cancelada ? '' : '<button class="btn sm" id="todo">Marcar todo recibido</button>'}</div></div>
+  <div class="scroll"><table style="min-width:640px"><thead><tr><th scope="col" style="width:44px">✓</th><th scope="col">SKU / producto</th><th scope="col">Destino</th><th scope="col" class="r">Pedido</th><th scope="col" class="r">Ingresó</th><th scope="col" class="r">Falta</th></tr></thead><tbody id="tb"></tbody></table></div>
+  <p class="cc-nota" style="padding:0 24px">Tildar una línea la da por completa; también podés escribir cuánto ingresó. Lo que marcás acá reemplaza la estimación automática de esa línea.${cancelada ? ' Esta OC está cancelada: no se puede editar.' : ''}</p></section>
+  <div class="grid dos">
+    <section class="card tabla"><div class="cab"><div><h2>Facturas y pagos de esta OC</h2><span class="muted">Facturado ${peso0(fac)} · Pagado ${peso0(pag)}</span></div></div>
+      <div class="scroll">${(movs || []).length ? `<table><thead><tr><th scope="col">Fecha</th><th scope="col">Movimiento</th><th scope="col" class="r">Factura</th><th scope="col" class="r">Pago</th></tr></thead><tbody>${movs.map((m) => `<tr><td class="num muted">${fecha(m.fecha)}</td><td>${esc(m.detalle)}</td><td class="r num">${Number(m.ingreso) ? peso0(m.ingreso) : ''}</td><td class="r num ok-t">${Number(m.pago) ? peso0(m.pago) : ''}</td></tr>`).join('')}</tbody></table>`
+        : '<p class="muted" style="padding:0 24px 12px">Todavía no hay facturas ni pagos relacionados con esta OC.</p>'}</div></section>
+    <section class="card tabla"><div class="cab"><div><h2>Remitos recibidos en depósito</h2></div></div>
+      <div class="scroll">${(recs || []).length ? `<table><thead><tr><th scope="col">Fecha</th><th scope="col">Remito</th><th scope="col" class="r">Bultos</th></tr></thead><tbody>${recs.map((r) => `<tr class="click" onclick="location.href='recepcion.html?id=${r.id}'"><td>${fecha(r.fecha)}</td><td>${esc(r.nro_remito || 's/n')}</td><td class="r">${r.bultos ?? ''}</td></tr>`).join('')}</tbody></table>`
+        : '<p class="muted" style="padding:0 24px 12px">Ningún remito relacionado todavía (se relaciona desde la pantalla de la recepción).</p>'}</div></section>
+  </div>`;
+  $('#qL').oninput = (e) => { texto = e.target.value; pintarTabla(); };
+  $$('[data-solo]').forEach((b) => (b.onclick = () => { solo = b.dataset.solo; $$('[data-solo]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); pintarTabla(); }));
+  const t = $('#todo');
+  if (t) t.onclick = async () => {
+    if (!confirm(`¿Marcar TODA la ${tituloOC(oc)} como recibida? Cada línea queda con la cantidad pedida.`)) return;
+    t.disabled = true;
+    const { error: e } = await sb.rpc('oc_marcar_todo_recibido', { p_pedido_id: id });
+    if (e) { alert('No se pudo guardar: ' + e.message); t.disabled = false; return; }
+    lineas.forEach((i) => { i.cantidad_recibida = i.cantidad_pedida; i.recibido_completo = true; i.recibido_manual = true; });
+    pintarTabla(); refrescarCabecera(); t.disabled = false;
+  };
+  pintarTabla();
+}
+</script>
+</body>
+</html>

@@ -39,6 +39,7 @@ function vistaMovimiento() {
 <div><label for="prov">Proveedor</label><select id="prov" required><option value="">Elegir…</option>${(provs || []).map((p) => `<option value="${p.id}" ${qs('proveedor') == p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select></div>
 <div><label for="tipo">Qué es</label><select id="tipo">${[['pago', 'Pago'], ['comprobante', 'Factura / comprobante'], ['nota_credito', 'Nota de crédito'], ['nota_debito', 'Nota de débito'], ['ajuste', 'Ajuste']].map(([v, t]) => `<option value="${v}" ${v === tipo0 ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
 <div id="ajuste" hidden><label for="suma">El ajuste…</label><select id="suma"><option value="resta">Baja lo que debemos</option><option value="suma">Aumenta lo que debemos</option></select></div>
+<div><label for="oc">Orden de compra (opcional)</label><select id="oc"><option value="">Sin OC</option></select></div>
 <div><label for="fecha">Fecha</label><input type="date" id="fecha" value="${hoy()}" required></div>
 <div><label for="imp">Importe</label><input id="imp" inputmode="decimal" placeholder="1.250.000,00" required></div>
 <div id="pago" hidden><label for="medio">Medio de pago</label><select id="medio"><option value="transferencia">Transferencia</option><option value="cheque">Cheque</option><option value="efectivo">Efectivo</option><option value="otro">Otro</option></select></div>
@@ -54,6 +55,21 @@ function vistaMovimiento() {
     $('#lnum').textContent = t === 'pago' ? 'Referencia (opcional)' : 'Número de comprobante';
   };
   $('#tipo').onchange = $('#medio').onchange = ajustar; ajustar();
+  // OC del proveedor elegido (los pedidos de reposición se vinculan al proveedor por nombre: cc_proveedores.repo_nombres).
+  // Una OC cancelada no se ofrece, salvo que venga elegida por link (?oc=).
+  const cargarOCs = async () => {
+    const pid = $('#prov').value, sel = $('#oc'), previa = sel.value || qs('oc') || '';
+    sel.innerHTML = '<option value="">Sin OC</option>';
+    if (!pid) return;
+    const { data: pv } = await sb.from('cc_proveedores').select('repo_nombres').eq('id', pid).maybeSingle();
+    if (!pv?.repo_nombres?.length) { sel.innerHTML = '<option value="">Sin OC (este proveedor no está vinculado con reposición)</option>'; return; }
+    const { data: ocs } = await sb.from('repo_pedidos').select('id,proveedor,creado_at,estado').in('proveedor', pv.repo_nombres).order('id', { ascending: false }).limit(60);
+    const fec = (d) => d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4);
+    sel.innerHTML = '<option value="">Sin OC</option>' + (ocs || []).filter((o) => o.estado !== 'cancelado' || String(o.id) === String(previa))
+      .map((o) => `<option value="${o.id}">OC ${o.id} - ${esc(o.proveedor)} · ${fec(o.creado_at)}</option>`).join('');
+    if (previa && [...sel.options].some((o) => o.value === String(previa))) sel.value = String(previa);
+  };
+  $('#prov').onchange = cargarOCs; cargarOCs();
   $('#f').onsubmit = async (e) => {
     e.preventDefault(); $('#err').textContent = ''; $('#ok').disabled = true;
     const tipo = $('#tipo').value, monto = parseMonto($('#imp').value), prov = $('#prov').value;
@@ -62,13 +78,14 @@ function vistaMovimiento() {
     const etiqueta = { pago: 'PAGO', comprobante: 'FC', nota_credito: 'NC', nota_debito: 'ND', ajuste: 'AJUSTE' }[tipo];
     const num = $('#num').value.trim();
     const row = { proveedor_id: +prov, fecha: $('#fecha').value, tipo, detalle: [etiqueta, num].filter(Boolean).join(' '), numero: num || null, ingreso: baja ? 0 : monto, pago: baja ? monto : 0, nota: $('#nota').value.trim() || null, origen: 'app' };
+    if ($('#oc').value) row.oc_id = +$('#oc').value; // solo si se eligió: sin OC el alta queda igual que antes
     if (tipo === 'pago') {
       row.medio_pago = $('#medio').value;
       if (row.medio_pago === 'cheque') { row.cheque_nro = $('#chqnro').value.trim() || null; row.cheque_fecha_cobro = $('#chqfec').value || null; row.cheque_cobrado = false; }
     }
     const { error } = await sb.from('cc_movimientos').insert(row);
     if (error) { $('#err').textContent = error.message; $('#ok').disabled = false; return; }
-    $('#ok').textContent = 'Guardado ✓'; setTimeout(() => (location.href = `proveedor.html?id=${prov}`), 600);
+    $('#ok').textContent = 'Guardado ✓'; setTimeout(() => (location.href = row.oc_id ? `ordenes.html?id=${row.oc_id}` : `proveedor.html?id=${prov}`), 600);
   };
 }
 

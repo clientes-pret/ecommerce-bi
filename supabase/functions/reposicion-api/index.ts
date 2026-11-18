@@ -282,12 +282,26 @@ async function postTemporada(sku: string, req: Request) {
 // En qué están expresadas las cantidades de TODO el pedido (no por línea).
 const UNIDADES_MEDIDA = ["unidades", "bultos"];
 
+// Texto a mano del título de la OC: sin espacios de más y con tope de largo; vacío = sin texto.
+function textoTitulo(t: unknown): string | null {
+  return typeof t === "string" && t.trim() ? t.trim().replace(/\s+/g, " ").slice(0, 120) : null;
+}
+
+// Cambia (o borra) el texto a mano del título de una OC ya hecha.
+async function postTituloPedido(id: string, req: Request) {
+  const { titulo_extra } = await req.json();
+  const { error } = await supabase.from("repo_pedidos").update({ titulo_extra: textoTitulo(titulo_extra) }).eq("id", id);
+  if (error) throw error;
+  return json({ ok: true });
+}
+
 async function postPedido(req: Request) {
   const body = await req.json();
-  const { proveedor, creado_por, notas, items, unidad_medida } = body as {
+  const { proveedor, creado_por, notas, items, unidad_medida, titulo_extra } = body as {
     proveedor: string;
     creado_por: string;
     notas?: string;
+    titulo_extra?: string; // texto a mano que se agrega al título de la OC
     unidad_medida?: string;
     items: { sku: string; destino: string; cantidad_pedida: number; cantidad_sugerida?: number }[];
   };
@@ -300,7 +314,10 @@ async function postPedido(req: Request) {
 
   const { data: pedido, error: pedidoError } = await supabase
     .from("repo_pedidos")
-    .insert({ proveedor, creado_por, notas: notas ?? null, unidad_medida: unidad_medida ?? "unidades" })
+    .insert({
+      proveedor, creado_por, notas: notas ?? null, unidad_medida: unidad_medida ?? "unidades",
+      ...(textoTitulo(titulo_extra) ? { titulo_extra: textoTitulo(titulo_extra) } : {}),
+    })
     .select()
     .single();
   if (pedidoError) throw pedidoError;
@@ -574,6 +591,9 @@ Deno.serve(async (req) => {
       return await postTemporada(decodeURIComponent(parts[1]), req);
     }
     if (req.method === "POST" && path === "/pedidos") return await postPedido(req);
+    if (req.method === "POST" && parts[0] === "pedidos" && parts[2] === "titulo") {
+      return await postTituloPedido(decodeURIComponent(parts[1]), req);
+    }
     if (req.method === "POST" && parts[0] === "pedidos" && parts[2] === "cancelar") {
       return await postCancelarPedido(decodeURIComponent(parts[1]), req);
     }

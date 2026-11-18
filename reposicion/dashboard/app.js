@@ -110,7 +110,7 @@ function agruparLineasPorSku(lineas) {
   for (const l of lineas) {
     if (!bySku.has(l.sku)) bySku.set(l.sku, { sku: l.sku, nombre: l.nombre, deposito: 0, full: 0 });
     const g = bySku.get(l.sku);
-    if (l.destino === "deposito") g.deposito += l.cantidad_pedida;
+        if (l.destino === "deposito") g.deposito += l.cantidad_pedida;
     else g.full += l.cantidad_pedida;
   }
   return Array.from(bySku.values()).sort((a, b) =>
@@ -148,7 +148,13 @@ function selectorUnidad(valor = "unidades", disabled = false) {
     </select></label>`;
 }
 
-function generarPDF(proveedor, lineas, unidad = "unidades") {
+// Título de una orden de compra: "OC 124 - Palette" y, si se escribió a mano, "OC 124 - Palette - Sábanas 1200 hilos".
+function tituloOC(id, proveedor, extra = "") {
+  return [`OC ${id} - ${proveedor}`, String(extra || "").trim()].filter(Boolean).join(" - ");
+}
+
+// `oc` = número de la orden de compra (id del pedido guardado); sin número es un borrador.
+function generarPDF(proveedor, lineas, unidad = "unidades", oc = null, extra = "") {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const hoy = new Date().toLocaleDateString("es-AR");
@@ -156,7 +162,11 @@ function generarPDF(proveedor, lineas, unidad = "unidades") {
 
   doc.addImage(LOGO_PDF_BASE64, "PNG", 14, 8, 50, 8.63);
   doc.setFontSize(14);
-  doc.text(`Orden de pedido — ${proveedor}`, 14, 32);
+  const tituloPDF = oc ? tituloOC(oc, proveedor, extra) : [`Orden de pedido — ${proveedor}`, String(extra || "").trim()].filter(Boolean).join(" - ");
+  // Una sola línea: si el texto a mano lo alarga, se achica la letra (hasta 9 pt) para que entre.
+  let tamTitulo = 14;
+  while (tamTitulo > 9 && doc.getTextWidth(tituloPDF) > 182) doc.setFontSize(tamTitulo -= 0.5);
+  doc.text(doc.splitTextToSize(tituloPDF, 182)[0], 14, 32);
   doc.setFontSize(10);
   doc.text(`Fecha: ${hoy}  |  Pedido por: ${getUser()}`, 14, 39);
   const unidadTxt = (UNIDAD_LABEL[unidad] || UNIDAD_LABEL.unidades).toUpperCase();
@@ -232,7 +242,7 @@ function generarPDF(proveedor, lineas, unidad = "unidades") {
     14, y
   );
 
-  doc.save(`pedido_${proveedor.replace(/\s+/g, "_")}_${hoy.replace(/\//g, "-")}.pdf`);
+  doc.save(`${oc ? `OC_${oc}_` : "pedido_"}${proveedor.replace(/\s+/g, "_")}_${hoy.replace(/\//g, "-")}.pdf`);
 }
 
 const NAV_LINKS = [

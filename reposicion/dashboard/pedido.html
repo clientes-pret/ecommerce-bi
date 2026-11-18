@@ -27,6 +27,7 @@
   .ok-msg { color: #6fcf97; font-size: 13px; }
   .grupo-opciones { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
   .grupo-opciones select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
+  .grupo-opciones input.titulo-extra { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; margin-left: 6px; width: 320px; max-width: 100%; }
   .solo-deposito .col-full, .solo-deposito .col-total { display: none; }
   #vacio { padding: 40px; text-align: center; color: var(--muted); }
 </style>
@@ -44,7 +45,7 @@
 <script src="config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="assets/logo-black-base64.js"></script>
-<script src="app.js?v=20261015"></script>
+<script src="app.js?v=20261118"></script>
 <script>
 renderNav("pedido");
 
@@ -108,6 +109,7 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
       body: JSON.stringify({
         proveedor, creado_por: getUser(), items: lineas,
         unidad_medida: grupoEl.querySelector(".sel-unidad").value,
+        titulo_extra: grupoEl.querySelector(".titulo-extra").value.trim(),
       }),
     });
     // El pedido ya quedó registrado en el servidor — sacamos del carrito
@@ -115,9 +117,10 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
     const restantes = getCarrito().filter((l) => l.proveedor !== proveedor);
     setCarrito(restantes);
     grupoEl.querySelector(".grupo-acciones").insertAdjacentHTML(
-      "beforeend", `<span class="ok-msg">✓ Pedido #${res.pedido_id} guardado</span>`
+      "beforeend", `<span class="ok-msg">✓ ${tituloOC(res.pedido_id, proveedor, grupoEl.querySelector(".titulo-extra").value)} guardada</span>`
     );
     btn.textContent = "Guardado";
+    grupoEl.dataset.oc = res.pedido_id; // el PDF ya sale con el número de OC
     grupoEl.querySelectorAll("input, select, button.link").forEach((el) => el.disabled = true);
   } catch (e) {
     btn.disabled = false;
@@ -187,6 +190,8 @@ function renderGrupo(proveedor, lineas) {
           <option value="deposito">Todo a depósito (suma depósito + Full)</option>
         </select></label>
       ${selectorUnidad()}
+      <label>Título a mano (opcional):
+        <input type="text" class="titulo-extra" maxlength="120" placeholder="ej. Sábanas 1200 hilos" title="Se agrega al título: OC 124 - Proveedor - tu texto"></label>
     </div>
     <table>
       <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th class="col-full">Full</th><th class="col-total">Total</th><th></th></tr></thead>
@@ -240,7 +245,7 @@ function renderGrupo(proveedor, lineas) {
   el.querySelector(".btn-pdf").addEventListener("click", () => {
     const lineas = lineasDelGrupo(el);
     if (!lineas.length) return alert("No hay líneas con cantidad > 0.");
-    generarPDF(proveedor, lineas, el.querySelector(".sel-unidad").value);
+    generarPDF(proveedor, lineas, el.querySelector(".sel-unidad").value, el.dataset.oc || null, el.querySelector(".titulo-extra").value);
   });
   el.querySelector(".btn-confirmar").addEventListener("click", () => {
     const lineas = lineasDelGrupo(el);

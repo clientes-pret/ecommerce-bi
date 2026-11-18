@@ -54,6 +54,19 @@ def test_lo_recibido_nunca_baja():
     assert 1 not in r
 
 
+def test_linea_tildada_a_mano_no_se_pisa():
+    # Checklist de la OC (Gestión): el usuario confirmó 5 de 100. Aunque el stock sugiera
+    # que entraron 60, la estimación automática no toca esa línea.
+    manual = linea(1, 1, "deposito", 100, recibida=5)
+    manual["recibido_manual"] = True
+    r = correr([manual], {1: {"creado_at": dt(1), "unidad_medida": "unidades"}}, [snap(1, 50)], [], 110)
+    assert 1 not in r
+    # Sin la marca, la misma línea sí se actualiza.
+    r = correr([linea(1, 1, "deposito", 100, recibida=5)], {1: {"creado_at": dt(1), "unidad_medida": "unidades"}},
+               [snap(1, 50)], [], 110)
+    assert r[1]["ahora"] == 60
+
+
 def test_un_mismo_ingreso_no_cierra_dos_pedidos():
     # Dos pedidos de 100 del mismo SKU; entraron 100 en total → solo el más viejo cierra.
     items = [linea(1, 1, "deposito", 100), linea(2, 2, "deposito", 100)]

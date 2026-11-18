@@ -144,7 +144,9 @@ def calcular_recepciones(items_por_sku, pedidos, snaps_por_sku, ventas_por_sku, 
                 parte = min(l["cantidad_pedida"], restante)
                 restante -= parte
                 actual = l["cantidad_recibida"] or 0
-                if l["recibido_completo"]:
+                if l["recibido_completo"] or l.get("recibido_manual"):
+                    # Cerrada, o tildada a mano en el checklist de la OC (Gestión):
+                    # lo que se confirma a mano gana sobre la estimación.
                     continue
                 nuevo = max(actual, parte)
                 completo = nuevo >= l["cantidad_pedida"]
@@ -181,7 +183,7 @@ def _cargar(config, stock_hoy_by_sku):
     for k in range(0, len(skus), CHUNK_SKUS):
         chunk = skus[k:k + CHUNK_SKUS]
         for it in db.select(config, "repo_pedido_items", params={
-            "select": "id,pedido_id,sku,destino,cantidad_pedida,cantidad_recibida,recibido_completo",
+            "select": "id,pedido_id,sku,destino,cantidad_pedida,cantidad_recibida,recibido_completo,recibido_manual",
             "sku": _in_list(chunk), "order": "id",
         }):
             if it["pedido_id"] in pedidos:
