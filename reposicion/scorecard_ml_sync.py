@@ -150,7 +150,13 @@ def traer_ads(token, advertiser, desde, hasta):
             raise
         camp = {}   # la cuenta no tiene el producto Display (la API responde "sin acceso"): solo cuenta Product Ads
     for c in camp.get("results", []):
-        m = _get_ads(f"{base}/advertisers/{advertiser}/display/campaigns/{c['campaign_id']}/metrics", token, rango)
+        # Una campaña sin el campo `campaign_id` (el 19/11/2026 la API devolvió una así y todo el ML Ads de Pret quedó
+        # sin cargar desde el 15/11) se busca bajo otros nombres; si no hay ninguno se frena con un mensaje claro: nunca
+        # se guarda un total incompleto.
+        cid = c.get("campaign_id") or c.get("id") or c.get("campaignId")
+        if not cid:
+            raise RuntimeError(f"ML Ads: campaña Display sin id (campos: {sorted(c)}) → {str(c)[:300]}")
+        m = _get_ads(f"{base}/advertisers/{advertiser}/display/campaigns/{cid}/metrics", token, rango)
         for x in m.get("metrics", []):
             if x.get("date"):
                 total[x["date"]] = total.get(x["date"], 0.0) + _num(x.get("consumed_budget"))
