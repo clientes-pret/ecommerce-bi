@@ -18,6 +18,7 @@ import {
 } from "./nucleo.ts";
 import { marcaDe } from "./logic.ts";
 import { etiquetas, listarVentas, type Quien } from "./ventas.ts";
+import { publicaciones as publicacionesAdmin, resumen as resumenAdmin } from "./admin.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -203,6 +204,15 @@ Deno.serve(async (req) => {
       return json(await procesarCola());
     }
     let body: Json = {};
+    // Portal de administrador: solo admin/dueño del panel.
+    if (ruta.includes("/admin/")) {
+      const q = await quienLlama(req);
+      if (q instanceof Response) return q;
+      if (!q.admin) return fallo("Solo para el administrador.", 403);
+      if (ruta.endsWith("/admin/resumen")) return json(await resumenAdmin());
+      if (ruta.endsWith("/admin/publicaciones")) return json(await publicacionesAdmin());
+      return fallo("No encontrado.", 404);
+    }
     // Ventas y etiquetas: las ve el revendedor (las suyas) y el admin/dueño del panel (las de todos).
     if (ruta.endsWith("/ventas") || ruta.endsWith("/etiquetas")) {
       const q = await quienLlama(req);

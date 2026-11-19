@@ -11,24 +11,64 @@
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, $$, esc, peso0, fecha, hoy, fechaHora, num, guardRev, navRev, parseMonto } from './app.js';
+import { sb, $, $$, esc, peso0, fecha, hoy, fechaHora, num, guardRev, navRev, parseMonto, apiPublicar } from './app.js';
+import { agrupar, etiquetaMes, etiquetaSemana, mesDe, saldo, semanaDe, totales } from './admin-lib.js';
 
 const sesion = await guardRev(['admin']);
 navRev(sesion, 'admin');
 
 $('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando…</p>';
+let resumen = null, revSel = new URLSearchParams(location.search).get('r') || '', gran = 'semana';
+
+// Ventas por revendedor (19/11/2026, pedido del usuario): filtrar revendedor por revendedor y ver, por semana o por
+// mes, cuántas ventas lleva, a qué precio vendió y qué costo mayorista le tiene que pagar a Pret a Home. Cuentas en
+// admin-lib.js; datos de rev-publicar /admin/resumen (12 meses). En modo prueba las ventas son simuladas.
+function pintarVentas() {
+  const box = $('#ventasRev'); if (!box) return;
+  if (!resumen || resumen.error) { box.innerHTML = `<section class="card"><p class="err" style="margin:0">No pude cargar las ventas: ${esc(resumen?.error?.message || 'sin datos')}</p></section>`; return; }
+  const revs = resumen.revendedores;
+  const lineas = resumen.ventas.filter((l) => !revSel || String(l.revendedor_id) === revSel);
+  const pagos = resumen.pagos.filter((p) => !revSel || String(p.revendedor_id) === revSel);
+  const t = totales(lineas), s = saldo(lineas, pagos), prueba = resumen.config?.modo !== 'real';
+  const clave = gran === 'mes' ? (l) => mesDe(l.creado_at) : (l) => semanaDe(l.creado_at);
+  const filas = agrupar(lineas, clave).slice(0, gran === 'mes' ? 12 : 16);
+  const etq = gran === 'mes' ? etiquetaMes : (k) => 'Semana del ' + etiquetaSemana(k);
+  const prom = (v, u) => (u ? peso0(v / u) : '—');
+  const productos = agrupar(lineas, (l) => l.sku).filter((p) => p.unidades).sort((a, b) => b.unidades - a.unidades);
+  box.innerHTML = `<section class="card tabla"><div class="cab"><div><h2>Ventas por revendedor</h2><span class="muted">últimos 12 meses${prueba ? ' · modo prueba: ventas simuladas' : ''}</span></div>
+    <div class="row wrapRow filtros">
+      <select id="vRev" aria-label="Revendedor"><option value="">Todos los revendedores</option>${revs.map((r) => `<option value="${r.id}" ${String(r.id) === revSel ? 'selected' : ''}>${esc(r.nickname || 'ID ' + r.id)}</option>`).join('')}</select>
+      <div class="seg gris" role="group" aria-label="Agrupar por">${[['semana', 'Por semana'], ['mes', 'Por mes']].map(([k, x]) => `<button type="button" data-g="${k}" aria-pressed="${k === gran}">${x}</button>`).join('')}</div>
+    </div></div>
+    <div class="centro-comando compacto" style="padding:0 24px">
+      <div class="cc-card"><div class="cc-label">Ventas</div><div class="cc-valor num">${num.format(t.ventas)}</div><div class="cc-sub">${num.format(t.unidades)} unidades${t.canceladas ? ` · ${t.canceladas} canceladas` : ''}</div></div>
+      <div class="cc-card"><div class="cc-label">Vendió por</div><div class="cc-valor num">${peso0(t.vendido)}</div><div class="cc-sub">a su precio de venta · ${prom(t.vendido, t.unidades)} por unidad</div></div>
+      <div class="cc-card"><div class="cc-label">Costo mayorista</div><div class="cc-valor num">${peso0(t.costo)}</div><div class="cc-sub">lo que te tiene que pagar${t.sinCosto ? ` · ${t.sinCosto} sin costo cargado` : ''}</div></div>
+      <div class="cc-card ${s.saldo > 0 ? 'destacada' : ''}"><div class="cc-label">Te debe</div><div class="cc-valor num">${peso0(s.saldo)}</div><div class="cc-sub">pagó ${peso0(s.pagado)}</div></div>
+    </div>
+    <div class="scroll"><table class="apilar" style="min-width:820px"><thead><tr><th scope="col">${gran === 'mes' ? 'Mes' : 'Semana'}</th><th scope="col" class="r">Ventas</th><th scope="col" class="r">Unidades</th><th scope="col" class="r">Vendió por</th><th scope="col" class="r">Precio prom. por unidad</th><th scope="col" class="r">Costo mayorista (te paga)</th><th scope="col" class="r">Canceladas</th></tr></thead>
+    <tbody>${filas.map((x) => `<tr><th scope="row" style="font-weight:500">${etq(x.clave)}</th><td class="r num" data-label="Ventas">${x.ventas}</td><td class="r num" data-label="Unidades">${x.unidades}</td>
+      <td class="r num" data-label="Vendió por">${peso0(x.vendido)}</td><td class="r num" data-label="Precio prom.">${prom(x.vendido, x.unidades)}</td>
+      <td class="r num" data-label="Costo mayorista" style="font-weight:600">${peso0(x.costo)}${x.sinCosto ? `<div class="small warn-t">${x.sinCosto} sin costo</div>` : ''}</td><td class="r num" data-label="Canceladas">${x.canceladas || ''}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="muted">Todavía no hay ventas registradas.</td></tr>'}</tbody></table></div>
+    ${productos.length ? `<details style="padding:0 24px 16px"><summary class="small" style="margin:8px 0">Qué vendió y a qué precio (${productos.length} ${productos.length === 1 ? 'producto' : 'productos'})</summary>
+      <div class="scroll"><table style="min-width:720px"><thead><tr><th scope="col">Producto</th><th scope="col" class="r">Unidades</th><th scope="col" class="r">Precio prom. de venta</th><th scope="col" class="r">Costo mayorista por unidad</th><th scope="col" class="r">Te paga</th></tr></thead>
+      <tbody>${productos.map((p) => `<tr><th scope="row" style="font-weight:500">${esc(resumen.titulos[p.clave] || p.clave)}<div class="muted small">${esc(p.clave)}</div></th><td class="r num">${p.unidades}</td><td class="r num">${prom(p.vendido, p.unidades)}</td><td class="r num">${prom(p.costo, p.unidades)}</td><td class="r num" style="font-weight:600">${peso0(p.costo)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
+  </section>`;
+  $('#vRev').onchange = () => { revSel = $('#vRev').value; pintarVentas(); };
+  $$('[data-g]', box).forEach((b) => (b.onclick = () => { gran = b.dataset.g; pintarVentas(); }));
+}
 async function cargar() {
-  const [rv, cu, mg] = await Promise.all([sb.rpc('rev_admin_revendedores'), sb.rpc('rev_cuenta_resumen'), sb.rpc('rev_admin_margen')]);
+  const [rv, cu, mg, rs] = await Promise.all([sb.rpc('rev_admin_revendedores'), sb.rpc('rev_cuenta_resumen'), sb.rpc('rev_admin_margen'),
+    apiPublicar('admin/resumen', {}).catch((e) => ({ error: e }))]);
+  resumen = rs;
   const error = rv.error || cu.error || mg.error;
   if (error) { $('#app').innerHTML = `<p class="err">No pude cargar: ${esc(error.message)}</p>`; return; }
   const cuenta = new Map(cu.data.map((c) => [c.revendedor_id, c]));
   const revs = rv.data, margen = mg.data;
   const deuda = cu.data.reduce((s, c) => s + Number(c.saldo), 0);
-  $('#app').innerHTML = `<div class="cabecera"><div><h1>Revendedores y pagos</h1><p>Quién vende, cuánto te debe cada uno y el margen mayorista</p></div></div>
-  <div class="centro-comando compacto">
-    <div class="cc-card"><div class="cc-label">Revendedores</div><div class="cc-valor num">${revs.length}</div><div class="cc-sub">${revs.filter((r) => r.usuarios).length} con usuario para entrar</div></div>
-    <div class="cc-card destacada"><div class="cc-label">Te deben</div><div class="cc-valor num">${peso0(deuda)}</div><div class="cc-sub">vendido a mayorista − pagado</div></div>
-  </div>
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Administración</h1><p>Ventas de cada revendedor por semana y por mes, a qué precio vendió y cuánto te tiene que pagar; pagos, accesos y margen mayorista</p></div></div>
+  <div id="ventasRev"></div>
   <section class="card"><h2 style="margin-top:0">Margen mayorista</h2>
     <p class="muted small" style="margin-top:0">Precio mayorista = costo del producto + este %. Lo que ve el revendedor ya viene calculado: nunca ve el costo.</p>
     <form id="fm" class="row wrapRow"><div style="width:140px"><label for="mg" style="margin-top:0">Margen sobre costo (%)</label><input id="mg" inputmode="decimal" value="${margen != null ? String(margen).replace('.', ',') : ''}" placeholder="ej. 30" required></div>
@@ -36,7 +76,7 @@ async function cargar() {
     ${margen == null ? '<p class="warn-t small" style="margin-bottom:0"><b>Todavía no está definido:</b> los revendedores ven "a definir" en el precio mayorista y las ventas no suman al saldo.</p>' : ''}
   </section>
   <section class="card tabla"><div class="cab"><div><h2>Revendedores</h2><span class="muted">Cuenta de Mercado Libre conectada y usuario del portal</span></div></div>
-    <div class="scroll"><table class="apilar" style="min-width:860px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Mercado Libre</th><th scope="col">Usuarios del portal</th><th scope="col" class="r">Te debe</th><th scope="col"></th></tr></thead><tbody>${
+    <div class="scroll"><table class="apilar" style="min-width:860px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Mercado Libre</th><th scope="col">Usuarios del portal</th><th scope="col" class="r" title="Solo ventas reales (ya descontadas del stock). En modo prueba es 0: lo simulado está arriba.">Te debe (ventas reales)</th><th scope="col"></th></tr></thead><tbody>${
       revs.map((r) => { const c = cuenta.get(r.id); return `<tr><th scope="row" class="tit">${esc(r.nickname || 'Sin nombre')}<div class="muted small">ID ${r.id} · ${esc(r.estado)}</div></th>
       <td data-label="Mercado Libre">${r.conectada ? '<span class="chip ok">conectada</span>' : '<span class="chip bad">sin conexión</span>'} <span class="muted small">${r.ml_user_id}</span></td>
       <td data-label="Usuarios">${r.usuarios ? esc(r.usuarios) : '<span class="muted">ninguno</span>'}</td>
@@ -63,6 +103,7 @@ async function cargar() {
     $('#mgMsg').textContent = error ? error.message : 'Guardado.';
     if (!error) setTimeout(cargar, 600);
   };
+  pintarVentas();
   $('#fu').onsubmit = async (e) => {
     e.preventDefault();
     const { error } = await sb.rpc('rev_vincular_usuario', { p_email: $('#uEmail').value, p_revendedor: Number($('#uRev').value) });

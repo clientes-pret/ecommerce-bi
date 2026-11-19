@@ -37,7 +37,7 @@ const ENVIO = {
 };
 const LOGISTICA = { xd_drop_off: 'Despacho en agencia', drop_off: 'Correo', self_service: 'Flex', cross_docking: 'Colecta', fulfillment: 'Full' };
 
-$('#app').innerHTML = `<div class="cabecera"><div><h1>Ventas</h1><p>${admin ? 'Ventas de todos los revendedores' : 'Tus ventas de Mercado Libre'} : qué se vendió, en qué estado está el pedido y la etiqueta de envío.</p></div></div>
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Ventas</h1><p>${admin ? 'Ventas de todos los revendedores' : 'Tus ventas de Mercado Libre'}: qué se vendió, en qué estado está el pedido y la etiqueta de envío.</p></div></div>
 <div class="centro-comando compacto" id="kpis"></div>
 <section class="card tabla"><div class="cab"><div><h2>Pedidos</h2><span class="muted" id="cuenta">Cargando…</span></div>
   <div class="row wrapRow filtros">
@@ -47,7 +47,7 @@ $('#app').innerHTML = `<div class="cabecera"><div><h1>Ventas</h1><p>${admin ? 'V
     ${admin ? '<select id="rev" aria-label="Revendedor"><option value="">Todos los revendedores</option></select>' : ''}
     <div class="seg gris full" role="group" aria-label="Estado">${[['todas', 'Todas'], ['despachar', 'Por despachar'], ['camino', 'En camino'], ['entregadas', 'Entregadas'], ['canceladas', 'Canceladas']].map(([k, t]) => `<button type="button" data-f="${k}" aria-pressed="${k === 'todas'}">${t}</button>`).join('')}</div>
   </div></div>
-  <div class="scroll"><table class="apilar" style="min-width:900px"><thead><tr><th scope="col" style="width:36px"><input type="checkbox" class="sel" id="todas" aria-label="Elegir todas las que tienen la etiqueta lista" title="Elegir todas las que tienen la etiqueta lista"></th><th scope="col">Venta</th><th scope="col">Productos</th><th scope="col">Estado del pedido</th><th scope="col">Etiqueta</th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="scroll"><table class="apilar" style="min-width:${admin ? 1020 : 900}px"><thead><tr><th scope="col" style="width:36px"><input type="checkbox" class="sel" id="todas" aria-label="Elegir todas las que tienen la etiqueta lista" title="Elegir todas las que tienen la etiqueta lista"></th><th scope="col">Venta</th>${admin ? '<th scope="col">Revendedor</th>' : ''}<th scope="col">Productos</th><th scope="col">Estado del pedido</th><th scope="col">Etiqueta</th></tr></thead><tbody id="tb"></tbody></table></div>
   <div class="row between pager" style="padding:12px 24px;flex-wrap:wrap"><span class="muted small" id="pagInfo"></span><div class="row"><button class="btn sm" id="ant">← Anterior</button><button class="btn sm" id="sig">Siguiente →</button></div></div>
 </section>
 <div class="barra" id="barra" hidden><span class="grow" id="selTxt"></span><button class="btn" id="limpiar">Vaciar</button><button class="btn primary" id="imprimir">Imprimir etiquetas</button></div>
@@ -134,13 +134,14 @@ function pintar() {
   $('#tb').innerHTML = v.map((x) => `<tr>
     <td class="ck">${x.etiqueta ? `<input type="checkbox" class="sel" data-o="${x.ml_order_id}" ${sel.has(String(x.ml_order_id)) ? 'checked' : ''} aria-label="Elegir la venta ${x.ml_order_id}">` : ''}</td>
     <th scope="row" style="font-weight:500"><b>${esc(String(x.orden_ml?.pack_id || x.ml_order_id))}</b>
-      <div class="muted small">${fecha(x.fecha)}${x.orden_ml?.comprador ? ' · ' + esc(x.orden_ml.comprador) : ''}${admin && x.revendedor ? ' · <b>' + esc(x.revendedor) + '</b>' : ''}</div></th>
+      <div class="muted small">${fecha(x.fecha)}${x.orden_ml?.comprador ? ' · ' + esc(x.orden_ml.comprador) : ''}</div></th>
+    ${admin ? `<td data-label="Revendedor"><b>${esc(x.revendedor || '—')}</b></td>` : ''}
     <td data-label="Productos">${x.lineas.map((l) => `<div class="linea"><b>${esc(l.titulo || l.sku)}</b><br>
       <span class="muted">${esc(l.sku)}${l.ml_item_id ? ` · <a href="${linkML(l.ml_item_id)}" target="_blank" rel="noopener">${esc(l.ml_item_id)} ↗</a>` : ''} · ${l.cantidad} u.${l.precio_unitario != null ? ' × ' + peso0(l.precio_unitario) : ''}</span></div>`).join('')}</td>
     <td data-label="Estado"><span class="chip ${x.e.chip}">${esc(x.e.txt)}</span>${x.e.extra ? `<div class="small warn-t">${esc(x.e.extra)}</div>` : ''}
       ${x.envio?.logistic_type ? `<div class="muted small">${esc(LOGISTICA[x.envio.logistic_type] || x.envio.logistic_type)}${x.envio.tracking ? ' · seguimiento ' + esc(x.envio.tracking) : ''}</div>` : ''}</td>
     <td data-label="Etiqueta">${x.etiqueta ? `<button class="btn sm primary" data-imp="${x.ml_order_id}">Imprimir</button>` : '<span class="muted small">—</span>'}</td></tr>`).join('')
-    || `<tr><td colspan="5" class="muted">${ventas.length ? 'No hay ventas con ese filtro.' : 'No hay ventas en este período.'}</td></tr>`;
+    || `<tr><td colspan="${admin ? 6 : 5}" class="muted">${ventas.length ? 'No hay ventas con ese filtro.' : 'No hay ventas en este período.'}</td></tr>`;
   const imprimibles = v.filter((x) => x.etiqueta).map((x) => String(x.ml_order_id));
   $('#todas').checked = imprimibles.length > 0 && imprimibles.every((k) => sel.has(k));
   $('#todas').disabled = !imprimibles.length;

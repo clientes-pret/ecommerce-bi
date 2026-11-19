@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard · Administración de revendedores</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <style>
+    .graf { position: relative; padding: 8px 4px 0; }
+    .graf svg { width: 100%; height: auto; display: block; overflow: visible; }
+    .graf .eje { stroke: var(--line, #e4e2dc); stroke-width: 1; }
+    .graf .barra { fill: var(--brand); }
+    .graf .barra:hover, .graf .barra.on { fill: #1a3890; }
+    .graf text { font-size: 11px; fill: var(--muted, #6b6b6b); }
+    .tip { position: absolute; pointer-events: none; background: #1B1D21; color: #fff; font-size: 12px; line-height: 1.4; padding: 6px 9px; border-radius: 8px; white-space: nowrap; transform: translate(-50%, -100%); display: none; }
+    .rank td, .rank th { padding-top: 8px; padding-bottom: 8px; }
+    .proc { display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+    .apilado > section + section { margin-top: 16px; }
+    .proc span { background: var(--line-soft, #f1f0ec); border-radius: 8px; padding: 6px 10px; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"><p class="muted"><span class="spin"></span> Cargando…</p></div>
+<script type="module">
+// Dashboard del portal de ADMINISTRADOR de revendedores (19/11/2026): cómo va el proyecto. Datos de rev-publicar
+// /admin/resumen; las cuentas (semanas, totales, saldo) en admin-lib.js. En modo prueba las ventas son simuladas.
+import { $, esc, peso0, num, guardRev, navRev, apiPublicar } from './app.js';
+import { agrupar, etiquetaSemana, saldo, semanaDe, totales, ultimasSemanas, diaAR } from './admin-lib.js';
+
+const sesion = await guardRev(['admin']);
+navRev(sesion, 'dashboard');
+
+let d;
+try { d = await apiPublicar('admin/resumen', {}); }
+catch (e) { $('#app').innerHTML = `<p class="err">No pude cargar el resumen: ${esc(e.message)}</p>`; throw e; }
+
+const revs = d.revendedores, lineas = d.ventas, prueba = d.config?.modo !== 'real';
+const nick = new Map(revs.map((r) => [r.id, r.nickname || 'ID ' + r.id]));
+const hace = (n) => new Date(Date.now() - n * 86400_000).toISOString();
+const ult30 = lineas.filter((l) => l.creado_at >= hace(30)), ult7 = lineas.filter((l) => l.creado_at >= hace(7));
+const t30 = totales(ult30), t7 = totales(ult7), tTodo = totales(lineas);
+const s = saldo(lineas, d.pagos);
+const pubs = revs.reduce((a, r) => ({ v: a.v + r.publicaciones.vinculadas, act: a.act + r.publicaciones.activas }), { v: 0, act: 0 });
+const activos = revs.filter((r) => r.estado === 'activo').length;
+const nuevos30 = revs.filter((r) => r.conectado_at && r.conectado_at >= hace(30)).length;
+
+// Ventas por semana (últimas 12): unidades vendidas.
+const semanas = ultimasSemanas(12);
+const porSemana = new Map(agrupar(lineas, (l) => semanaDe(l.creado_at)).map((g) => [g.clave, g]));
+const serie = semanas.map((k) => ({ k, ...(porSemana.get(k) ?? { ventas: 0, unidades: 0, vendido: 0, costo: 0 }) }));
+
+// Ranking de revendedores (30 días) y productos (30 días).
+const porRev = agrupar(ult30, (l) => l.revendedor_id);
+const ranking = revs.map((r) => {
+  const g = porRev.find((x) => Number(x.clave) === r.id);
+  const sr = saldo(lineas.filter((l) => l.revendedor_id === r.id), d.pagos.filter((p) => p.revendedor_id === r.id));
+  return { r, ventas: g?.ventas ?? 0, unidades: g?.unidades ?? 0, vendido: g?.vendido ?? 0, saldo: sr.saldo };
+}).sort((a, b) => b.vendido - a.vendido || b.r.publicaciones.vinculadas - a.r.publicaciones.vinculadas);
+const productos = agrupar(ult30, (l) => l.sku).sort((a, b) => b.unidades - a.unidades).slice(0, 8);
+
+const card = (l, v, s, cls = '') => `<div class="cc-card ${cls}"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${s}</div></div>`;
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Dashboard</h1><p>Cómo va el proyecto de revendedores</p></div></div>
+${prueba ? '<div class="card" style="background:var(--warn-bg)"><b>Modo prueba:</b> las ventas se registran pero todavía no se descuenta stock en Ecomm-App ni se cobran. Los montos son simulados.</div>' : ''}
+<div class="centro-comando">
+  ${card('Revendedores', num.format(activos), `${revs.length} en total · ${nuevos30} nuevos en 30 días`)}
+  ${card('Publicaciones vinculadas', num.format(pubs.v), `${num.format(pubs.act)} activas · ${num.format(d.skus_publicados)} productos (SKU) distintos`)}
+  ${card('Ventas últimos 30 días', num.format(t30.ventas), `${num.format(t30.unidades)} unidades · ${num.format(t7.ventas)} en 7 días`)}
+  ${card('Vendieron por', peso0(t30.vendido), 'últimos 30 días, a su precio de venta')}
+  ${card('Costo mayorista', peso0(t30.costo), `últimos 30 días${t30.sinCosto ? ` · ${t30.sinCosto} sin costo cargado` : ''}`)}
+  ${card('Te deben', peso0(s.saldo), `costo mayorista acumulado ${peso0(s.costo)} − pagado ${peso0(s.pagado)}`, s.saldo > 0 ? 'destacada' : '')}
+</div>
+<section class="card"><div class="row between wrapRow"><h2 style="margin:0">Unidades vendidas por semana</h2><span class="muted small">últimas 12 semanas · de lunes a domingo</span></div>
+  <div class="graf" id="graf"></div>
+  <details style="margin-top:8px"><summary class="small">Ver como tabla</summary>
+    <div class="scroll"><table style="min-width:520px;margin-top:8px"><thead><tr><th scope="col">Semana del</th><th scope="col" class="r">Ventas</th><th scope="col" class="r">Unidades</th><th scope="col" class="r">Vendido</th><th scope="col" class="r">Costo mayorista</th></tr></thead>
+    <tbody>${serie.slice().reverse().map((x) => `<tr><td>${etiquetaSemana(x.k)}</td><td class="r num">${x.ventas}</td><td class="r num">${x.unidades}</td><td class="r num">${peso0(x.vendido)}</td><td class="r num">${peso0(x.costo)}</td></tr>`).join('')}</tbody></table></div></details>
+</section>
+<div class="apilado">
+  <section class="card tabla"><div class="cab"><div><h2>Revendedores</h2><span class="muted">últimos 30 días</span></div><a class="btn sm" href="admin.html">Administración →</a></div>
+    <div class="scroll"><table class="rank"><thead><tr><th scope="col">Revendedor</th><th scope="col" class="r">Publicaciones</th><th scope="col" class="r">Ventas</th><th scope="col" class="r">Vendido</th><th scope="col" class="r">Te debe</th></tr></thead>
+    <tbody>${ranking.map((x) => `<tr><th scope="row" style="font-weight:500"><a href="admin.html?r=${x.r.id}">${esc(nick.get(x.r.id))}</a><div class="muted small">${x.r.estado === 'activo' ? 'conectado' : esc(x.r.estado)}</div></th>
+      <td class="r num">${num.format(x.r.publicaciones.vinculadas)}<div class="muted small">${x.r.publicaciones.activas} activas</div></td><td class="r num">${x.ventas}</td><td class="r num">${peso0(x.vendido)}</td><td class="r num" style="font-weight:600">${peso0(x.saldo)}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="muted">Todavía no hay revendedores conectados.</td></tr>'}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>Productos más vendidos</h2><span class="muted">últimos 30 días</span></div></div>
+    <div class="scroll"><table class="rank"><thead><tr><th scope="col">Producto</th><th scope="col" class="r">Unidades</th><th scope="col" class="r">Vendido</th></tr></thead>
+    <tbody>${productos.map((p) => `<tr><th scope="row" style="font-weight:500">${esc(d.titulos[p.clave] || p.clave)}<div class="muted small">${esc(p.clave)}</div></th><td class="r num">${p.unidades}</td><td class="r num">${peso0(p.vendido)}</td></tr>`).join('')
+      || '<tr><td colspan="3" class="muted">Todavía no hay ventas en los últimos 30 días.</td></tr>'}</tbody></table></div></section>
+</div>
+<section class="card"><div class="row between wrapRow"><h2 style="margin:0">Procesos</h2><a class="btn sm" href="estado.html">Estado del sistema →</a></div>
+  <div class="proc" style="margin-top:10px">${[['stock', 'Stock desde Ecomm-App'], ['vinculacion', 'Vinculación de publicaciones'], ['ordenes_cursor', 'Registro de ventas'], ['conciliacion', 'Repaso de ventas']].map(([k, t]) => {
+    const p = d.procesos.find((x) => x.clave === k);
+    return `<span>${t}: <b>${p ? new Date(p.ultimo_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</b></span>`;
+  }).join('')}<span>Ventas registradas en total: <b>${num.format(tTodo.ventas)}</b></span></div>
+</section>`;
+
+// Gráfico de barras (una serie: el título la nombra). Barras finas con la punta redondeada, separación entre barras,
+// grilla tenue y un cartel al pasar el mouse (o tocar) cada barra.
+(function graficar() {
+  const W = 720, H = 220, mi = 34, ab = 22, ar = 8, max = Math.max(1, ...serie.map((x) => x.unidades));
+  const paso = Math.pow(10, Math.floor(Math.log10(max))), tope = Math.ceil(max / paso) * paso;
+  const y = (v) => ar + (H - ar - ab) * (1 - v / tope);
+  const ancho = (W - mi) / serie.length, bw = Math.min(28, ancho - 6);
+  const lineas = [0, tope / 2, tope].map((v) => `<line class="eje" x1="${mi}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text x="${mi - 6}" y="${y(v) + 4}" text-anchor="end">${num.format(v)}</text>`).join('');
+  const barras = serie.map((x, i) => {
+    const cx = mi + ancho * i + ancho / 2, top = y(x.unidades), h = Math.max(0, H - ab - top);
+    const r = Math.min(4, h / 2);
+    const path = h > 0 ? `M${cx - bw / 2},${H - ab} V${top + r} Q${cx - bw / 2},${top} ${cx - bw / 2 + r},${top} H${cx + bw / 2 - r} Q${cx + bw / 2},${top} ${cx + bw / 2},${top + r} V${H - ab} Z` : '';
+    return `<g data-i="${i}"><rect x="${cx - ancho / 2}" y="${ar}" width="${ancho}" height="${H - ab - ar}" fill="transparent"/>${path ? `<path class="barra" d="${path}"/>` : ''}
+      ${i % 2 === serie.length % 2 ? '' : `<text x="${cx}" y="${H - 6}" text-anchor="middle">${etiquetaSemana(x.k)}</text>`}</g>`;
+  }).join('');
+  $('#graf').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Unidades vendidas por semana, últimas 12 semanas">${lineas}${barras}</svg><div class="tip" id="tip"></div>`;
+  const tip = $('#tip'), svg = $('#graf svg');
+  const mostrar = (g) => {
+    const x = serie[Number(g.dataset.i)], b = g.getBoundingClientRect(), base = $('#graf').getBoundingClientRect();
+    svg.querySelectorAll('.barra.on').forEach((p) => p.classList.remove('on')); g.querySelector('.barra')?.classList.add('on');
+    tip.innerHTML = `<b>Semana del ${etiquetaSemana(x.k)}</b><br>${num.format(x.unidades)} unidades · ${x.ventas} ventas<br>Vendido ${peso0(x.vendido)}`;
+    tip.style.left = (b.left - base.left + b.width / 2) + 'px'; tip.style.top = (b.top - base.top + 6) + 'px'; tip.style.display = 'block';
+  };
+  svg.addEventListener('pointerover', (e) => { const g = e.target.closest('g[data-i]'); if (g) mostrar(g); });
+  svg.addEventListener('pointerleave', () => { tip.style.display = 'none'; svg.querySelectorAll('.barra.on').forEach((p) => p.classList.remove('on')); });
+})();
+</script>
+</body>
+</html>

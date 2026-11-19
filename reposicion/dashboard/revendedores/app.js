@@ -78,7 +78,7 @@ export async function guardRev(permitidos = ['rev', 'admin']) {
     if (p && ['admin', 'dueno'].includes(p.rol)) s = { tipo: 'admin', nombre: p.nombre };
   }
   if (!s) { await sb.auth.signOut(); location.replace('index.html?sinacceso=1'); throw new Error('sin acceso'); }
-  if (!permitidos.includes(s.tipo)) { location.replace(s.tipo === 'admin' ? 'admin.html' : 'catalogo.html'); throw new Error('rol incorrecto'); }
+  if (!permitidos.includes(s.tipo)) { location.replace(s.tipo === 'admin' ? 'dashboard.html' : 'catalogo.html'); throw new Error('rol incorrecto'); }
   return s;
 }
 
@@ -89,9 +89,14 @@ export function navRev(sesion, activa) {
   el.className = 'side';
   el.setAttribute('aria-label', 'Portal de revendedores');
   const admin = sesion.tipo === 'admin';
-  el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Revendedores</div></div>' +
-    '<div class="links">' + it('catalogo.html', 'Catálogo', 'catalogo') + it('publicaciones.html', 'Mis publicaciones', 'publicaciones') + it('ventas.html', 'Ventas', 'ventas') + it('cuenta.html', 'Mi cuenta', 'cuenta') +
-    (admin ? '<div class="grupo">Administración</div>' + it('admin.html', 'Revendedores y pagos', 'admin') + it('estado.html', 'Estado del sistema', 'estado') + '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel') : '') +
+  // Revendedor: su catálogo, sus publicaciones, sus ventas y su cuenta. Administrador (19/11/2026, pedido del usuario):
+  // Dashboard, Publicaciones vinculadas, Administración y Ventas de todos los revendedores.
+  el.innerHTML = `<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">${admin ? 'Admin. revendedores' : 'Revendedores'}</div></div>` +
+    '<div class="links">' + (admin
+      ? it('dashboard.html', 'Dashboard', 'dashboard') + it('vinculadas.html', 'Publicaciones vinculadas', 'vinculadas') + it('admin.html', 'Administración', 'admin') + it('ventas.html', 'Ventas', 'ventas') +
+        '<div class="grupo">Sistema</div>' + it('estado.html', 'Estado del sistema', 'estado') + it('catalogo.html', 'Catálogo (vista revendedor)', 'catalogo') +
+        '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel')
+      : it('catalogo.html', 'Catálogo', 'catalogo') + it('publicaciones.html', 'Mis publicaciones', 'publicaciones') + it('ventas.html', 'Ventas', 'ventas') + it('cuenta.html', 'Mi cuenta', 'cuenta')) +
     '<span class="sp"></span></div>' +
     `<div class="usuario"><span>${esc(sesion.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');

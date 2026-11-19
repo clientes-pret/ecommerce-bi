@@ -41,7 +41,7 @@ async function entrar(uid) {
   const { data: cu } = await sb.rpc('rev_mi_cuenta');
   if (cu?.length) { location.replace('catalogo.html'); return; }
   const { data: p } = await sb.from('cc_perfiles').select('rol').eq('id', uid).maybeSingle();
-  if (p && ['admin', 'dueno'].includes(p.rol)) { location.replace('admin.html'); return; }
+  if (p && ['admin', 'dueno'].includes(p.rol)) { location.replace('dashboard.html'); return; }
   await sb.auth.signOut();
   $('#err').textContent = 'Tu usuario todavía no está habilitado como revendedor. Avisale a Pret a Home.';
   $('#ok').disabled = false;
