@@ -18,7 +18,9 @@ import {
 } from "./nucleo.ts";
 import { marcaDe } from "./logic.ts";
 import { etiquetas, listarVentas, type Quien } from "./ventas.ts";
-import { publicaciones as publicacionesAdmin, resumen as resumenAdmin } from "./admin.ts";
+import {
+  cambiarDescuento, cambiarEstado, descontarVenta, guardarFicha, guardarLogo, linkConectar, publicaciones as publicacionesAdmin, resumen as resumenAdmin,
+} from "./admin.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -37,6 +39,7 @@ async function revendedorDe(req: Request): Promise<{ rev: Revendedor; jwt: strin
   if (!vin) return fallo("Tu usuario no es de un revendedor.", 403);
   const { data: rev } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).eq("id", vin.revendedor_id).maybeSingle();
   if (!rev) return fallo("No encontré tu cuenta.", 403);
+  if ((rev as Revendedor).estado === "inactivo") return fallo("Tu cuenta está desactivada: hablá con Pret a Home.", 403);
   if ((rev as Revendedor).estado !== "activo") return fallo("Tu cuenta de Mercado Libre no está conectada: pedile a Pret a Home el link para reconectarla.", 409);
   return { rev: rev as Revendedor, jwt };
 }
@@ -211,6 +214,16 @@ Deno.serve(async (req) => {
       if (!q.admin) return fallo("Solo para el administrador.", 403);
       if (ruta.endsWith("/admin/resumen")) return json(await resumenAdmin());
       if (ruta.endsWith("/admin/publicaciones")) return json(await publicacionesAdmin());
+      let b: Json = {};
+      try { b = await req.json(); } catch { /* vacío */ }
+      try {
+        if (ruta.endsWith("/admin/revendedor/estado")) return json(await cambiarEstado(b));
+        if (ruta.endsWith("/admin/revendedor/descuento")) return json(await cambiarDescuento(b));
+        if (ruta.endsWith("/admin/revendedor/ficha")) return json(await guardarFicha(b));
+        if (ruta.endsWith("/admin/revendedor/logo")) return json(await guardarLogo(b));
+        if (ruta.endsWith("/admin/descontar")) return json(await descontarVenta(b));
+        if (ruta.endsWith("/admin/conectar")) return json(linkConectar());
+      } catch (e) { return fallo((e as Error).message, 400); }
       return fallo("No encontrado.", 404);
     }
     // Ventas y etiquetas: las ve el revendedor (las suyas) y el admin/dueño del panel (las de todos).

@@ -11,9 +11,11 @@
 //     (reposicion 'inmediata'); si salió, vuelve cuando el depósito lo recibe (reposicion 'al_recibir', Operaciones → Devoluciones);
 //   - con reclamo/devolución en ML → se guarda el estado del reclamo y del envío de vuelta en `devolucion`;
 //   - todavía sin pago aprobado → no se registra (ML vuelve a avisar cuando cambie).
+// En modo 'real' (rev_config.modo) además descuenta cada venta en Ecomm-App y devuelve el stock de lo cancelado antes de
+// despachar o devuelto en buen estado (_shared/descuento.ts). En modo 'sombra' solo registra.
 //
-// NO descuenta stock en Ecomm-App ni escribe nada en Mercado Libre. El descuento real (adjust en Ecomm-App) no está
-// implementado a propósito: lo decide el dueño, y hasta entonces todo es registro. Reprocesar es inocuo: la clave única
+// No escribe nada en Mercado Libre. En modo 'sombra' tampoco toca Ecomm-App (todo es registro); el descuento real se
+// activa poniendo rev_config.modo = 'real' (decisión del dueño). Reprocesar es inocuo: la clave única
 // (orden, SKU) y las reglas de `nuevoEstadoParaExistente` evitan duplicados y no tocan lo ya descontado.
 //
 // Los avisos `items`/`stock-locations` (el eco de nuestros propios cambios de stock) se ignoran: solo importa `orders_v2`.
@@ -22,6 +24,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { COLUMNAS_REVENDEDOR, mlGet, type Revendedor, tokenValido } from "../_shared/rev_ml.ts";
+import { procesarDescuentos } from "../_shared/descuento.ts";
 import {
   type DevolucionML, type EnvioML, esAnteriorALaConexion, estadoDeOrden, fueDespachada, lineasDeOrden, nuevoEstadoParaExistente,
   type OrdenML, type ReclamoML, reposicionPara, resumenReclamo,
@@ -51,7 +54,7 @@ async function guardarEstado(e: Estado) {
 
 async function procesar(): Promise<Json> {
   const t0 = Date.now();
-  const { data: revsData, error: revsError } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).eq("estado", "activo");
+  const { data: revsData, error: revsError } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).in("estado", ["activo", "inactivo"]); // los desactivados por el admin siguen registrando sus ventas
   if (revsError) throw new Error(`rev_revendedores: ${revsError.message}`);
   const revs = new Map(((revsData ?? []) as Revendedor[]).map((r) => [r.ml_user_id, r]));
   if (!revs.size) return { ok: true, aviso: "sin revendedores activos" };
@@ -212,7 +215,17 @@ Deno.serve(async (req) => {
   const { data: tokenOk, error: tokenError } = await supabase.rpc("rev_sync_token_valido", { p: url.searchParams.get("t") ?? "" });
   if (tokenError || tokenOk !== true) return new Response("No autorizado", { status: 401 });
   try {
-    const resumen = await procesar();
+    const resumen: Json = await procesar();
+    // Descuento real en Ecomm-App (y devolución del stock de cancelaciones/devoluciones): SOLO en modo 'real'.
+    const { data: modo } = await supabase.from("rev_config").select("valor").eq("clave", "modo").maybeSingle();
+    if (modo?.valor === "real" || modo?.valor === "activo") {
+      const token = Deno.env.get("ECOMMAPP_TOKEN") ?? "";
+      resumen.descuentos = token ? await procesarDescuentos(supabase, token) : { error: "falta ECOMMAPP_TOKEN" };
+      const d = resumen.descuentos as Record<string, number>;
+      if (d.descontadas || d.repuestas || d.errores || d.sin_stock || d.errores_reposicion) {
+        await supabase.from("rev_sync_estado").upsert({ clave: "descuentos", ultimo_at: new Date().toISOString(), resultado: d.errores || d.errores_reposicion ? "con_errores" : "ok", detalle: d }, { onConflict: "clave" });
+      }
+    }
     if ((resumen.avisos_nuevos as number | undefined) || resumen.fallidas) {
       await supabase.from("rev_sync_estado").upsert({ clave: "ordenes", ultimo_at: new Date().toISOString(), resultado: "ok", detalle: resumen }, { onConflict: "clave" });
     }

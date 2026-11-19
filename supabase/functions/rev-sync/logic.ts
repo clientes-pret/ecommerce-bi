@@ -29,7 +29,7 @@ function hash32(texto: string): string {
   return h.toString(16).padStart(8, "0");
 }
 
-export type TipoMovimiento = "venta" | "cancelacion";
+export type TipoMovimiento = "venta" | "cancelacion" | "devolucion";
 
 /** Misma orden + mismo SKU + mismo tipo ⇒ siempre la misma clave, así reintentar o reprocesar nunca descuenta de más. */
 export function claveIdempotente(mlOrderId: string | number, sku: string, tipo: TipoMovimiento = "venta"): string {
@@ -113,4 +113,42 @@ export function enLotes<T>(lista: T[], tamano: number): T[][] {
 export function motivoMovimiento(tipo: "venta" | "cancelacion" | "devolucion", revendedor: string | null | undefined, mlOrderId: string | number, sku: string): string {
   const quien = String(revendedor ?? "revendedor").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 40) || "revendedor";
   return `${tipo}-${quien} #${mlOrderId} SKU ${sku.trim()}`.slice(0, 200);
+}
+
+// ── Descuento real de ventas de revendedores (19/11/2026) ───────────────────────────────────────────────────────
+// Solo corre en modo 'real' (rev_config.modo). Cada línea de venta (rev_ordenes) se descuenta UNA vez en Ecomm-App con
+// la clave única de la venta; si después se cancela antes de salir del depósito, o vuelve como devolución en buen
+// estado, el stock se devuelve UNA vez con su propia clave (cancelacion-/devolucion-).
+
+export interface TransicionDescuento {
+  estado: "descontada" | "sin_stock" | "error" | null; // null = queda como está y se reintenta con la MISMA clave
+  descontado: boolean;                                  // true = Ecomm-App movió el stock
+  detalle: string | null;
+}
+
+/** Qué hacer con una línea según la respuesta de Ecomm-App a su descuento. `codigoError` = error.code de un 4xx. */
+export function transicionDescuento(r: ResultadoEcomm, http: number, codigoError?: string | null): TransicionDescuento {
+  if (r.resultado === "aplicada") return { estado: "descontada", descontado: true, detalle: null };
+  if (r.resultado === "aplicada_parcial") {
+    return { estado: "descontada", descontado: true, detalle: `Ecomm-App descontó con faltante: ${r.faltante} unidad(es) no había en el depósito.` };
+  }
+  if (r.resultado === "reintentar_misma_clave") return { estado: null, descontado: false, detalle: "Ecomm-App pidió reintentar: se reintenta con la misma clave." };
+  if (r.resultado === "rechazada") {
+    return r.motivo === "insufficient_stock"
+      ? { estado: "sin_stock", descontado: false, detalle: `Sin stock en el depósito para descontar${r.stockActual != null ? ` (hay ${r.stockActual})` : ""}: revisar la venta.` }
+      : { estado: "error", descontado: false, detalle: `Ecomm-App rechazó el descuento (${r.motivo}).` };
+  }
+  // 4xx con código (SKU inexistente, campos inválidos...): no se movió nada; no se reintenta solo.
+  if (http >= 400 && http < 500 && codigoError) return { estado: "error", descontado: false, detalle: `Ecomm-App: ${codigoError}.` };
+  // outcome_unknown, 502 o respuesta rara: NO se reintenta con otra clave; hay que mirar el stock real.
+  return { estado: "error", descontado: false, detalle: "Resultado desconocido en Ecomm-App: revisar el stock del SKU antes de reintentar." };
+}
+
+/** ¿Hay que devolver stock de esta línea? Solo si se descontó y todavía no se devolvió:
+ *  cancelada antes de salir del depósito → 'cancelacion'; devolución recibida en buen estado → 'devolucion'. */
+export function reposicionPendiente(f: { estado: string; descontado_at: string | null; repuesto_at: string | null; reposicion: string | null; recibido_estado: string | null }): "cancelacion" | "devolucion" | null {
+  if (!f.descontado_at || f.repuesto_at || f.estado !== "cancelada") return null;
+  if (f.reposicion === "inmediata") return "cancelacion";
+  if (f.reposicion === "al_recibir" && f.recibido_estado === "bien") return "devolucion";
+  return null;
 }

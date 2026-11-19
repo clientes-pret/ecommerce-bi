@@ -84,7 +84,8 @@ export function lineasDeOrden(
  *  - Todo lo demás → no: ya está al día, no está paga, o está en un estado que esta lógica nunca toca ('descontada', etc.). */
 export function debeReavisar(esperado: "sombra" | "cancelada" | null, filasEstados: string[] | undefined): boolean {
   if (esperado === "sombra") return !filasEstados || filasEstados.length === 0;
-  if (esperado === "cancelada") return Boolean(filasEstados?.some((e) => e === "sombra" || e === "nueva"));
+  // También lo ya descontado (o sin stock): si ML lo canceló hay que pasarlo a cancelada para devolver el stock.
+  if (esperado === "cancelada") return Boolean(filasEstados?.some((e) => e === "sombra" || e === "nueva" || e === "descontada" || e === "sin_stock"));
   return false;
 }
 
@@ -94,6 +95,9 @@ export function debeReavisar(esperado: "sombra" | "cancelada" | null, filasEstad
 export function nuevoEstadoParaExistente(actual: string, ahora: "sombra" | "cancelada"): string | null {
   if (actual === ahora) return null;
   if (actual === "nueva" || actual === "sombra") return ahora;
+  // Ya descontada (o sin stock) que ML cancela: pasa a cancelada. La devolución del stock la hace el proceso de descuento
+  // (una sola vez, con su propia clave), según si el paquete había salido del depósito.
+  if ((actual === "descontada" || actual === "sin_stock") && ahora === "cancelada") return "cancelada";
   return null;
 }
 

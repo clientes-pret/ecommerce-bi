@@ -120,7 +120,7 @@ async function conciliarRevendedor(rev: Revendedor): Promise<Json> {
 
 async function conciliar(): Promise<Json> {
   const t0 = Date.now();
-  const { data, error } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).eq("estado", "activo").order("id");
+  const { data, error } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).in("estado", ["activo", "inactivo"]).order("id");
   if (error) throw new Error(`rev_revendedores: ${error.message}`);
   const resultados: Json[] = [];
   for (const rev of (data ?? []) as Revendedor[]) {

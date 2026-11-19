@@ -19,6 +19,7 @@ const MAX_ETIQUETAS = 50;
 interface FilaOrden {
   id: number; revendedor_id: number; ml_order_id: number; ml_item_id: string | null; sku: string; cantidad: number;
   precio_unitario: number | null; estado: string; despachada: boolean | null; reposicion: string | null; devolucion: unknown; creado_at: string;
+  descontado_at: string | null; repuesto_at: string | null; detalle: string | null;
 }
 interface OrdenML { id: number; status?: string; date_created?: string; pack_id?: number | null; shipping?: { id?: number | null } | null; buyer?: { nickname?: string } | null }
 interface EnvioML { id: number; status?: string; substatus?: string | null; logistic_type?: string | null; tracking_number?: string | null }
@@ -40,7 +41,7 @@ export async function listarVentas(q: Quien, b: Record<string, unknown>) {
   const per = periodo(b.desde, b.hasta);
   if (!per) throw new Error("El período no es válido (máximo un año, y la fecha de inicio antes que la de fin).");
   let consulta = supabase.from("rev_ordenes")
-    .select("id,revendedor_id,ml_order_id,ml_item_id,sku,cantidad,precio_unitario,estado,despachada,reposicion,devolucion,creado_at")
+    .select("id,revendedor_id,ml_order_id,ml_item_id,sku,cantidad,precio_unitario,estado,despachada,reposicion,devolucion,descontado_at,repuesto_at,detalle,creado_at")
     .gte("creado_at", `${per.desde}T00:00:00-03:00`).lte("creado_at", `${per.hasta}T23:59:59.999-03:00`)
     .order("creado_at", { ascending: false }).order("id").limit(5000);
   if (!q.admin) consulta = consulta.eq("revendedor_id", q.rev!.id);
@@ -50,6 +51,11 @@ export async function listarVentas(q: Quien, b: Record<string, unknown>) {
   const filas = (data ?? []) as FilaOrden[];
 
   const revs = await revendedores([...new Set(filas.map((f) => f.revendedor_id))]);
+  // Para los botones de stock del admin: qué revendedores tienen descuento manual y si el sistema está en modo real.
+  const { data: dm } = await supabase.from("rev_revendedores").select("id,descuento_auto").in("id", [...revs.keys()]);
+  const manual = new Set(((dm ?? []) as { id: number; descuento_auto: boolean }[]).filter((r) => r.descuento_auto === false).map((r) => r.id));
+  const { data: cm } = await supabase.from("rev_config").select("valor").eq("clave", "modo").maybeSingle();
+  const modoReal = cm?.valor === "real" || cm?.valor === "activo";
   const skus = [...new Set(filas.map((f) => f.sku))];
   const titulos = new Map<string, string>();
   for (let i = 0; i < skus.length; i += 200) {
@@ -58,9 +64,9 @@ export async function listarVentas(q: Quien, b: Record<string, unknown>) {
   }
 
   // Una venta = una orden de ML (puede tener varias líneas/SKU).
-  const ordenes = new Map<number, { ml_order_id: number; revendedor_id: number; fecha: string; estado: string; despachada: boolean | null; reposicion: string | null; devolucion: unknown; lineas: Record<string, unknown>[] }>();
+  const ordenes = new Map<number, { ml_order_id: number; revendedor_id: number; fecha: string; estado: string; despachada: boolean | null; reposicion: string | null; devolucion: unknown; descontado_at: string | null; repuesto_at: string | null; detalle: string | null; lineas: Record<string, unknown>[] }>();
   for (const f of filas) {
-    if (!ordenes.has(f.ml_order_id)) ordenes.set(f.ml_order_id, { ml_order_id: f.ml_order_id, revendedor_id: f.revendedor_id, fecha: f.creado_at, estado: f.estado, despachada: f.despachada, reposicion: f.reposicion, devolucion: f.devolucion, lineas: [] });
+    if (!ordenes.has(f.ml_order_id)) ordenes.set(f.ml_order_id, { ml_order_id: f.ml_order_id, revendedor_id: f.revendedor_id, fecha: f.creado_at, estado: f.estado, despachada: f.despachada, reposicion: f.reposicion, devolucion: f.devolucion, descontado_at: f.descontado_at, repuesto_at: f.repuesto_at, detalle: f.detalle, lineas: [] });
     ordenes.get(f.ml_order_id)!.lineas.push({ sku: f.sku, ml_item_id: f.ml_item_id, cantidad: f.cantidad, precio_unitario: f.precio_unitario, titulo: titulos.get(f.sku) ?? null });
   }
 
@@ -85,6 +91,7 @@ export async function listarVentas(q: Quien, b: Record<string, unknown>) {
       return {
         ...o,
         revendedor: revs.get(o.revendedor_id)?.nickname ?? null,
+        descuento_manual: manual.has(o.revendedor_id),
         en_vivo: !!v,
         orden_ml: v?.ord ? { status: v.ord.status, pack_id: v.ord.pack_id ?? null, comprador: v.ord.buyer?.nickname ?? null } : null,
         envio: v?.env ? { id: v.env.id, status: v.env.status, substatus: v.env.substatus ?? null, logistic_type: v.env.logistic_type ?? null, tracking: v.env.tracking_number ?? null } : null,
@@ -92,6 +99,7 @@ export async function listarVentas(q: Quien, b: Record<string, unknown>) {
       };
     }),
     periodo: per,
+    modo_real: modoReal,
     en_vivo_max: MAX_ORDENES_EN_VIVO,
     revendedores: q.admin ? [...revs.values()].map((r) => ({ id: r.id, nickname: r.nickname })) : null,
   };

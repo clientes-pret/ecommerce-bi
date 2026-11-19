@@ -140,3 +140,26 @@ Deno.test("motivo en Ecomm-App: venta-<revendedor> con número de venta y SKU", 
   assertEquals(motivoMovimiento("venta", null, 1, "X"), "venta-revendedor #1 SKU X");
   assertEquals(motivoMovimiento("venta", "A", 1, "S".repeat(300)).length, 200);
 });
+
+import { reposicionPendiente, transicionDescuento } from "./logic.ts";
+Deno.test("descuento: qué estado queda según Ecomm-App", () => {
+  assertEquals(transicionDescuento({ resultado: "aplicada" }, 200).estado, "descontada");
+  assertEquals(transicionDescuento({ resultado: "aplicada_parcial", faltante: 1 }, 200).descontado, true);
+  assertEquals(transicionDescuento({ resultado: "reintentar_misma_clave", esperarSegundos: 2 }, 202).estado, null);
+  assertEquals(transicionDescuento({ resultado: "rechazada", motivo: "insufficient_stock", stockActual: 0 }, 409).estado, "sin_stock");
+  assertEquals(transicionDescuento({ resultado: "rechazada", motivo: "expected_stock_conflict" }, 409).estado, "error");
+  assertEquals(transicionDescuento({ resultado: "desconocido" }, 422, "VARIANT_NOT_FOUND").detalle, "Ecomm-App: VARIANT_NOT_FOUND.");
+  const u = transicionDescuento({ resultado: "desconocido" }, 502);
+  assertEquals([u.estado, u.descontado], ["error", false]); // outcome_unknown: nunca se reintenta con otra clave
+});
+
+Deno.test("reposición: solo lo descontado y una sola vez", () => {
+  const base = { estado: "cancelada", descontado_at: "2026-11-19", repuesto_at: null, reposicion: "inmediata", recibido_estado: null };
+  assertEquals(reposicionPendiente(base), "cancelacion");
+  assertEquals(reposicionPendiente({ ...base, repuesto_at: "2026-11-20" }), null);       // ya devuelto
+  assertEquals(reposicionPendiente({ ...base, descontado_at: null }), null);             // nunca se descontó
+  assertEquals(reposicionPendiente({ ...base, reposicion: "al_recibir" }), null);        // espera al depósito
+  assertEquals(reposicionPendiente({ ...base, reposicion: "al_recibir", recibido_estado: "bien" }), "devolucion");
+  assertEquals(reposicionPendiente({ ...base, reposicion: "al_recibir", recibido_estado: "danado" }), null);
+  assertEquals(reposicionPendiente({ ...base, estado: "descontada" }), null);             // venta vigente
+});

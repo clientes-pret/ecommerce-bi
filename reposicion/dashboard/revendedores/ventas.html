@@ -31,7 +31,7 @@ navRev(sesion, 'ventas');
 const admin = sesion.tipo === 'admin';
 
 const ENVIO = {
-  pending: 'Pendiente', handling: 'En preparación', ready_to_print: 'Lista para imprimir la etiqueta', printed: 'Etiqueta impresa',
+  pending: 'Pendiente', under_review: 'En revisión de Mercado Libre (todavía sin etiqueta)', handling: 'En preparación', ready_to_print: 'Lista para imprimir la etiqueta', printed: 'Etiqueta impresa',
   picked_up: 'Retirada por el correo', dropped_off: 'Entregada en el punto de despacho', in_hub: 'En el centro de distribución',
   shipped: 'En camino', delivered: 'Entregada', not_delivered: 'No entregada', cancelled: 'Envío cancelado',
 };
@@ -72,6 +72,21 @@ function periodoElegido() {
 }
 const sel = new Set();
 
+// Stock en Ecomm-App de la venta: descontado / devuelto / sin stock / error. El admin puede descontar o devolver a mano
+// (revendedores con descuento manual, o para resolver un caso puntual).
+function stockHTML(x) {
+  const out = [];
+  if (x.descontado_at && !x.repuesto_at) out.push('<span class="chip ok" title="Descontado en Ecomm-App">Stock descontado</span>');
+  if (x.repuesto_at) out.push('<span class="chip" title="El stock volvió a Ecomm-App">Stock devuelto</span>');
+  if (x.estado === 'sin_stock') out.push('<span class="chip bad">Sin stock para descontar</span>');
+  if (x.estado === 'error') out.push('<span class="chip bad">Revisar en Ecomm-App</span>');
+  // Descontar a mano: ventas de revendedores con descuento manual, o en modo real alguna que quedó sin descontar.
+  if (admin && x.estado === 'sombra' && !x.descontado_at && (x.descuento_manual || info?.modo_real)) out.push(`<button class="btn sm" data-desc="${x.ml_order_id}" title="Descuenta en Ecomm-App las unidades de esta venta">Descontar stock</button>`);
+  if (admin && x.estado === 'cancelada' && x.descontado_at && !x.repuesto_at) out.push(`<button class="btn sm" data-desc="${x.ml_order_id}" title="Devuelve el stock si se canceló antes de salir del depósito o si la devolución llegó bien">Devolver stock</button>`);
+  const det = x.detalle && (x.estado === 'error' || x.estado === 'sin_stock' || x.descontado_at) ? `<div class="small muted">${esc(x.detalle)}</div>` : '';
+  return out.length || det ? `<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px">${out.join('')}</div>${det}` : '';
+}
+
 // Estado del pedido en palabras + en qué grupo cae para el filtro.
 function estadoDe(v) {
   if (v.estado === 'cancelada' || v.orden_ml?.status === 'cancelled') {
@@ -80,7 +95,8 @@ function estadoDe(v) {
   }
   const e = v.envio;
   if (!e) return { grupo: v.en_vivo ? 'despachar' : 'todas', txt: v.en_vivo ? 'Sin envío de Mercado Envíos' : 'Sin datos de Mercado Libre ahora', chip: '' };
-  const clave = e.status === 'ready_to_ship' ? (e.substatus && ENVIO[e.substatus] ? e.substatus : 'ready_to_print') : e.status;
+  const clave = e.status === 'ready_to_ship' ? (e.substatus && ENVIO[e.substatus] ? e.substatus : 'ready_to_print')
+    : e.status === 'pending' && e.substatus === 'under_review' ? 'under_review' : e.status;
   const grupo = e.status === 'delivered' ? 'entregadas'
     : (e.status === 'shipped' || ['picked_up', 'dropped_off', 'in_hub'].includes(e.substatus)) ? 'camino'
     : e.status === 'cancelled' ? 'canceladas' : 'despachar';
@@ -139,6 +155,7 @@ function pintar() {
     <td data-label="Productos">${x.lineas.map((l) => `<div class="linea"><b>${esc(l.titulo || l.sku)}</b><br>
       <span class="muted">${esc(l.sku)}${l.ml_item_id ? ` · <a href="${linkML(l.ml_item_id)}" target="_blank" rel="noopener">${esc(l.ml_item_id)} ↗</a>` : ''} · ${l.cantidad} u.${l.precio_unitario != null ? ' × ' + peso0(l.precio_unitario) : ''}</span></div>`).join('')}</td>
     <td data-label="Estado"><span class="chip ${x.e.chip}">${esc(x.e.txt)}</span>${x.e.extra ? `<div class="small warn-t">${esc(x.e.extra)}</div>` : ''}
+      ${stockHTML(x)}
       ${x.envio?.logistic_type ? `<div class="muted small">${esc(LOGISTICA[x.envio.logistic_type] || x.envio.logistic_type)}${x.envio.tracking ? ' · seguimiento ' + esc(x.envio.tracking) : ''}</div>` : ''}</td>
     <td data-label="Etiqueta">${x.etiqueta ? `<button class="btn sm primary" data-imp="${x.ml_order_id}">Imprimir</button>` : '<span class="muted small">—</span>'}</td></tr>`).join('')
     || `<tr><td colspan="${admin ? 6 : 5}" class="muted">${ventas.length ? 'No hay ventas con ese filtro.' : 'No hay ventas en este período.'}</td></tr>`;
@@ -166,7 +183,22 @@ async function imprimir(ordenes) {
   }
 }
 
-$('#tb').onclick = (e) => { const b = e.target.closest('[data-imp]'); if (b) imprimir([b.dataset.imp]); };
+$('#tb').onclick = async (e) => {
+  const b = e.target.closest('[data-imp]'); if (b) { imprimir([b.dataset.imp]); return; }
+  const d = e.target.closest('[data-desc]'); if (!d) return;
+  const v = ventas.find((x) => String(x.ml_order_id) === d.dataset.desc);
+  const unidades = v ? v.lineas.map((l) => `${l.cantidad} × ${l.sku}`).join(', ') : '';
+  const devolver = d.textContent.includes('Devolver');
+  if (!confirm(devolver ? `¿Devolver al stock de Ecomm-App ${unidades}?` : `¿Descontar ahora en Ecomm-App ${unidades}? Se hace con una clave única: no se descuenta dos veces.`)) return;
+  d.disabled = true; $('#aviso').className = 'muted small'; $('#aviso').textContent = 'Hablando con Ecomm-App…';
+  try {
+    const r = await apiPublicar('admin/descontar', { ml_order_id: Number(d.dataset.desc) });
+    $('#aviso').textContent = r.descontadas ? 'Listo: stock descontado en Ecomm-App.' : r.repuestas ? 'Listo: el stock volvió a Ecomm-App.'
+      : r.sin_stock ? 'No había stock en el depósito para descontar: revisá la venta.' : r.errores || r.errores_reposicion ? 'Ecomm-App no lo aplicó: revisá el detalle de la venta.'
+      : 'No había nada para mover en esta venta (si es una devolución, primero marcala como recibida en Operaciones → Devoluciones).';
+    await cargar();
+  } catch (err) { $('#aviso').className = 'err small'; $('#aviso').textContent = err.message; d.disabled = false; }
+};
 $('#tb').onchange = (e) => { const c = e.target.closest('[data-o]'); if (!c) return; c.checked ? sel.add(c.dataset.o) : sel.delete(c.dataset.o); pintar(); };
 $('#limpiar').onclick = () => { sel.clear(); pintar(); };
 // Casilla de arriba: todas las ventas visibles que tienen la etiqueta lista.

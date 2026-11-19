@@ -93,7 +93,8 @@ async function sincronizar(): Promise<Json> {
   const cfg = Object.fromEntries(cfgRows.map((c) => [c.clave, c.valor]));
   const colchon = Number(cfg.colchon ?? 5);
   const warehouseId = Number(cfg.warehouse_id ?? 1083);
-  const modo = cfg.modo === "activo" ? "activo" : "sombra";
+  // Modo real: "activo" (nombre original) o "real" (el que usan rev-ordenes y el portal). Cualquier otro valor = sombra.
+  const modo = cfg.modo === "activo" || cfg.modo === "real" ? "activo" : "sombra";
 
   const catalogo = (await leerTodo<{ sku: string; habilitado: boolean; colchon_override: number | null }>(
     "rev_catalogo",
@@ -137,8 +138,11 @@ async function sincronizar(): Promise<Json> {
     if (error) throw new Error(`rev_stock_ofrecido: ${error.message}`);
   }
 
-  const revs = await leerTodo<Revendedor>("rev_revendedores", COLUMNAS_REVENDEDOR, "id");
-  const activos = new Map(revs.filter((r) => r.estado === "activo").map((r) => [r.id, r]));
+  const revs = await leerTodo<Revendedor & { desactivado_modo: string | null }>("rev_revendedores", COLUMNAS_REVENDEDOR + ",desactivado_modo", "id");
+  // Activos: se les manda el stock ofrecido. Desactivados con "stock en 0": se les manda 0 (una vez) a todas sus
+  // publicaciones vinculadas. Desactivados con "dejar de actualizar" (congelar), pausados o desconectados: no se tocan.
+  const aCero = new Set(revs.filter((r) => r.estado === "inactivo" && r.desactivado_modo === "stock_cero").map((r) => r.id));
+  const activos = new Map(revs.filter((r) => r.estado === "activo" || aCero.has(r.id)).map((r) => [r.id, r]));
   // `sku` puede ser nulo (publicación todavía sin reconocer, ver migración del portal): esas no se sincronizan.
   const pubs = (await leerTodo<{
     id: number;
@@ -151,7 +155,10 @@ async function sincronizar(): Promise<Json> {
     .filter((p) => activos.has(p.revendedor_id) && p.sku)
     .map((p) => ({ ...p, sku: p.sku as string }));
 
-  const cambios = publicacionesAActualizar(ofrecidos, pubs.map((p) => ({ ...p, sku: norm(p.sku) })));
+  const cambios = [
+    ...publicacionesAActualizar(ofrecidos, pubs.filter((p) => !aCero.has(p.revendedor_id)).map((p) => ({ ...p, sku: norm(p.sku) }))),
+    ...publicacionesAActualizar(new Map(pubs.map((p) => [norm(p.sku), 0])), pubs.filter((p) => aCero.has(p.revendedor_id)).map((p) => ({ ...p, sku: norm(p.sku) }))),
+  ];
   const resumen: Json = {
     modo,
     catalogo: catalogo.length,

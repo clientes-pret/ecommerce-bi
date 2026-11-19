@@ -18,6 +18,102 @@ const sesion = await guardRev(['admin']);
 navRev(sesion, 'admin');
 
 $('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando…</p>';
+// ───────── Revendedores: estado (activo / desactivado), descuento de stock (automático / manual) y ficha ─────────
+// Pedido del usuario (19/11/2026). Datos de rev-publicar /admin/resumen; los cambios van por /admin/revendedor/*.
+document.body.insertAdjacentHTML('beforeend', `<dialog id="dlg" style="width:min(640px,calc(100vw - 24px));border:0;border-radius:16px;padding:0;box-shadow:0 20px 60px rgba(0,0,0,.25)"></dialog>`);
+const dlg = $('#dlg');
+const ESTADO_REV = { activo: ['Activo', 'ok'], inactivo: ['Desactivado', 'bad'], desconectado: ['Sin conexión con ML', 'warn'], pausado: ['Pausado', ''] };
+
+function pintarRevendedores(revsRpc, cuenta) {
+  const usuarios = new Map(revsRpc.map((r) => [r.id, r.usuarios]));
+  const lista = resumen?.revendedores || [];
+  $('#revSec').innerHTML = `<div class="cab"><div><h2>Revendedores</h2><span class="muted">Activá o desactivá cada uno, elegí si sus ventas descuentan stock solas y cargá su ficha</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:980px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Estado</th><th scope="col">Descuento de stock</th><th scope="col" class="r">Publicaciones</th><th scope="col">Usuarios del portal</th><th scope="col" class="r" title="Solo ventas reales (ya descontadas del stock). En modo prueba es 0: lo simulado está arriba.">Te debe (ventas reales)</th><th scope="col"></th></tr></thead><tbody>${
+    lista.map((r) => {
+      const [et, ec] = ESTADO_REV[r.estado] || [r.estado, ''];
+      const contacto = [r.contacto_nombre, r.empresa, r.whatsapp || r.telefono, r.email].filter(Boolean).map(esc).join(' · ');
+      return `<tr data-id="${r.id}"><th scope="row" class="tit"><div class="row" style="gap:10px;align-items:center">
+          ${r.logo_url ? `<img src="${esc(r.logo_url)}" alt="" style="width:40px;height:40px;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:#fff">` : '<div style="width:40px;height:40px;border-radius:8px;background:var(--line-soft)"></div>'}
+          <div><b>${esc(r.nickname || 'Sin nombre')}</b><div class="muted small">${contacto || 'sin datos de contacto'}</div></div></div></th>
+        <td data-label="Estado"><span class="chip ${ec}">${et}</span>${r.estado === 'inactivo' ? `<div class="muted small">${r.desactivado_modo === 'stock_cero' ? 'stock en 0' : 'sin actualizar'}</div>` : ''}
+          <div style="margin-top:6px">${r.estado === 'inactivo' ? '<button class="btn sm primary" data-a="activar">Activar</button>' : r.estado === 'activo' ? '<button class="btn sm danger" data-a="desactivar">Desactivar</button>' : ''}</div></td>
+        <td data-label="Descuento de stock"><select data-a="descuento" aria-label="Descuento de stock de ${esc(r.nickname || '')}"><option value="auto" ${r.descuento_auto !== false ? 'selected' : ''}>Automático</option><option value="manual" ${r.descuento_auto === false ? 'selected' : ''}>Manual</option></select>
+          <div class="muted small">${r.descuento_auto === false ? 'lo descontás vos desde Ventas' : 'cada venta se descuenta sola'}</div></td>
+        <td class="r num" data-label="Publicaciones"><a href="vinculadas.html?r=${r.id}">${num.format(r.publicaciones.vinculadas)}</a><div class="muted small">${r.publicaciones.activas} activas</div></td>
+        <td data-label="Usuarios">${usuarios.get(r.id) ? esc(usuarios.get(r.id)) : '<span class="muted">ninguno</span>'}</td>
+        <td class="r num" data-label="Te debe" style="font-weight:600">${peso0(cuenta.get(r.id)?.saldo || 0)}</td>
+        <td class="full"><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="ficha">Ficha</button><a class="btn sm" href="cuenta.html?r=${r.id}">Ver cuenta</a></div><span class="small err" data-e></span></td></tr>`;
+    }).join('') || '<tr><td colspan="7" class="muted">Todavía no hay revendedores conectados. Pasales el link de abajo.</td></tr>'}</tbody></table></div>`;
+  const porId = new Map(lista.map((r) => [String(r.id), r]));
+  $('#revSec').onclick = async (e) => {
+    const b = e.target.closest('[data-a]'); const tr = e.target.closest('tr[data-id]'); if (!b || !tr || b.tagName === 'SELECT') return;
+    const r = porId.get(tr.dataset.id), msg = $('[data-e]', tr);
+    if (b.dataset.a === 'activar') {
+      try { await apiPublicar('admin/revendedor/estado', { id: r.id, activo: true }); cargar(); } catch (err) { msg.textContent = err.message; }
+    } else if (b.dataset.a === 'desactivar') abrirDesactivar(r);
+    else if (b.dataset.a === 'ficha') abrirFicha(r);
+  };
+  $('#revSec').onchange = async (e) => {
+    const sel = e.target.closest('[data-a="descuento"]'); if (!sel) return;
+    const tr = sel.closest('tr[data-id]'), auto = sel.value === 'auto';
+    if (!auto && !confirm('Con descuento manual, las ventas de este revendedor NO se van a descontar solas en Ecomm-App: las vas a tener que descontar vos desde Ventas. ¿Seguro?')) { sel.value = 'auto'; return; }
+    try { await apiPublicar('admin/revendedor/descuento', { id: Number(tr.dataset.id), auto }); cargar(); } catch (err) { $('[data-e]', tr).textContent = err.message; }
+  };
+}
+
+function abrirDesactivar(r) {
+  dlg.innerHTML = `<form method="dialog" style="padding:20px 22px" id="fd"><h2 style="margin-top:0">Desactivar a ${esc(r.nickname || '')}</h2>
+    <p class="muted small">Deja de poder publicar tus productos. Sus ventas se siguen registrando. ¿Qué hacemos con sus ${num.format(r.publicaciones.vinculadas)} publicaciones vinculadas en Mercado Libre?</p>
+    <label class="op" style="display:flex;gap:10px;margin:8px 0;font-weight:500"><input type="radio" name="m" value="stock_cero" checked><span>Poner su stock en 0<span class="muted small" style="display:block;font-weight:400">No pueden vender más tus productos hasta que lo reactives. Recomendado.</span></span></label>
+    <label class="op" style="display:flex;gap:10px;margin:8px 0;font-weight:500"><input type="radio" name="m" value="congelar"><span>Dejar de actualizarlas<span class="muted small" style="display:block;font-weight:400">Quedan con el último stock que tenían. Riesgo: pueden vender algo que ya no tenés.</span></span></label>
+    <p class="err small" id="dErr"></p>
+    <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn" value="no">Cancelar</button><button class="btn danger" id="dOk" type="button">Desactivar</button></div></form>`;
+  dlg.showModal();
+  $('#dOk', dlg).onclick = async () => {
+    const modo = $('input[name="m"]:checked', dlg).value;
+    try { await apiPublicar('admin/revendedor/estado', { id: r.id, activo: false, modo }); dlg.close(); cargar(); } catch (err) { $('#dErr', dlg).textContent = err.message; }
+  };
+}
+
+const CAMPOS_FICHA = [['contacto_nombre', 'Nombre de contacto'], ['empresa', 'Empresa / razón social'], ['cuit', 'CUIT'], ['email', 'Email'], ['telefono', 'Teléfono'], ['whatsapp', 'WhatsApp'], ['direccion', 'Dirección']];
+function abrirFicha(r) {
+  dlg.innerHTML = `<form method="dialog" style="padding:20px 22px" id="ff"><h2 style="margin-top:0">Ficha de ${esc(r.nickname || '')}</h2>
+    <div class="row" style="gap:14px;align-items:center;margin-bottom:8px">
+      <div id="fLogo">${r.logo_url ? `<img src="${esc(r.logo_url)}" alt="Logo" style="width:72px;height:72px;object-fit:contain;border-radius:10px;border:1px solid var(--line);background:#fff">` : '<div style="width:72px;height:72px;border-radius:10px;background:var(--line-soft)"></div>'}</div>
+      <div><label for="fArch" style="margin:0">Logo</label><input type="file" id="fArch" accept="image/png,image/jpeg,image/webp,image/svg+xml"><div class="muted small">PNG, JPG, WEBP o SVG, hasta 2 MB.${r.logo_url ? ' <a href="#" id="fQuitar">Quitar logo</a>' : ''}</div></div></div>
+    <div class="campos">${CAMPOS_FICHA.map(([k, t]) => `<div><label for="f_${k}">${t}</label><input id="f_${k}" value="${esc(r[k] || '')}" ${k === 'email' ? 'type="email"' : ''}></div>`).join('')}</div>
+    <label for="f_notas">Notas</label><textarea id="f_notas" rows="3" style="width:100%">${esc(r.notas || '')}</textarea>
+    <p class="muted small">Cuenta de Mercado Libre: ${esc(r.nickname || '')} (${r.ml_user_id}) · conectada el ${r.conectado_at ? new Date(r.conectado_at).toLocaleDateString('es-AR') : '—'}</p>
+    <p class="err small" id="fErr"></p>
+    <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn" value="no">Cerrar</button><button class="btn primary" id="fOk" type="button">Guardar</button></div></form>`;
+  dlg.showModal();
+  $('#fArch', dlg).onchange = async (e) => {
+    const a = e.target.files[0]; if (!a) return;
+    if (a.size > 2 * 1024 * 1024) { $('#fErr', dlg).textContent = 'El logo tiene que pesar menos de 2 MB.'; return; }
+    const base64 = await new Promise((ok) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.readAsDataURL(a); });
+    try {
+      const x = await apiPublicar('admin/revendedor/logo', { id: r.id, tipo: a.type, base64 });
+      r.logo_url = x.logo_url; $('#fLogo', dlg).innerHTML = `<img src="${esc(x.logo_url)}" alt="Logo" style="width:72px;height:72px;object-fit:contain;border-radius:10px;border:1px solid var(--line);background:#fff">`;
+      $('#fErr', dlg).className = 'small ok-t'; $('#fErr', dlg).textContent = 'Logo guardado.';
+    } catch (err) { $('#fErr', dlg).className = 'small err'; $('#fErr', dlg).textContent = err.message; }
+  };
+  const q = $('#fQuitar', dlg);
+  if (q) q.onclick = async (e) => { e.preventDefault(); try { await apiPublicar('admin/revendedor/logo', { id: r.id, quitar: true }); dlg.close(); cargar(); } catch (err) { $('#fErr', dlg).textContent = err.message; } };
+  $('#fOk', dlg).onclick = async () => {
+    const ficha = Object.fromEntries([...CAMPOS_FICHA.map(([k]) => [k, $('#f_' + k, dlg).value]), ['notas', $('#f_notas', dlg).value]]);
+    try { await apiPublicar('admin/revendedor/ficha', { id: r.id, ficha }); dlg.close(); cargar(); } catch (err) { $('#fErr', dlg).className = 'small err'; $('#fErr', dlg).textContent = err.message; }
+  };
+}
+
+async function pintarLink() {
+  try {
+    const { link } = await apiPublicar('admin/conectar', {});
+    $('#lnk').value = link;
+    $('#lnkWa').href = 'https://wa.me/?text=' + encodeURIComponent('Hola! Para empezar a vender productos de Pret a Home, conectá tu cuenta de Mercado Libre acá: ' + link);
+    $('#lnkCopiar').onclick = async () => { try { await navigator.clipboard.writeText(link); } catch { $('#lnk').select(); document.execCommand('copy'); } $('#lnkMsg').textContent = 'Copiado.'; setTimeout(() => ($('#lnkMsg').textContent = ''), 2500); };
+  } catch (e) { $('#lnk').value = 'No pude traer el link: ' + e.message; }
+}
+
 let resumen = null, revSel = new URLSearchParams(location.search).get('r') || '', gran = 'semana';
 
 // Ventas por revendedor (19/11/2026, pedido del usuario): filtrar revendedor por revendedor y ver, por semana o por
@@ -75,13 +171,12 @@ async function cargar() {
     <button class="btn primary" style="align-self:flex-end">Guardar margen</button><span id="mgMsg" class="small" style="align-self:flex-end;padding-bottom:12px"></span></form>
     ${margen == null ? '<p class="warn-t small" style="margin-bottom:0"><b>Todavía no está definido:</b> los revendedores ven "a definir" en el precio mayorista y las ventas no suman al saldo.</p>' : ''}
   </section>
-  <section class="card tabla"><div class="cab"><div><h2>Revendedores</h2><span class="muted">Cuenta de Mercado Libre conectada y usuario del portal</span></div></div>
-    <div class="scroll"><table class="apilar" style="min-width:860px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Mercado Libre</th><th scope="col">Usuarios del portal</th><th scope="col" class="r" title="Solo ventas reales (ya descontadas del stock). En modo prueba es 0: lo simulado está arriba.">Te debe (ventas reales)</th><th scope="col"></th></tr></thead><tbody>${
-      revs.map((r) => { const c = cuenta.get(r.id); return `<tr><th scope="row" class="tit">${esc(r.nickname || 'Sin nombre')}<div class="muted small">ID ${r.id} · ${esc(r.estado)}</div></th>
-      <td data-label="Mercado Libre">${r.conectada ? '<span class="chip ok">conectada</span>' : '<span class="chip bad">sin conexión</span>'} <span class="muted small">${r.ml_user_id}</span></td>
-      <td data-label="Usuarios">${r.usuarios ? esc(r.usuarios) : '<span class="muted">ninguno</span>'}</td>
-      <td class="r num" data-label="Te debe" style="font-weight:600">${peso0(c?.saldo || 0)}</td>
-      <td class="full"><a class="btn sm" href="cuenta.html?r=${r.id}">Ver cuenta</a></td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Todavía no hay revendedores conectados.</td></tr>'}</tbody></table></div></section>
+  <section class="card tabla" id="revSec"></section>
+  <section class="card"><h2 style="margin-top:0">Conectar un revendedor nuevo</h2>
+    <p class="muted small" style="margin-top:0">Pasale este link. Lo abre con su cuenta de Mercado Libre, autoriza la conexión y aparece solo en la lista de arriba, activo y con descuento automático.</p>
+    <div class="row wrapRow" style="gap:8px"><input id="lnk" readonly style="flex:1;min-width:260px" aria-label="Link para conectar">
+      <button class="btn primary" id="lnkCopiar" type="button">Copiar link</button><a class="btn" id="lnkWa" target="_blank" rel="noopener">Mandar por WhatsApp</a></div>
+    <span id="lnkMsg" class="small ok-t"></span></section>
   <div class="grid dos">
     <section class="card"><h2 style="margin-top:0">Dar acceso al portal</h2>
       <p class="muted small" style="margin-top:0">Primero invitá a la persona desde Supabase → Authentication → Users → Invite user. Después vinculá su email al revendedor.</p>
@@ -104,6 +199,8 @@ async function cargar() {
     if (!error) setTimeout(cargar, 600);
   };
   pintarVentas();
+  pintarRevendedores(revs, cuenta);
+  pintarLink();
   $('#fu').onsubmit = async (e) => {
     e.preventDefault();
     const { error } = await sb.rpc('rev_vincular_usuario', { p_email: $('#uEmail').value, p_revendedor: Number($('#uRev').value) });

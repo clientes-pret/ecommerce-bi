@@ -18,10 +18,9 @@ Deno.test("debeReavisar: cancelada en ML y todavía como venta en la base → s�
   assertEquals(debeReavisar("cancelada", ["nueva", "cancelada"]), true);
 });
 
-Deno.test("debeReavisar: cancelada en ML y ya cancelada, ausente o ya descontada → no", () => {
+Deno.test("debeReavisar: cancelada en ML y ya cancelada o ausente → no", () => {
   assertEquals(debeReavisar("cancelada", ["cancelada"]), false);
   assertEquals(debeReavisar("cancelada", undefined), false);
-  assertEquals(debeReavisar("cancelada", ["descontada"]), false); // eso lo resuelve un proceso con más cuidado
 });
 
 Deno.test("debeReavisar: orden sin pago aprobado → no", () => {
@@ -128,9 +127,14 @@ Deno.test("nuevoEstadoParaExistente: una venta simulada que se cancela pasa a ca
   assertEquals(nuevoEstadoParaExistente("nueva", "sombra"), "sombra");
 });
 
+Deno.test("nuevoEstadoParaExistente: una venta ya descontada que ML cancela pasa a cancelada (el stock lo devuelve el descuento)", () => {
+  assertEquals(nuevoEstadoParaExistente("descontada", "cancelada"), "cancelada");
+  assertEquals(nuevoEstadoParaExistente("sin_stock", "cancelada"), "cancelada");
+});
+
 Deno.test("nuevoEstadoParaExistente: lo ya descontado o con problema no se toca desde acá", () => {
-  assertEquals(nuevoEstadoParaExistente("descontada", "cancelada"), null);
-  assertEquals(nuevoEstadoParaExistente("sin_stock", "cancelada"), null);
+  assertEquals(nuevoEstadoParaExistente("descontada", "sombra"), null);
+  assertEquals(nuevoEstadoParaExistente("sin_stock", "sombra"), null);
   assertEquals(nuevoEstadoParaExistente("error", "sombra"), null);
 });
 
@@ -171,4 +175,11 @@ Deno.test("reclamo: resumen y si cambió", () => {
   assertEquals(reclamoCambio(c, { reclamos: [r] }), false);
   assertEquals(reclamoCambio({ ...c, last_updated: "2026-11-19T10:00:00" }, { reclamos: [r] }), true);
   assertEquals(reclamoCambio(c, null), true);
+});
+
+Deno.test("debeReavisar: una venta descontada que ML canceló → sí (hay que devolver el stock)", () => {
+  assertEquals(debeReavisar("cancelada", ["descontada"]), true);
+  assertEquals(debeReavisar("cancelada", ["sin_stock"]), true);
+  assertEquals(debeReavisar("cancelada", ["cancelada"]), false);
+  assertEquals(debeReavisar("cancelada", ["error"]), false); // un error se revisa a mano
 });

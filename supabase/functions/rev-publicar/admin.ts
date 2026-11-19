@@ -29,9 +29,9 @@ const CUENTAS_PROPIAS = async (): Promise<number[]> => {
 /** Revendedores (sin las cuentas propias de Pret/Lavan, que están conectadas solo para leer). */
 async function revendedores() {
   const propias = await CUENTAS_PROPIAS();
-  const { data, error } = await supabase.from("rev_revendedores").select("id,ml_user_id,nickname,estado,conectado_at").order("nickname");
+  const { data, error } = await supabase.from("rev_revendedores").select("id,ml_user_id,nickname,estado,conectado_at,desactivado_modo,desactivado_at,descuento_auto,contacto_nombre,empresa,cuit,email,telefono,whatsapp,direccion,notas,logo_url").order("nickname");
   if (error) throw new Error(error.message);
-  return ((data ?? []) as { id: number; ml_user_id: number; nickname: string | null; estado: string; conectado_at: string | null }[])
+  return ((data ?? []) as ({ id: number; ml_user_id: number; nickname: string | null; estado: string; conectado_at: string | null } & Record<string, unknown>)[])
     .filter((r) => !propias.includes(Number(r.ml_user_id)));
 }
 
@@ -102,3 +102,88 @@ export async function publicaciones() {
     }),
   };
 }
+
+// ───────────────────────── Gestión de revendedores (19/11/2026) ─────────────────────────
+import { URL_SB } from "./nucleo.ts";
+import { procesarDescuentos } from "../_shared/descuento.ts";
+
+type Json = Record<string, unknown>;
+const texto = (v: unknown, max: number) => {
+  const s = String(v ?? "").replace(/\s+/g, " ").trim();
+  return s ? s.slice(0, max) : null;
+};
+
+async function revendedorEditable(id: number) {
+  const propias = await CUENTAS_PROPIAS();
+  const { data } = await supabase.from("rev_revendedores").select("id,ml_user_id,estado").eq("id", id).maybeSingle();
+  if (!data || propias.includes(Number(data.ml_user_id))) throw new Error("No encontré ese revendedor.");
+  return data as { id: number; ml_user_id: number; estado: string };
+}
+
+/** Activar / desactivar. Al desactivar se elige: 'stock_cero' (sus publicaciones quedan en 0) o 'congelar' (quedan como
+ *  están y se dejan de actualizar). Sus ventas se siguen registrando. */
+export async function cambiarEstado(b: Json) {
+  const r = await revendedorEditable(Number(b.id));
+  if (b.activo === true) {
+    if (r.estado === "desconectado") throw new Error("La cuenta de Mercado Libre está desconectada: el revendedor tiene que volver a conectarla con el link.");
+    await supabase.from("rev_revendedores").update({ estado: "activo", desactivado_modo: null, desactivado_at: null, actualizado_at: new Date().toISOString() }).eq("id", r.id);
+    return { ok: true, estado: "activo" };
+  }
+  const modo = b.modo === "congelar" ? "congelar" : b.modo === "stock_cero" ? "stock_cero" : null;
+  if (!modo) throw new Error("Elegí qué hacer con sus publicaciones.");
+  await supabase.from("rev_revendedores").update({ estado: "inactivo", desactivado_modo: modo, desactivado_at: new Date().toISOString(), actualizado_at: new Date().toISOString() }).eq("id", r.id);
+  return { ok: true, estado: "inactivo", modo };
+}
+
+export async function cambiarDescuento(b: Json) {
+  const r = await revendedorEditable(Number(b.id));
+  await supabase.from("rev_revendedores").update({ descuento_auto: b.auto !== false, actualizado_at: new Date().toISOString() }).eq("id", r.id);
+  return { ok: true, descuento_auto: b.auto !== false };
+}
+
+export async function guardarFicha(b: Json) {
+  const r = await revendedorEditable(Number(b.id));
+  const c = (b.ficha ?? {}) as Json;
+  const email = texto(c.email, 120);
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("El email no parece válido.");
+  const ficha = {
+    contacto_nombre: texto(c.contacto_nombre, 120), empresa: texto(c.empresa, 120), cuit: texto(c.cuit, 20), email,
+    telefono: texto(c.telefono, 40), whatsapp: texto(c.whatsapp, 40), direccion: texto(c.direccion, 200),
+    notas: String(c.notas ?? "").trim().slice(0, 2000) || null,
+  };
+  await supabase.from("rev_revendedores").update({ ...ficha, actualizado_at: new Date().toISOString() }).eq("id", r.id);
+  return { ok: true, ficha };
+}
+
+const TIPOS_LOGO: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/svg+xml": "svg" };
+
+/** Logo del revendedor: imagen de hasta 2 MB (png, jpg, webp o svg) al bucket público rev-logos. `quitar` lo borra. */
+export async function guardarLogo(b: Json) {
+  const r = await revendedorEditable(Number(b.id));
+  if (b.quitar === true) {
+    await supabase.from("rev_revendedores").update({ logo_url: null, actualizado_at: new Date().toISOString() }).eq("id", r.id);
+    return { ok: true, logo_url: null };
+  }
+  const tipo = String(b.tipo ?? ""), ext = TIPOS_LOGO[tipo];
+  if (!ext) throw new Error("El logo tiene que ser PNG, JPG, WEBP o SVG.");
+  const bytes = Uint8Array.from(atob(String(b.base64 ?? "")), (ch) => ch.charCodeAt(0));
+  if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw new Error("El logo tiene que pesar menos de 2 MB.");
+  const ruta = `${r.id}/logo-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from("rev-logos").upload(ruta, bytes, { contentType: tipo, upsert: true });
+  if (error) throw new Error("No se pudo subir el logo: " + error.message);
+  const url = supabase.storage.from("rev-logos").getPublicUrl(ruta).data.publicUrl;
+  await supabase.from("rev_revendedores").update({ logo_url: url, actualizado_at: new Date().toISOString() }).eq("id", r.id);
+  return { ok: true, logo_url: url };
+}
+
+/** Descontar (o devolver) a mano el stock de UNA venta en Ecomm-App: para revendedores con descuento manual. */
+export async function descontarVenta(b: Json) {
+  const orden = Number(b.ml_order_id);
+  if (!Number.isFinite(orden)) throw new Error("Falta la venta.");
+  const token = Deno.env.get("ECOMMAPP_TOKEN") ?? "";
+  if (!token) throw new Error("Falta la conexión con Ecomm-App (ECOMMAPP_TOKEN).");
+  return await procesarDescuentos(supabase, token, { soloOrden: orden });
+}
+
+/** Link que se le pasa a un revendedor nuevo para conectar su cuenta de Mercado Libre. */
+export const linkConectar = () => ({ link: `${URL_SB}/functions/v1/rev-prueba/conectar` });
