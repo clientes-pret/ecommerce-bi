@@ -216,12 +216,22 @@ async function abrirPanel(sku) {
   // Precio por ganancia neta (opción por defecto): ML + impuestos ≈ comision_ml % del precio.
   st.ml = Number(d.comision_ml ?? 30); st.ganancia = Number(d.ganancia_defecto ?? 10); st.modoPrecio = 'margen';
   st.tipos = new Set(['gold_special']); st.pausada = false;
+  st.recargo = Number(d.recargo_cuotas ?? 13);
   pintarPanel();
 }
 
 const puedeColor = (c) => c.en_catalogo && c.ofrecido > 0;
 // Mismas cuentas que rev-publicar/logic.ts: precio = costo / (1 − ML − ganancia). Ej.: costo 60, ML 30 %, ganancia 10 % → 100.
 function precioMargen(costo, ganancia, ml) { const r = 1 - ml / 100 - ganancia / 100; return costo > 0 && r >= 0.05 ? Math.ceil(costo / r) : null; }
+// Premium (cuotas sin interés): ML cobra `recargo` % más. Para que te quede la misma ganancia en pesos que en Clásica:
+// premium = precio × (1 − ML) / (1 − ML − recargo). Mismas cuentas que precioConCuotas() en rev-publicar/logic.ts.
+function precioCuotas(precio, recargo, ml) {
+  if (!(precio > 0)) return null; if (!(recargo > 0)) return precio;
+  const r = 1 - (ml + recargo) / 100; return r >= 0.05 ? Math.ceil((precio * (1 - ml / 100)) / r) : null;
+}
+const bloqueRecargo = (id, valor, ejemplo) => `<div class="recargo"><label for="${id}" style="margin-top:0">Recargo por cuotas en Premium</label>
+  <div class="row" style="gap:6px;align-items:center"><input id="${id}" type="number" inputmode="decimal" min="0" max="40" step="0.5" value="${esc(valor)}" style="width:90px"> <span>% del precio</span></div>
+  <p class="muted small" style="margin:4px 0 0">Lo que Mercado Libre cobra de más por las cuotas sin interés (hoy, en tus categorías, unos 13 puntos: 14 % en Clásica y 27 % en Premium). La publicación Premium sube su precio para que te quede la misma ganancia que en Clásica.${ejemplo ? ' ' + ejemplo : ''} Poné 0 para publicar Premium al mismo precio.</p></div>`;
 const elegidos = () => st.d.colores.filter((c) => st.sel.has(c.sku));
 function cuantas() {
   const cs = elegidos(), t = st.tipos.size;
@@ -248,6 +258,8 @@ function pintarPanel() {
   if (!(precio > 0)) problemas.push('Poné tu precio de venta.');
   if (minimo && precio < minimo) problemas.push(`El precio mínimo es ${peso0(minimo)}.`);
   if (st.modoPrecio === 'margen' && costo > 0 && precioMargen(costo, st.ganancia, st.ml) == null) problemas.push('Esa ganancia estimada no es posible: probá con un porcentaje menor.');
+  const conPremium = st.tipos.has('gold_pro'), premium = conPremium && precio ? precioCuotas(precio, st.recargo, st.ml) : null;
+  if (conPremium && precio && premium == null) problemas.push('Con ese recargo por cuotas el precio Premium no se puede calcular: probá con un porcentaje menor.');
   if (st.tra && st.marcaPropia && st.marca.trim().length < 2) problemas.push('Escribí el nombre de tu marca.');
   if (n > MAX_PUB) problemas.push(`Son ${n} publicaciones; el máximo por vez es ${MAX_PUB}.`);
   if (cs.length && n === 0) problemas.push('Ninguno de los colores elegidos tiene catálogo: tildá también tradicional.');
@@ -289,6 +301,7 @@ function pintarPanel() {
           <div>ML + impuestos (estimado, ≈ ${st.ml} %)<b>${precio ? '− ' + peso0(mlPesos) : '—'}</b></div>
           <div>Tu costo mayorista<b>${cs.length ? (costo ? '− ' + peso0(costo) : 'a definir') : '—'}</b></div>
           <div style="${queda != null ? (queda >= 0 ? 'background:var(--ok-bg, #e6f4ea)' : 'background:var(--bad-bg, #fde8e8)') : ''}">Te queda (estimado, aprox.)<b>${queda != null ? peso0(queda) + ` · ${Math.round((queda / precio) * 100)} %` : '—'}</b></div>
+          ${conPremium ? `<div>Precio Premium (cuotas, + recargo)<b>${premium ? peso0(premium) : '—'}</b></div>` : ''}
           <div>Precio mínimo<b>${minimo ? peso0(minimo) : 'sin mínimo'}</b></div>
           ${cs[0]?.precio_pret ? `<div>Pret a Home lo vende a<b>${peso0(cs[0].precio_pret)}</b></div>` : ''}
         </div></div>
@@ -296,7 +309,8 @@ function pintarPanel() {
       <div class="paso"><h3>${it && st.tra ? '5' : '4'} · Cuotas</h3><div class="opciones">
         <label class="op"><input type="checkbox" data-tipo="gold_special" ${st.tipos.has('gold_special') ? 'checked' : ''}><span>Clásica<span class="muted">Sin cuotas sin interés · menos comisión</span></span></label>
         <label class="op"><input type="checkbox" data-tipo="gold_pro" ${st.tipos.has('gold_pro') ? 'checked' : ''}><span>Premium<span class="muted">Con cuotas sin interés · más comisión</span></span></label>
-      </div><p class="muted small" style="margin:6px 0 0">Si tildás las dos, se crea una publicación de cada una.</p></div>
+      </div><p class="muted small" style="margin:6px 0 0">Si tildás las dos, se crea una publicación de cada una.</p>
+      ${conPremium ? bloqueRecargo('dpRec', st.recargo, precio && premium ? `Con ${peso0(precio)} en Clásica, Premium va a ${peso0(premium)}.` : '') : ''}</div>
 
       <div class="paso"><h3>${it && st.tra ? '6' : '5'} · Cómo queda en Mercado Libre</h3><div class="opciones">
         <label class="op"><input type="radio" name="estadoPub" data-k="activa" ${st.pausada ? '' : 'checked'}><span>Activa<span class="muted">Queda a la venta enseguida</span></span></label>
@@ -345,6 +359,7 @@ dp.addEventListener('input', (e) => {
   if (e.target.id === 'dpPrecio') { st.precio = e.target.value; st.modoPrecio = 'manual'; }
   else if (e.target.id === 'dpGan') { st.ganancia = Number(e.target.value) || 0; st.modoPrecio = 'margen'; }
   else if (e.target.id === 'dpMarca') st.marca = e.target.value;
+  else if (e.target.id === 'dpRec') st.recargo = Number(String(e.target.value).replace(',', '.')) || 0;
   else return;
   const foco = e.target.id, pos = e.target.selectionStart;
   pintarPanel();
@@ -358,6 +373,7 @@ async function publicarYa() {
     const r = await apiPublicar('publicar', {
       item_id: st.d.item?.id ?? null, skus: [...st.sel], tradicional: st.tra && !!st.d.item, catalogo: st.cat,
       marca: st.tra && st.marcaPropia ? st.marca.trim() : null, precio: Number(st.precio), tipos_venta: [...st.tipos], pausada: st.pausada,
+      recargo_cuotas: st.tipos.has('gold_pro') ? st.recargo : 0,
     });
     st.resultados = r.resultados || [];
   } catch (e) {
@@ -375,13 +391,13 @@ async function publicarYa() {
 const ESTADO_COLA = { pendiente: ['En espera', ''], procesando: ['Publicando…', 'info'], listo: ['Listo', 'ok'], parcial: ['Una parte', 'warn'], error: ['No se pudo', 'bad'], cancelado: ['Cancelado', ''] };
 const TIPO_TXT = { tradicional: 'Tradicional', catalogo: 'Catálogo' }, VENTA_TXT = { gold_special: 'Clásica', gold_pro: 'Premium' };
 const porSku = new Map(todos.map((p) => [p.sku, p]));
-let ML_EST = 30, GANANCIA_DEF = 10; // los confirma el servidor (/lotes)
+let ML_EST = 30, GANANCIA_DEF = 10, RECARGO_DEF = 13; // los confirma el servidor (/lotes)
 document.body.insertAdjacentHTML('beforeend', '<dialog id="dm" class="panel" aria-labelledby="dmTit"></dialog>');
 const dm = $('#dm');
 let om = null;
 
 $('#pubSel').onclick = () => {
-  om = { tra: true, cat: false, todosColores: true, marcaPropia: false, marca: '', regla: 'margen', pctMargen: GANANCIA_DEF, pctPret: 0, pctCosto: 60, tipos: new Set(['gold_special']), pausada: false, enviando: false };
+  om = { tra: true, cat: false, todosColores: true, marcaPropia: false, marca: '', regla: 'margen', pctMargen: GANANCIA_DEF, pctPret: 0, pctCosto: 60, tipos: new Set(['gold_special']), pausada: false, enviando: false, recargo: RECARGO_DEF };
   pintarMasivo(); dm.showModal();
 };
 
@@ -401,6 +417,7 @@ function pintarMasivo() {
   if (!om.tipos.size) prob.push('Elegí Clásica, Premium o las dos.');
   if (om.marcaPropia && om.marca.trim().length < 2) prob.push('Escribí el nombre de tu marca.');
   if (!aplica) prob.push('Ninguno de los productos elegidos tiene ese tipo de publicación.');
+  if (om.tipos.has('gold_pro') && precioCuotas(100, om.recargo, ML_EST) == null) prob.push('Con ese recargo por cuotas el precio Premium no se puede calcular: probá con un porcentaje menor.');
   dm.innerHTML = `<div class="dp-cab"><div class="grow"><h2 id="dmTit">Publicar ${num.format(elegidos.length)} ${elegidos.length === 1 ? 'producto' : 'productos'}</h2>
       <div class="muted small">${conTra} con publicación tradicional · ${conCat} con catálogo · ${pret} marca Pret</div></div><button class="btn sm" data-cerrar>Cerrar</button></div>
     <div class="dp-cuerpo">
@@ -425,7 +442,7 @@ function pintarMasivo() {
       <div class="paso"><h3>5 · Cuotas</h3><div class="opciones">
         <label class="op"><input type="checkbox" data-t="gold_special" ${om.tipos.has('gold_special') ? 'checked' : ''}><span>Clásica<span class="muted">Sin cuotas sin interés · menos comisión</span></span></label>
         <label class="op"><input type="checkbox" data-t="gold_pro" ${om.tipos.has('gold_pro') ? 'checked' : ''}><span>Premium<span class="muted">Con cuotas sin interés · más comisión</span></span></label>
-      </div></div>
+      </div>${om.tipos.has('gold_pro') ? bloqueRecargo('pctRec', om.recargo, precioCuotas(100000, om.recargo, ML_EST) ? `Ej.: un producto a ${peso0(100000)} en Clásica va a ${peso0(precioCuotas(100000, om.recargo, ML_EST))} en Premium.` : '') : ''}</div>
       <div class="paso"><h3>6 · Cómo quedan en Mercado Libre</h3><div class="opciones">
         <label class="op"><input type="radio" name="estadoMas" data-m="activa" ${om.pausada ? '' : 'checked'}><span>Activas<span class="muted">Quedan a la venta enseguida</span></span></label>
         <label class="op"><input type="radio" name="estadoMas" data-m="pausada" ${om.pausada ? 'checked' : ''}><span>Pausadas<span class="muted">Las revisás en Mercado Libre y las activás vos cuando quieras</span></span></label>
@@ -450,7 +467,7 @@ dm.addEventListener('change', (e) => {
   else if (t.dataset.m) om[t.dataset.m] = t.checked;
   else if (t.dataset.t) t.checked ? om.tipos.add(t.dataset.t) : om.tipos.delete(t.dataset.t);
   else if (t.dataset.r) om.regla = t.dataset.r;
-  else if (t.id === 'pctPret' || t.id === 'pctCosto' || t.id === 'pctMargen') return;
+  else if (t.id === 'pctPret' || t.id === 'pctCosto' || t.id === 'pctMargen' || t.id === 'pctRec') return;
   else return;
   const y = $('.dp-cuerpo', dm)?.scrollTop; pintarMasivo(); if ($('.dp-cuerpo', dm)) $('.dp-cuerpo', dm).scrollTop = y;
 });
@@ -460,6 +477,7 @@ dm.addEventListener('input', (e) => {
   else if (t.id === 'pctPret') { om.pctPret = Number(t.value) || 0; om.regla = 'pretPct'; }
   else if (t.id === 'pctCosto') { om.pctCosto = Number(t.value) || 0; om.regla = 'costo'; }
   else if (t.id === 'pctMargen') { om.pctMargen = Number(t.value) || 0; om.regla = 'margen'; }
+  else if (t.id === 'pctRec') om.recargo = Number(String(t.value).replace(',', '.')) || 0;
   else return;
   const id = t.id, y = $('.dp-cuerpo', dm)?.scrollTop; pintarMasivo();
   if ($('.dp-cuerpo', dm)) $('.dp-cuerpo', dm).scrollTop = y;
@@ -472,7 +490,7 @@ async function encolarYa() {
   try {
     const r = await apiPublicar('encolar', {
       skus: [...sel], tradicional: om.tra, catalogo: om.cat, todos_colores: om.todosColores, marca: om.marcaPropia ? om.marca.trim() : null,
-      regla, tipos_venta: [...om.tipos], pausada: om.pausada,
+      regla, tipos_venta: [...om.tipos], pausada: om.pausada, recargo_cuotas: om.tipos.has('gold_pro') ? om.recargo : 0,
     });
     dm.close();
     sel.clear(); guardarSeleccion(sel); pintar();
@@ -488,7 +506,7 @@ async function encolarYa() {
 // Avance: tarjeta arriba del catálogo con el último lote (se actualiza sola mientras hay algo pendiente).
 let filasCola = [], timerAvance = null, detalleAbierto = false;
 async function verAvance(forzar = false) {
-  try { const r = await apiPublicar('lotes', {}); filasCola = r.filas || []; ML_EST = Number(r.comision_ml ?? ML_EST); GANANCIA_DEF = Number(r.ganancia_defecto ?? GANANCIA_DEF); } catch { return; } // si la función no responde, no se muestra
+  try { const r = await apiPublicar('lotes', {}); filasCola = r.filas || []; ML_EST = Number(r.comision_ml ?? ML_EST); GANANCIA_DEF = Number(r.ganancia_defecto ?? GANANCIA_DEF); RECARGO_DEF = Number(r.recargo_cuotas ?? RECARGO_DEF); } catch { return; } // si la función no responde, no se muestra
   if (!filasCola.length) { $('#avance').hidden = true; return; }
   const lote = filasCola[0].lote, fl = filasCola.filter((f) => f.lote === lote);
   const hechos = fl.filter((f) => !['pendiente', 'procesando'].includes(f.estado)).length;

@@ -1,4 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
+import { leerRecargo, precioConCuotas, precioPorTipo } from "./logic.ts";
 import {
   colorDe, erroresML, esMarcaPropia, type ItemML, leerPedido, limpiarDescripcion, marcaValida, payloadCatalogo,
   payloadTradicional, reemplazarMarca, skuDe,
@@ -222,4 +223,20 @@ Deno.test("duplicados: misma condición = mismo tipo y mismas cuotas; las finali
   assertEquals(condicionDeItem({ status: "paused", listing_type_id: "gold_pro", catalog_listing: true }), "catalogo|gold_pro");
   assertEquals(condicionDeItem({ status: "closed", listing_type_id: "gold_pro" }), null);
   assertEquals(condicionDeItem(null), null);
+});
+
+Deno.test("recargo por cuotas: Premium deja la misma ganancia en pesos que Clásica", () => {
+  // $100, ML 30 %, costo 60 → en Clásica quedan $10. Premium con 13 % más de comisión: $123 → 123 × (1 − 0,43) − 60 ≈ 10.
+  assertEquals(precioConCuotas(100, 13, 30), 123);
+  const p = precioConCuotas(39950, 13, 30)!;
+  const gananciaClasica = 39950 * 0.70 - 25000, gananciaPremium = p * 0.57 - 25000;
+  assertEquals(Math.abs(gananciaPremium - gananciaClasica) < 1, true);
+  assertEquals(precioConCuotas(100, 0, 30), 100);
+  assertEquals(precioConCuotas(100, 66, 30), null); // no queda margen posible
+  assertEquals(precioPorTipo(100, "gold_special", 13, 30), 100);
+  assertEquals(precioPorTipo(100, "gold_pro", 13, 30), 123);
+  assertEquals(leerRecargo(undefined), 0);
+  assertEquals(leerRecargo("13"), 13);
+  assertEquals(leerRecargo(-1), null);
+  assertEquals(leerRecargo(99), null);
 });

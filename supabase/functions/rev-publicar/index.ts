@@ -14,12 +14,12 @@ import { COLUMNAS_REVENDEDOR, type Revendedor, tokenValido } from "../_shared/re
 import { esMarcaPropia, GANANCIA_NETA_POR_DEFECTO, leerOpcionesMasivas, leerPedido, MAX_PRODUCTOS_POR_LOTE, TIPOS_VENTA } from "./logic.ts";
 import {
   coloresDe, comisionMLEstimada, datosSkus, detalleCatalogo, ErrorUsuario, type Json, leerItemPret, LimiteML, marcasPropias, procesarCola,
-  publicacionesPret, publicarProducto, supabase, tokenPret,
+  publicacionesPret, publicarProducto, recargoCuotasEstimado, supabase, tokenPret,
 } from "./nucleo.ts";
 import { marcaDe } from "./logic.ts";
 import { etiquetas, listarVentas, type Quien } from "./ventas.ts";
 import {
-  cambiarColchon, cambiarDescuento, cambiarEstado, cambiarSincroniza, descontarVenta, guardarAcceso, guardarFicha, guardarLogo, linkConectar, publicaciones as publicacionesAdmin, resumen as resumenAdmin,
+  cambiarColchon, cambiarCondiciones, cambiarDescuento, cambiarEstado, cambiarSincroniza, descontarVenta, guardarAcceso, guardarFicha, guardarLogo, linkConectar, publicaciones as publicacionesAdmin, resumen as resumenAdmin,
 } from "./admin.ts";
 
 const CORS = {
@@ -95,6 +95,7 @@ async function preparar(rev: Revendedor, jwt: string, b: Json): Promise<Response
     tipos_venta: TIPOS_VENTA,
     comision_ml: comision,
     ganancia_defecto: GANANCIA_NETA_POR_DEFECTO,
+    recargo_cuotas: await recargoCuotasEstimado(),
     colores: colores.map((c) => {
       const d = det.get(c.sku);
       const cat = todas.find((f) => f.sku === c.sku && f.tipo === "catalogo" && f.catalog_product_id);
@@ -118,7 +119,7 @@ async function publicarUno(rev: Revendedor, b: Json): Promise<Response> {
   const lp = leerPedido(b);
   if (!lp.ok) return fallo(lp.error);
   const p = lp.pedido;
-  const d = await datosSkus(p.skus, false);
+  const d = await datosSkus(p.skus, false, rev.id);
   for (const s of p.skus) {
     if (!d.habilitado(s)) return fallo(`${s} no está en el catálogo para revendedores.`);
     if (d.stock(s) < 1) return fallo(`${s} no tiene stock para ofrecer ahora.`);
@@ -141,6 +142,7 @@ async function publicarUno(rev: Revendedor, b: Json): Promise<Response> {
   const resultados = await publicarProducto(rev, tokRev, tokPret, {
     itemId, skus: p.skus, precios: new Map(p.skus.map((s) => [s, p.precio])), cantidades: new Map(p.skus.map((s) => [s, d.stock(s)])),
     tradicional: p.tradicional, catalogo: p.catalogo, marca: p.marca, tiposVenta: p.tiposVenta, pausada: p.pausada,
+    recargoCuotas: p.recargoCuotas, comision: await comisionMLEstimada(),
   });
   console.log(`rev-publicar ${rev.nickname ?? rev.id}: ${resultados.filter((r) => r.ok).length} creadas, ${resultados.filter((r) => !r.ok).length} con error`);
   return json({ resultados });
@@ -172,7 +174,7 @@ async function encolar(rev: Revendedor, b: Json): Promise<Response> {
   }
   if (!grupos.size) return fallo("Ninguno de los productos elegidos tiene una publicación de Pret a Home del tipo que elegiste.");
   const lote = crypto.randomUUID();
-  const opciones = { tradicional: op.tradicional, catalogo: op.catalogo, marca: op.marca, tipos_venta: op.tiposVenta, pausada: op.pausada, regla: op.regla };
+  const opciones = { tradicional: op.tradicional, catalogo: op.catalogo, marca: op.marca, tipos_venta: op.tiposVenta, pausada: op.pausada, regla: op.regla, recargo_cuotas: op.recargoCuotas };
   const { error } = await supabase.from("rev_publicar_cola").insert([...grupos.values()].map((g) => ({
     revendedor_id: rev.id, lote, item_id: g.item_id, skus: g.skus, todos_colores: op.todosColores && !!g.item_id, opciones,
   })));
@@ -186,7 +188,7 @@ async function lotes(rev: Revendedor): Promise<Response> {
     .select("id,lote,item_id,skus,estado,resultados,error,creado_at,terminado_at,opciones")
     .eq("revendedor_id", rev.id).gte("creado_at", desde).order("id", { ascending: false }).limit(1000);
   if (error) throw new Error(error.message);
-  return json({ filas: data ?? [], comision_ml: await comisionMLEstimada(), ganancia_defecto: GANANCIA_NETA_POR_DEFECTO });
+  return json({ filas: data ?? [], comision_ml: await comisionMLEstimada(), ganancia_defecto: GANANCIA_NETA_POR_DEFECTO, recargo_cuotas: await recargoCuotasEstimado() });
 }
 
 async function cancelar(rev: Revendedor, b: Json): Promise<Response> {
@@ -224,6 +226,7 @@ Deno.serve(async (req) => {
         if (ruta.endsWith("/admin/revendedor/estado")) return json(await cambiarEstado(b));
         if (ruta.endsWith("/admin/revendedor/descuento")) return json(await cambiarDescuento(b));
         if (ruta.endsWith("/admin/revendedor/stock")) return json(await cambiarSincroniza(b));
+        if (ruta.endsWith("/admin/revendedor/condiciones")) return json(await cambiarCondiciones(b));
         if (ruta.endsWith("/admin/revendedor/ficha")) return json(await guardarFicha(b));
         if (ruta.endsWith("/admin/revendedor/logo")) return json(await guardarLogo(b));
         if (ruta.endsWith("/admin/descontar")) return json(await descontarVenta(b));

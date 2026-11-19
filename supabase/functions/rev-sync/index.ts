@@ -20,7 +20,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { COLUMNAS_REVENDEDOR, dormir, ponerStockML, type Revendedor, tokenValido } from "../_shared/rev_ml.ts";
-import { enLotes, publicacionesAActualizar, stockOfrecido } from "./logic.ts";
+import { colchonPara, enLotes, publicacionesAActualizar, stockOfrecido } from "./logic.ts";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const ECOMM_TOKEN = Deno.env.get("ECOMMAPP_TOKEN") ?? "";
@@ -111,6 +111,8 @@ async function sincronizar(): Promise<Json> {
   const eco = await stockEcomm(catalogo.map((c) => c.sku), warehouseId);
   const ahora = new Date().toISOString();
   const ofrecidos = new Map<string, number>();
+  // Stock de Ecomm-App y colchón del producto, para calcular lo de cada revendedor que tenga su propio colchón.
+  const leidos = new Map<string, { stock: number; colchonProducto: number | null }>();
   const filas: Json[] = [];
   let sinDato = 0;
   let combos = 0;
@@ -124,8 +126,9 @@ async function sincronizar(): Promise<Json> {
       combos++;
       continue;
     }
-    const oferta = stockOfrecido(e.stock, c.colchon_override ?? colchon);
+    const oferta = stockOfrecido(e.stock, colchonPara(c.colchon_override, null, colchon));
     ofrecidos.set(norm(c.sku), oferta);
+    leidos.set(norm(c.sku), { stock: e.stock, colchonProducto: c.colchon_override });
     filas.push({ sku: c.sku, stock_ecomm: e.stock, ofrecido: oferta, consultado_at: ahora });
   }
 
@@ -140,7 +143,7 @@ async function sincronizar(): Promise<Json> {
     if (error) throw new Error(`rev_stock_ofrecido: ${error.message}`);
   }
 
-  const revs = await leerTodo<Revendedor & { desactivado_modo: string | null; sincroniza_stock: boolean }>("rev_revendedores", COLUMNAS_REVENDEDOR + ",desactivado_modo,sincroniza_stock", "id");
+  const revs = await leerTodo<Revendedor & { desactivado_modo: string | null; sincroniza_stock: boolean; colchon: number | null }>("rev_revendedores", COLUMNAS_REVENDEDOR + ",desactivado_modo,sincroniza_stock,colchon", "id");
   // A quién se le MANDA el stock (19/11/2026: por revendedor):
   //   - activos con "Sincroniza stock" prendido (o todos los activos si el sistema está en modo real);
   //   - desactivados con "stock en 0": se les manda 0 (una vez) a sus publicaciones vinculadas.
@@ -160,8 +163,19 @@ async function sincronizar(): Promise<Json> {
     .filter((p) => activos.has(p.revendedor_id) && p.sku)
     .map((p) => ({ ...p, sku: p.sku as string }));
 
+  // Lo ofrecido a cada revendedor: el general (rev_stock_ofrecido) o, si tiene su propio colchón, con el suyo.
+  const ofrecidosDe = new Map<number, Map<string, number>>();
+  const ofrecidosPara = (revId: number) => {
+    const propio = activos.get(revId)?.colchon;
+    if (propio == null) return ofrecidos;
+    if (!ofrecidosDe.has(revId)) {
+      ofrecidosDe.set(revId, new Map([...leidos].map(([sku, l]) => [sku, stockOfrecido(l.stock, colchonPara(l.colchonProducto, propio, colchon))])));
+    }
+    return ofrecidosDe.get(revId)!;
+  };
+  const normales = pubs.filter((p) => !aCero.has(p.revendedor_id)).map((p) => ({ ...p, sku: norm(p.sku) }));
   const cambios = [
-    ...publicacionesAActualizar(ofrecidos, pubs.filter((p) => !aCero.has(p.revendedor_id)).map((p) => ({ ...p, sku: norm(p.sku) }))),
+    ...[...new Set(normales.map((p) => p.revendedor_id))].flatMap((id) => publicacionesAActualizar(ofrecidosPara(id), normales.filter((p) => p.revendedor_id === id))),
     ...publicacionesAActualizar(new Map(pubs.map((p) => [norm(p.sku), 0])), pubs.filter((p) => aCero.has(p.revendedor_id)).map((p) => ({ ...p, sku: norm(p.sku) }))),
   ];
   const resumen: Json = {

@@ -196,6 +196,7 @@ export interface Pedido {
   precio: number;
   tiposVenta: TipoVenta[];
   pausada: boolean;
+  recargoCuotas: number;   // % extra para Premium (cuotas sin interés), así la ganancia queda igual que en Clásica
 }
 
 export const MAX_PUBLICACIONES_POR_PEDIDO = 12;
@@ -219,7 +220,9 @@ export function leerPedido(b: Record<string, unknown>): { ok: true; pedido: Pedi
   if (total > MAX_PUBLICACIONES_POR_PEDIDO) {
     return { ok: false, error: `Son ${total} publicaciones de una vez; el máximo es ${MAX_PUBLICACIONES_POR_PEDIDO}. Elegí menos colores o un solo tipo.` };
   }
-  return { ok: true, pedido: { skus, tradicional, catalogo, marca, precio, tiposVenta, pausada: b.pausada === true } };
+  const recargoCuotas = leerRecargo(b.recargo_cuotas);
+  if (recargoCuotas == null) return { ok: false, error: `El recargo por cuotas tiene que estar entre 0 y ${MAX_RECARGO_CUOTAS} %.` };
+  return { ok: true, pedido: { skus, tradicional, catalogo, marca, precio, tiposVenta, pausada: b.pausada === true, recargoCuotas } };
 }
 
 // ───────────────────────── Publicación masiva ─────────────────────────
@@ -235,6 +238,34 @@ export type ReglaPrecio =
 // estimó en 30 % (19/11/2026); se puede cambiar en rev_config 'comision_ml_estimada' sin tocar el código.
 export const COMISION_ML_ESTIMADA = 30;
 export const GANANCIA_NETA_POR_DEFECTO = 10;
+// Lo que Mercado Libre cobra DE MÁS en Premium (cuotas sin interés) sobre Clásica, en % del precio. Medido el 19/11/2026
+// con /sites/MLA/listing_prices en las categorías de cortinas, cubiertos y manteles: Clásica 14,35 %, Premium 27,25 %
+// (≈ 13 puntos). Se puede cambiar en rev_config 'recargo_cuotas' y el revendedor lo puede ajustar al publicar.
+export const RECARGO_CUOTAS_ESTIMADO = 13;
+export const MAX_RECARGO_CUOTAS = 40;
+
+/** Precio Premium para que la ganancia EN PESOS sea la misma que en Clásica (pedido del usuario, 19/11/2026).
+ *  En Clásica queda precio × (1 − ML) − costo; en Premium ML cobra además `recargoPct`, así que
+ *  premium × (1 − ML − recargo) = precio × (1 − ML) → premium = precio × (1 − ML) / (1 − ML − recargo).
+ *  Ej.: $100, ML 30 %, recargo 13 % → $123 (ML + recargo ≈ $53, quedan $70, igual que en Clásica). Redondea hacia arriba. */
+export function precioConCuotas(precio: number, recargoPct: number, comisionPct = COMISION_ML_ESTIMADA): number | null {
+  if (!(precio > 0)) return null;
+  if (!(recargoPct > 0)) return precio;
+  const resto = 1 - (comisionPct + recargoPct) / 100;
+  if (resto < 0.05) return null;
+  return Math.ceil((precio * (1 - comisionPct / 100)) / resto);
+}
+
+/** Recargo por cuotas que manda el portal: 0 si no viene; null si es inválido. */
+export function leerRecargo(v: unknown): number | null {
+  if (v == null || v === "") return 0;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= MAX_RECARGO_CUOTAS ? n : null;
+}
+
+/** Precio de una publicación según su tipo: Premium lleva el recargo por cuotas, Clásica el precio tal cual. */
+export const precioPorTipo = (precio: number, tipo: TipoVenta, recargoPct: number, comisionPct = COMISION_ML_ESTIMADA): number | null =>
+  tipo === "gold_pro" ? precioConCuotas(precio, recargoPct, comisionPct) : precio;
 
 export function leerRegla(r: unknown): ReglaPrecio | null {
   const o = (r ?? {}) as { tipo?: string; valor?: unknown };
@@ -278,6 +309,7 @@ export interface OpcionesMasivas {
   pausada: boolean;
   todosColores: boolean;
   regla: ReglaPrecio;
+  recargoCuotas: number;     // % extra para Premium (cuotas); 0 = mismo precio que Clásica
 }
 export const MAX_PRODUCTOS_POR_LOTE = 500;
 
@@ -293,7 +325,9 @@ export function leerOpcionesMasivas(b: Record<string, unknown>): { ok: true; op:
     marca = marcaValida(b.marca);
     if (!marca) return { ok: false, error: "La marca tiene que tener entre 2 y 60 letras y no puede ser Pret." };
   }
-  return { ok: true, op: { tradicional, catalogo, marca, tiposVenta, pausada: b.pausada === true, todosColores: b.todos_colores === true, regla } };
+  const recargoCuotas = leerRecargo(b.recargo_cuotas);
+  if (recargoCuotas == null) return { ok: false, error: `El recargo por cuotas tiene que estar entre 0 y ${MAX_RECARGO_CUOTAS} %.` };
+  return { ok: true, op: { tradicional, catalogo, marca, tiposVenta, pausada: b.pausada === true, todosColores: b.todos_colores === true, regla, recargoCuotas } };
 }
 
 /** Clave de una publicación dentro de un producto, para no repetirla si el proceso se corta y se retoma. */

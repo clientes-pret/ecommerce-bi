@@ -15,6 +15,12 @@ export function stockOfrecido(stockDeposito: number, colchon: number = COLCHON_D
   return oferta;
 }
 
+/** Colchón que se aplica a un revendedor en un producto (19/11/2026: colchón por revendedor). Gana el del producto
+ *  (rev_catalogo.colchon_override), después el del revendedor y, si no tiene, el general. */
+export function colchonPara(delProducto: number | null | undefined, delRevendedor: number | null | undefined, general: number): number {
+  return delProducto ?? delRevendedor ?? general;
+}
+
 // ── Clave de idempotencia para Ecomm-App ────────────────────────────────────────────────────────────────────────
 // Ecomm-App acepta letras, números y `. _ : # -`, hasta 100 caracteres. Los SKU reales traen espacios y barras
 // (ej. "REM/001 M"), así que se sanean y se agrega un hash del SKU exacto: dos SKU que solo difieren en un carácter

@@ -11,8 +11,13 @@ import { COLUMNAS_REVENDEDOR, ML_API, mlGet, type Revendedor, tokenValido, USER_
 import { sinFotosDeMarca } from "../_shared/fotos_marca.ts";
 import {
   claveCondicion, claveResultado, COMISION_ML_ESTIMADA, colorDe, condicionDeItem, minutosDePausa, RITMO, erroresML, esMarcaPropia, estadoFinal, type ItemML, limpiarDescripcion, marcaDe,
-  type OpcionesMasivas, payloadCatalogo, payloadTradicional, precioPorRegla, skuDe, type TipoVenta, type VariacionML,
+  MAX_RECARGO_CUOTAS, type OpcionesMasivas, payloadCatalogo, payloadTradicional, precioPorRegla, precioPorTipo, RECARGO_CUOTAS_ESTIMADO, skuDe, type TipoVenta,
+  type VariacionML,
 } from "./logic.ts";
+
+/** Stock que se ofrece: stock de Ecomm-App − colchón, nunca negativo (misma cuenta que rev-sync y que rev_ofrecido_de). */
+const stockOfrecido = (stock: number, colchon: number) =>
+  Number.isFinite(stock) && Number.isFinite(colchon) ? Math.max(0, Math.floor(stock) - Math.max(0, Math.floor(colchon))) : 0;
 
 export const URL_SB = Deno.env.get("SUPABASE_URL")!;
 export const ANON = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
@@ -75,6 +80,14 @@ export async function comisionMLEstimada(): Promise<number> {
   return Number.isFinite(v) && v >= 0 && v < 90 ? v : COMISION_ML_ESTIMADA;
 }
 
+/** % que ML cobra de más en Premium (rev_config 'recargo_cuotas'; si no está, el medido: 13). Es el valor inicial del
+ *  campo "Recargo por cuotas"; el revendedor lo puede cambiar al publicar. */
+export async function recargoCuotasEstimado(): Promise<number> {
+  const { data } = await supabase.from("rev_config").select("valor").eq("clave", "recargo_cuotas").maybeSingle();
+  const v = Number(data?.valor);
+  return data && Number.isFinite(v) && v >= 0 && v <= MAX_RECARGO_CUOTAS ? v : RECARGO_CUOTAS_ESTIMADO;
+}
+
 export async function marcasPropias(): Promise<string[]> {
   const { data } = await supabase.from("rev_config").select("valor").eq("clave", "marcas_propias").maybeSingle();
   return Array.isArray(data?.valor) ? (data!.valor as unknown[]).map(String) : [];
@@ -88,20 +101,27 @@ export async function detalleCatalogo(jwt: string, skus: string[]): Promise<Map<
   return new Map((data as Json[]).map((d) => [String(d.sku), d]));
 }
 
-/** Datos de negocio de cada SKU, leídos por el servicio: catálogo habilitado, mínimo, stock ofrecido y costo mayorista. */
-export async function datosSkus(skus: string[], conCosto: boolean) {
-  const [{ data: cat }, { data: stock }, { data: info }] = await Promise.all([
-    supabase.from("rev_catalogo").select("sku,habilitado,precio_minimo").in("sku", skus),
-    supabase.from("rev_stock_ofrecido").select("sku,ofrecido").in("sku", skus),
+/** Datos de negocio de cada SKU para UN revendedor, leídos por el servicio: catálogo habilitado, mínimo, stock que se le
+ *  ofrece (stock de Ecomm-App − su colchón) y su costo mayorista (con su margen). Colchón y margen son por revendedor
+ *  desde el 19/11/2026; si no tiene propios, los generales. */
+export async function datosSkus(skus: string[], conCosto: boolean, revId: number) {
+  const [{ data: cat }, { data: stock }, { data: info }, { data: colchonRev }] = await Promise.all([
+    supabase.from("rev_catalogo").select("sku,habilitado,precio_minimo,colchon_override").in("sku", skus),
+    supabase.from("rev_stock_ofrecido").select("sku,stock_ecomm").in("sku", skus),
     conCosto ? supabase.from("rev_catalogo_info").select("sku,costo").in("sku", skus) : Promise.resolve({ data: [] as { sku: string; costo: number }[] }),
+    supabase.rpc("rev_colchon_de", { p_rev: revId }),
   ]);
   const costo = new Map<string, number | null>();
   for (const r of (info ?? []) as { sku: string; costo: number | null }[]) {
-    const { data } = await supabase.rpc("rev_precio_mayorista", { p_costo: r.costo });
+    const { data } = await supabase.rpc("rev_precio_mayorista_de", { p_costo: r.costo, p_rev: revId });
     costo.set(r.sku, data == null ? null : Number(data));
   }
-  const catPor = new Map((cat ?? []).map((c) => [c.sku as string, c as { habilitado: boolean; precio_minimo: number | null }]));
-  const stockPor = new Map((stock ?? []).map((s) => [s.sku as string, Number(s.ofrecido)]));
+  const catPor = new Map((cat ?? []).map((c) => [c.sku as string, c as { habilitado: boolean; precio_minimo: number | null; colchon_override: number | null }]));
+  const colchon = Number(colchonRev ?? 5);
+  const stockPor = new Map((stock ?? []).map((s) => {
+    const o = catPor.get(s.sku as string)?.colchon_override;
+    return [s.sku as string, stockOfrecido(Number(s.stock_ecomm), o ?? colchon)];
+  }));
   return {
     habilitado: (s: string) => !!catPor.get(s)?.habilitado,
     minimo: (s: string) => (catPor.get(s)?.precio_minimo != null ? Number(catPor.get(s)!.precio_minimo) : null),
@@ -136,6 +156,8 @@ export interface PedidoProducto {
   marca: string | null;            // ya controlado: solo si el producto es marca Pret
   tiposVenta: TipoVenta[];
   pausada: boolean;
+  recargoCuotas: number;           // % extra en Premium para que la ganancia quede igual que en Clásica
+  comision: number;                // % estimado que se quedan ML + impuestos (para el recargo)
 }
 
 /** Crea las publicaciones de UN producto en la cuenta del revendedor. `hechos` = claves ya publicadas (se saltean);
@@ -167,8 +189,11 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
   const anotar = async (r: Resultado) => { resultados.push(r); if (alGuardar) await alGuardar(r); };
   const filas = await publicacionesPret(p.skus);
 
-  async function crear(sku: string, tipo: Resultado["tipo"], tv: TipoVenta, payload: Json, descripcion: string | null) {
-    const base: Resultado = { sku, tipo, tipo_venta: tv, ok: false, precio: p.precios.get(sku) };
+  // Premium lleva el recargo por cuotas; Clásica, el precio elegido.
+  const precioDe = (sku: string, tv: TipoVenta) => precioPorTipo(p.precios.get(sku)!, tv, p.recargoCuotas, p.comision);
+  async function crear(sku: string, tipo: Resultado["tipo"], tv: TipoVenta, payload: Json | null, descripcion: string | null) {
+    const base: Resultado = { sku, tipo, tipo_venta: tv, ok: false, precio: precioDe(sku, tv) ?? undefined };
+    if (!payload) return anotar({ ...base, error: "Con ese recargo por cuotas el precio no se puede calcular: probá con un porcentaje menor." });
     if ((await condicionesDe(sku)).has(claveCondicion(tipo, tv))) {
       return anotar({ ...base, error: "Ya tenés una publicación igual de este producto (mismo tipo y mismas cuotas). Mercado Libre no permite publicaciones duplicadas: no se creó otra." });
     }
@@ -196,7 +221,7 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
     }
     // Queda vinculada al SKU enseguida (así el stock se le mantiene). Si la vinculación automática ya la tomó, no se repite.
     const { error } = await supabase.from("rev_publicaciones").insert({
-      revendedor_id: rev.id, ml_item_id: it.id, ml_variation_id: null, sku, estado_ml: r.estado ?? null, precio: p.precios.get(sku),
+      revendedor_id: rev.id, ml_item_id: it.id, ml_variation_id: null, sku, estado_ml: r.estado ?? null, precio: base.precio ?? null,
     });
     if (error && !/duplicate|unique/i.test(error.message)) console.error(`rev_publicaciones ${it.id}: ${error.message}`);
     condiciones.get(sku)?.add(claveCondicion(tipo, tv));
@@ -218,8 +243,9 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
       }
       if (fuera.length) console.log(`${col.sku}: ${fuera.length} foto(s) de marca o sin revisar no se copiaron`);
       for (const tv of pendientes) {
-        await crear(col.sku, "tradicional", tv, payloadTradicional(item, {
-          variacion: col.variacion, fotos: quedan.map((i) => pics.get(i)!), precio: p.precios.get(col.sku)!,
+        const precio = precioDe(col.sku, tv);
+        await crear(col.sku, "tradicional", tv, precio == null ? null : payloadTradicional(item, {
+          variacion: col.variacion, fotos: quedan.map((i) => pics.get(i)!), precio,
           cantidad: p.cantidades.get(col.sku)!, tipoVenta: tv, marca: p.marca,
         }), descripcion);
       }
@@ -242,8 +268,9 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
         continue;
       }
       for (const tv of pendientes) {
-        await crear(s, "catalogo", tv, payloadCatalogo({
-          categoryId: ci.body.category_id, catalogProductId: f.catalog_product_id!, sku: s, precio: p.precios.get(s)!,
+        const precio = precioDe(s, tv);
+        await crear(s, "catalogo", tv, precio == null ? null : payloadCatalogo({
+          categoryId: ci.body.category_id, catalogProductId: f.catalog_product_id!, sku: s, precio,
           cantidad: p.cantidades.get(s)!, tipoVenta: tv,
         }), null);
       }
@@ -254,7 +281,7 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
 
 // ───────────────────────── cola de publicación masiva ─────────────────────────
 interface FilaCola { id: number; revendedor_id: number; item_id: string | null; skus: string[]; todos_colores: boolean; opciones: OpcionesMasivasJson; resultados: Resultado[]; intentos: number }
-type OpcionesMasivasJson = Omit<OpcionesMasivas, "tiposVenta" | "todosColores"> & { tipos_venta: TipoVenta[] };
+type OpcionesMasivasJson = Omit<OpcionesMasivas, "tiposVenta" | "todosColores" | "recargoCuotas"> & { tipos_venta: TipoVenta[]; recargo_cuotas?: number };
 
 /** Toma un producto pendiente (atómico: si otro proceso lo tomó primero, no lo repite). */
 async function tomarSiguiente(): Promise<FilaCola | null> {
@@ -307,7 +334,7 @@ async function procesarFila(f: FilaCola, tokPret: string, cupo: { restantes: num
     skus = f.todos_colores ? [...new Set([...skus.filter((s) => delItem.includes(s)), ...delItem])] : skus.filter((s) => delItem.includes(s));
   }
   const filas = await publicacionesPret(skus);
-  const d = await datosSkus(skus, op.regla.tipo === "costo_pct" || op.regla.tipo === "margen");
+  const d = await datosSkus(skus, op.regla.tipo === "costo_pct" || op.regla.tipo === "margen", rev.id);
   const comision = await comisionMLEstimada();
   const marcaOk = !!op.marca && !!item && esMarcaPropia(marcaDe(item), await marcasPropias());
 
@@ -341,6 +368,7 @@ async function procesarFila(f: FilaCola, tokPret: string, cupo: { restantes: num
     await publicarProducto(rev, tokRev, tokPret, {
       itemId: f.item_id, skus: validos, precios, cantidades, tradicional: op.tradicional && !!f.item_id, catalogo: op.catalogo,
       marca: marcaOk ? op.marca : null, tiposVenta: op.tipos_venta, pausada: op.pausada,
+      recargoCuotas: Number(op.recargo_cuotas ?? 0) || 0, comision,
     }, hechos, async (r) => { nuevos.push(r); await guardar(); }, cupo);
   }
   const todos = [...previos, ...nuevos].filter((r) => r.ml_item_id || r.error); // los avisos no cuentan para el estado

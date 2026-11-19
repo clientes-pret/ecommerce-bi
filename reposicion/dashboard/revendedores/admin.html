@@ -24,11 +24,43 @@ document.body.insertAdjacentHTML('beforeend', `<dialog id="dlg" style="width:min
 const dlg = $('#dlg');
 const ESTADO_REV = { activo: ['Activo', 'ok'], inactivo: ['Desactivado', 'bad'], desconectado: ['Sin conexión con ML', 'warn'], pausado: ['Pausado', ''] };
 
+// ───────── Condiciones por revendedor: colchón de stock y margen mayorista (19/11/2026, pedido del usuario) ─────────
+// Cada revendedor puede tener los suyos; vacío = usa el general (la sección "Valores generales").
+const generales = () => ({ colchon: resumen?.config?.colchon ?? null, margen: resumen?.config?.margen_mayorista ?? null });
+const fmtPct = (v) => String(v).replace('.', ',');
+function condicionesHTML(r) {
+  const g = generales();
+  const col = r.colchon != null ? `<b>${num.format(r.colchon)} u.</b> <span class="muted small">propio</span>` : `${g.colchon != null ? num.format(g.colchon) + ' u.' : '—'} <span class="muted small">general</span>`;
+  const mg = r.margen_mayorista != null ? `<b>${fmtPct(r.margen_mayorista)} %</b> <span class="muted small">propio</span>` : `${g.margen != null ? fmtPct(g.margen) + ' %' : 'a definir'} <span class="muted small">general</span>`;
+  return `<div class="small">Colchón: ${col}</div><div class="small">Margen: ${mg}</div>`;
+}
+function abrirCondiciones(r) {
+  const g = generales();
+  dlg.innerHTML = `<form method="dialog" style="padding:20px 22px" id="fcd"><h2 style="margin-top:0">Condiciones de ${esc(r.nickname || '')}</h2>
+    <p class="muted small">Dejá un campo vacío para que use el valor general.</p>
+    <label for="cdCol">Colchón de stock (unidades por producto)</label>
+    <input id="cdCol" type="number" min="0" max="100" step="1" inputmode="numeric" value="${r.colchon ?? ''}" placeholder="general: ${g.colchon ?? '—'}">
+    <p class="muted small" style="margin-top:4px">Se le ofrece el stock del depósito menos estas unidades. Se aplica en el próximo cálculo de stock (cada 5 minutos)${r.sincroniza_stock ? ' y se le actualizan sus publicaciones' : ''}.</p>
+    <label for="cdMg">Margen mayorista sobre costo (%)</label>
+    <input id="cdMg" inputmode="decimal" value="${r.margen_mayorista != null ? fmtPct(r.margen_mayorista) : ''}" placeholder="general: ${g.margen != null ? fmtPct(g.margen) : 'a definir'}">
+    <p class="muted small" style="margin-top:4px">Su precio mayorista = costo + este %. Cuenta para sus ventas nuevas; las ya registradas mantienen el precio de ese momento.</p>
+    <p class="small" id="cdMsg"></p>
+    <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn" value="no">Cancelar</button><button class="btn primary" id="cdOk" type="button">Guardar</button></div></form>`;
+  dlg.showModal();
+  $('#cdOk', dlg).onclick = async () => {
+    const c = $('#cdCol', dlg).value.trim(), m = $('#cdMg', dlg).value.trim().replace(',', '.');
+    try {
+      await apiPublicar('admin/revendedor/condiciones', { id: r.id, colchon: c === '' ? null : Number(c), margen: m === '' ? null : Number(m) });
+      dlg.close(); cargar();
+    } catch (err) { $('#cdMsg', dlg).className = 'small err'; $('#cdMsg', dlg).textContent = err.message; }
+  };
+}
+
 function pintarRevendedores(revsRpc, cuenta) {
   const usuarios = new Map((resumen?.revendedores || []).map((r) => [r.id, (r.usuarios || []).join(', ')]));
   const lista = resumen?.revendedores || [];
-  $('#revSec').innerHTML = `<div class="cab"><div><h2>Revendedores</h2><span class="muted">Activá o desactivá cada uno, elegí si sus ventas descuentan stock solas y cargá su ficha</span></div></div>
-    <div class="scroll"><table class="apilar" style="min-width:980px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Estado</th><th scope="col">Stock</th><th scope="col" class="r">Publicaciones</th><th scope="col">Usuarios del portal</th><th scope="col" class="r" title="Solo ventas reales (ya descontadas del stock). En modo prueba es 0: lo simulado está arriba.">Te debe (ventas reales)</th><th scope="col"></th></tr></thead><tbody>${
+  $('#revSec').innerHTML = `<div class="cab"><div><h2>Revendedores</h2><span class="muted">Activá o desactivá cada uno, elegí si sus ventas descuentan stock solas, su colchón y su margen, y cargá su ficha</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:980px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Estado</th><th scope="col">Stock</th><th scope="col">Condiciones</th><th scope="col" class="r">Publicaciones</th><th scope="col">Usuarios del portal</th><th scope="col" class="r" title="Solo ventas reales (ya descontadas del stock). En modo prueba es 0: lo simulado está arriba.">Te debe (ventas reales)</th><th scope="col"></th></tr></thead><tbody>${
     lista.map((r) => {
       const [et, ec] = ESTADO_REV[r.estado] || [r.estado, ''];
       const contacto = [r.contacto_nombre, r.empresa, r.whatsapp || r.telefono, r.email].filter(Boolean).map(esc).join(' · ');
@@ -43,11 +75,12 @@ function pintarRevendedores(revsRpc, cuenta) {
           <label class="small" style="margin:6px 0 0">Descuento de ventas</label>
           <select data-a="descuento" aria-label="Descuento de stock de ${esc(r.nickname || '')}"><option value="auto" ${r.descuento_auto !== false ? 'selected' : ''}>Automático</option><option value="manual" ${r.descuento_auto === false ? 'selected' : ''}>Manual</option></select>
           <div class="muted small">${!r.sincroniza_stock ? 'sin sincronizar: no se le manda stock ni se descuentan sus ventas' : r.descuento_auto === false ? 'stock en vivo · las ventas las descontás vos desde Ventas' : 'stock en vivo · cada venta se descuenta sola'}</div>`}</td>
+        <td data-label="Condiciones">${condicionesHTML(r)}<div style="margin-top:6px"><button class="btn sm" data-a="condiciones">Cambiar</button></div></td>
         <td class="r num" data-label="Publicaciones"><a href="vinculadas.html?r=${r.id}">${num.format(r.publicaciones.vinculadas)}</a><div class="muted small">${r.publicaciones.activas} activas</div></td>
         <td data-label="Usuarios">${usuarios.get(r.id) ? esc(usuarios.get(r.id)) : '<span class="muted">ninguno</span>'}</td>
         <td class="r num" data-label="Te debe" style="font-weight:600">${peso0(cuenta.get(r.id)?.saldo || 0)}</td>
         <td class="full"><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="ficha">Ficha</button><button class="btn sm" data-a="acceso">Acceso al portal</button><a class="btn sm" href="cuenta.html?r=${r.id}">Ver cuenta</a></div><span class="small err" data-e></span></td></tr>`;
-    }).join('') || '<tr><td colspan="7" class="muted">Todavía no hay revendedores conectados. Pasales el link de abajo.</td></tr>'}</tbody></table></div>`;
+    }).join('') || '<tr><td colspan="8" class="muted">Todavía no hay revendedores conectados. Pasales el link de abajo.</td></tr>'}</tbody></table></div>`;
   const porId = new Map(lista.map((r) => [String(r.id), r]));
   $('#revSec').onclick = async (e) => {
     const b = e.target.closest('[data-a]'); const tr = e.target.closest('tr[data-id]'); if (!b || !tr || b.tagName === 'SELECT') return;
@@ -57,6 +90,7 @@ function pintarRevendedores(revsRpc, cuenta) {
     } else if (b.dataset.a === 'desactivar') abrirDesactivar(r);
     else if (b.dataset.a === 'ficha') abrirFicha(r);
     else if (b.dataset.a === 'acceso') abrirAcceso(r);
+    else if (b.dataset.a === 'condiciones') abrirCondiciones(r);
   };
   $('#revSec').onchange = async (e) => {
     const st = e.target.closest('[data-a="stock"]');
@@ -207,12 +241,14 @@ async function cargar() {
   const deuda = cu.data.reduce((s, c) => s + Number(c.saldo), 0);
   $('#app').innerHTML = `<div class="cabecera"><div><h1>Administración</h1><p>Ventas de cada revendedor por semana y por mes, a qué precio vendió y cuánto te tiene que pagar; pagos, accesos y margen mayorista</p></div></div>
   <div id="ventasRev"></div>
-  <section class="card"><h2 style="margin-top:0">Margen mayorista</h2>
-    <p class="muted small" style="margin-top:0">Precio mayorista = costo del producto + este %. Lo que ve el revendedor ya viene calculado: nunca ve el costo.</p>
+  <section class="card"><h2 style="margin-top:0">Valores generales</h2>
+    <p class="muted small" style="margin-top:0">Se usan para los revendedores que no tienen condiciones propias (se cambian con "Cambiar" en la columna Condiciones de cada uno).</p>
+    <h2 style="margin:16px 0 0;font-size:1.05rem">Margen mayorista</h2>
+    <p class="muted small" style="margin-top:4px">Precio mayorista = costo del producto + este %. Lo que ve el revendedor ya viene calculado: nunca ve el costo.</p>
     <form id="fm" class="row wrapRow"><div style="width:140px"><label for="mg" style="margin-top:0">Margen sobre costo (%)</label><input id="mg" inputmode="decimal" value="${margen != null ? String(margen).replace('.', ',') : ''}" placeholder="ej. 30" required></div>
     <button class="btn primary" style="align-self:flex-end">Guardar margen</button><span id="mgMsg" class="small" style="align-self:flex-end;padding-bottom:12px"></span></form>
     ${margen == null ? '<p class="warn-t small" style="margin-bottom:0"><b>Todavía no está definido:</b> los revendedores ven "a definir" en el precio mayorista y las ventas no suman al saldo.</p>' : ''}
-    <h2 style="margin:20px 0 0">Colchón de stock</h2>
+    <h2 style="margin:20px 0 0;font-size:1.05rem">Colchón de stock</h2>
     <p class="muted small" style="margin-top:4px">Unidades que te guardás de cada producto: a los revendedores se les ofrece el stock del depósito menos este número. Se aplica en el próximo cálculo (cada 5 minutos).</p>
     <form id="fc" class="row wrapRow"><div style="width:140px"><label for="cl" style="margin-top:0">Unidades por producto</label><input id="cl" type="number" min="0" max="100" step="1" value="${esc(String(resumen?.config?.colchon ?? ''))}" required></div>
     <button class="btn primary" style="align-self:flex-end">Guardar colchón</button><span id="clMsg" class="small" style="align-self:flex-end;padding-bottom:12px"></span></form>

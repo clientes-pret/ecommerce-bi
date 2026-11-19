@@ -1,3 +1,4 @@
+import { colchonPara } from "./logic.ts";
 // Pruebas de la lógica pura de revendedores. Correr con: deno test supabase/functions/rev-sync/logic_test.ts
 import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
 import {
@@ -162,4 +163,12 @@ Deno.test("reposición: solo lo descontado y una sola vez", () => {
   assertEquals(reposicionPendiente({ ...base, reposicion: "al_recibir", recibido_estado: "bien" }), "devolucion");
   assertEquals(reposicionPendiente({ ...base, reposicion: "al_recibir", recibido_estado: "danado" }), null);
   assertEquals(reposicionPendiente({ ...base, estado: "descontada" }), null);             // venta vigente
+});
+
+Deno.test("colchón por revendedor: gana el del producto, después el del revendedor, después el general", () => {
+  assertEquals(colchonPara(null, null, 3), 3);
+  assertEquals(colchonPara(null, 10, 3), 10);
+  assertEquals(colchonPara(0, 10, 3), 0);
+  assertEquals(colchonPara(null, 0, 3), 0);
+  assertEquals(stockOfrecido(50, colchonPara(null, 10, 3)), 40);
 });

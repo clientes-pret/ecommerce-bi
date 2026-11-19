@@ -29,7 +29,7 @@ const CUENTAS_PROPIAS = async (): Promise<number[]> => {
 /** Revendedores (sin las cuentas propias de Pret/Lavan, que están conectadas solo para leer). */
 async function revendedores() {
   const propias = await CUENTAS_PROPIAS();
-  const { data, error } = await supabase.from("rev_revendedores").select("id,ml_user_id,nickname,estado,conectado_at,desactivado_modo,desactivado_at,descuento_auto,sincroniza_stock,solo_publicaciones,contacto_nombre,empresa,cuit,email,telefono,whatsapp,direccion,notas,logo_url").order("nickname");
+  const { data, error } = await supabase.from("rev_revendedores").select("id,ml_user_id,nickname,estado,conectado_at,desactivado_modo,desactivado_at,descuento_auto,sincroniza_stock,solo_publicaciones,colchon,margen_mayorista,contacto_nombre,empresa,cuit,email,telefono,whatsapp,direccion,notas,logo_url").order("nickname");
   if (error) throw new Error(error.message);
   // Las cuentas propias (Pret, Lavan) no son revendedores, salvo las de "solo publicar", que se muestran para darles acceso.
   return ((data ?? []) as ({ id: number; ml_user_id: number; nickname: string | null; estado: string; conectado_at: string | null; solo_publicaciones?: boolean } & Record<string, unknown>)[])
@@ -265,4 +265,19 @@ export async function cambiarSincroniza(b: Json) {
   if (b.sincroniza === true && r.estado !== "activo") throw new Error("Solo se puede sincronizar a un revendedor activo.");
   await supabase.from("rev_revendedores").update({ sincroniza_stock: b.sincroniza === true, actualizado_at: new Date().toISOString() }).eq("id", r.id);
   return { ok: true, sincroniza_stock: b.sincroniza === true };
+}
+
+/** Condiciones propias de un revendedor (19/11/2026, pedido del usuario): colchón de stock y margen mayorista.
+ *  null = usa el general. El colchón se aplica en la próxima corrida de stock (cada 5 minutos); el margen, desde la
+ *  próxima venta (las ya registradas guardan el precio mayorista del momento). */
+export async function cambiarCondiciones(b: Json) {
+  const r = await revendedorEditable(Number(b.id));
+  const vacio = (v: unknown) => v == null || v === "";
+  const colchon = vacio(b.colchon) ? null : Number(b.colchon);
+  const margen = vacio(b.margen) ? null : Number(b.margen);
+  if (colchon != null && (!Number.isInteger(colchon) || colchon < 0 || colchon > 100)) throw new Error("El colchón tiene que ser un número entero entre 0 y 100.");
+  if (margen != null && (!Number.isFinite(margen) || margen < 0 || margen > 500)) throw new Error("El margen tiene que estar entre 0 y 500 %.");
+  const { error } = await supabase.from("rev_revendedores").update({ colchon, margen_mayorista: margen, actualizado_at: new Date().toISOString() }).eq("id", r.id);
+  if (error) throw new Error(error.message);
+  return { ok: true, colchon, margen_mayorista: margen };
 }
