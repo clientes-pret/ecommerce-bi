@@ -140,6 +140,9 @@ async function procesar(): Promise<Json> {
         const ex = existentes.get(norm(l.sku));
         if (!ex) {
           if (nuevo === "cancelada") continue; // nunca se vio como venta: no hay nada que cancelar
+          // Línea de un producto que no es de Pret a Home (el revendedor también vende cosas propias): no es una venta
+          // del sistema, no se registra ni se descuenta (19/11/2026).
+          if (!l.reconocida) { cuenta.no_reconocidas++; continue; }
           const { error } = await supabase.from("rev_ordenes").insert({
             revendedor_id: rev.id,
             ml_order_id: orden.id,
@@ -152,7 +155,6 @@ async function procesar(): Promise<Json> {
           });
           if (error && error.code !== "23505") throw new Error(`rev_ordenes insert: ${error.message}`);
           cuenta.ventas_registradas++;
-          if (!l.reconocida) cuenta.no_reconocidas++;
         } else {
           const cambio = nuevoEstadoParaExistente(ex.estado, nuevo);
           if (cambio) {
@@ -216,9 +218,9 @@ Deno.serve(async (req) => {
   if (tokenError || tokenOk !== true) return new Response("No autorizado", { status: 401 });
   try {
     const resumen: Json = await procesar();
-    // Descuento real en Ecomm-App (y devolución del stock de cancelaciones/devoluciones): SOLO en modo 'real'.
-    const { data: modo } = await supabase.from("rev_config").select("valor").eq("clave", "modo").maybeSingle();
-    if (modo?.valor === "real" || modo?.valor === "activo") {
+    // Descuento real en Ecomm-App (y devolución del stock de cancelaciones/devoluciones).
+    // procesarDescuentos decide a quién: todos en modo real, o solo los revendedores con "Sincroniza stock".
+    {
       const token = Deno.env.get("ECOMMAPP_TOKEN") ?? "";
       resumen.descuentos = token ? await procesarDescuentos(supabase, token) : { error: "falta ECOMMAPP_TOKEN" };
       const d = resumen.descuentos as Record<string, number>;

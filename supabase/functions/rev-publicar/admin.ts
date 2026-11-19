@@ -29,10 +29,11 @@ const CUENTAS_PROPIAS = async (): Promise<number[]> => {
 /** Revendedores (sin las cuentas propias de Pret/Lavan, que están conectadas solo para leer). */
 async function revendedores() {
   const propias = await CUENTAS_PROPIAS();
-  const { data, error } = await supabase.from("rev_revendedores").select("id,ml_user_id,nickname,estado,conectado_at,desactivado_modo,desactivado_at,descuento_auto,contacto_nombre,empresa,cuit,email,telefono,whatsapp,direccion,notas,logo_url").order("nickname");
+  const { data, error } = await supabase.from("rev_revendedores").select("id,ml_user_id,nickname,estado,conectado_at,desactivado_modo,desactivado_at,descuento_auto,sincroniza_stock,solo_publicaciones,contacto_nombre,empresa,cuit,email,telefono,whatsapp,direccion,notas,logo_url").order("nickname");
   if (error) throw new Error(error.message);
-  return ((data ?? []) as ({ id: number; ml_user_id: number; nickname: string | null; estado: string; conectado_at: string | null } & Record<string, unknown>)[])
-    .filter((r) => !propias.includes(Number(r.ml_user_id)));
+  // Las cuentas propias (Pret, Lavan) no son revendedores, salvo las de "solo publicar", que se muestran para darles acceso.
+  return ((data ?? []) as ({ id: number; ml_user_id: number; nickname: string | null; estado: string; conectado_at: string | null; solo_publicaciones?: boolean } & Record<string, unknown>)[])
+    .filter((r) => !propias.includes(Number(r.ml_user_id)) || r.solo_publicaciones === true);
 }
 
 export async function resumen() {
@@ -116,15 +117,16 @@ const texto = (v: unknown, max: number) => {
 
 async function revendedorEditable(id: number) {
   const propias = await CUENTAS_PROPIAS();
-  const { data } = await supabase.from("rev_revendedores").select("id,ml_user_id,estado").eq("id", id).maybeSingle();
-  if (!data || propias.includes(Number(data.ml_user_id))) throw new Error("No encontré ese revendedor.");
-  return data as { id: number; ml_user_id: number; estado: string };
+  const { data } = await supabase.from("rev_revendedores").select("id,ml_user_id,estado,solo_publicaciones").eq("id", id).maybeSingle();
+  if (!data || (propias.includes(Number(data.ml_user_id)) && !data.solo_publicaciones)) throw new Error("No encontré ese revendedor.");
+  return data as { id: number; ml_user_id: number; estado: string; solo_publicaciones: boolean };
 }
 
 /** Activar / desactivar. Al desactivar se elige: 'stock_cero' (sus publicaciones quedan en 0) o 'congelar' (quedan como
  *  están y se dejan de actualizar). Sus ventas se siguen registrando. */
 export async function cambiarEstado(b: Json) {
   const r = await revendedorEditable(Number(b.id));
+  if (r.solo_publicaciones) throw new Error("Es una cuenta propia de solo publicar: no se activa ni desactiva como revendedor.");
   if (b.activo === true) {
     if (r.estado === "desconectado") throw new Error("La cuenta de Mercado Libre está desconectada: el revendedor tiene que volver a conectarla con el link.");
     await supabase.from("rev_revendedores").update({ estado: "activo", desactivado_modo: null, desactivado_at: null, actualizado_at: new Date().toISOString() }).eq("id", r.id);
@@ -253,4 +255,14 @@ export async function usuariosDe(ids: number[]) {
     if ((data?.users ?? []).length < 200) break;
   }
   return out;
+}
+
+/** "Sincroniza stock" de un revendedor: el sistema le pone el stock a sus publicaciones vinculadas y descuenta sus
+ *  ventas (si tiene descuento automático), aunque el resto siga en modo prueba. No aplica a las cuentas de "solo publicar". */
+export async function cambiarSincroniza(b: Json) {
+  const r = await revendedorEditable(Number(b.id));
+  if (r.solo_publicaciones) throw new Error("Es una cuenta propia de solo publicar: su stock lo maneja Ecomm-App.");
+  if (b.sincroniza === true && r.estado !== "activo") throw new Error("Solo se puede sincronizar a un revendedor activo.");
+  await supabase.from("rev_revendedores").update({ sincroniza_stock: b.sincroniza === true, actualizado_at: new Date().toISOString() }).eq("id", r.id);
+  return { ok: true, sincroniza_stock: b.sincroniza === true };
 }

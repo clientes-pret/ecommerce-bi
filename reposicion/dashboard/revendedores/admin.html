@@ -28,17 +28,21 @@ function pintarRevendedores(revsRpc, cuenta) {
   const usuarios = new Map((resumen?.revendedores || []).map((r) => [r.id, (r.usuarios || []).join(', ')]));
   const lista = resumen?.revendedores || [];
   $('#revSec').innerHTML = `<div class="cab"><div><h2>Revendedores</h2><span class="muted">Activá o desactivá cada uno, elegí si sus ventas descuentan stock solas y cargá su ficha</span></div></div>
-    <div class="scroll"><table class="apilar" style="min-width:980px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Estado</th><th scope="col">Descuento de stock</th><th scope="col" class="r">Publicaciones</th><th scope="col">Usuarios del portal</th><th scope="col" class="r" title="Solo ventas reales (ya descontadas del stock). En modo prueba es 0: lo simulado está arriba.">Te debe (ventas reales)</th><th scope="col"></th></tr></thead><tbody>${
+    <div class="scroll"><table class="apilar" style="min-width:980px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Estado</th><th scope="col">Stock</th><th scope="col" class="r">Publicaciones</th><th scope="col">Usuarios del portal</th><th scope="col" class="r" title="Solo ventas reales (ya descontadas del stock). En modo prueba es 0: lo simulado está arriba.">Te debe (ventas reales)</th><th scope="col"></th></tr></thead><tbody>${
     lista.map((r) => {
       const [et, ec] = ESTADO_REV[r.estado] || [r.estado, ''];
       const contacto = [r.contacto_nombre, r.empresa, r.whatsapp || r.telefono, r.email].filter(Boolean).map(esc).join(' · ');
       return `<tr data-id="${r.id}"><th scope="row" class="tit"><div class="row" style="gap:10px;align-items:center">
           ${r.logo_url ? `<img src="${esc(r.logo_url)}" alt="" style="width:40px;height:40px;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:#fff">` : '<div style="width:40px;height:40px;border-radius:8px;background:var(--line-soft)"></div>'}
           <div><b>${esc(r.nickname || 'Sin nombre')}</b><div class="muted small">${contacto || 'sin datos de contacto'}</div></div></div></th>
-        <td data-label="Estado"><span class="chip ${ec}">${et}</span>${r.estado === 'inactivo' ? `<div class="muted small">${r.desactivado_modo === 'stock_cero' ? 'stock en 0' : 'sin actualizar'}</div>` : ''}
-          <div style="margin-top:6px">${r.estado === 'inactivo' ? '<button class="btn sm primary" data-a="activar">Activar</button>' : r.estado === 'activo' ? '<button class="btn sm danger" data-a="desactivar">Desactivar</button>' : ''}</div></td>
-        <td data-label="Descuento de stock"><select data-a="descuento" aria-label="Descuento de stock de ${esc(r.nickname || '')}"><option value="auto" ${r.descuento_auto !== false ? 'selected' : ''}>Automático</option><option value="manual" ${r.descuento_auto === false ? 'selected' : ''}>Manual</option></select>
-          <div class="muted small">${r.descuento_auto === false ? 'lo descontás vos desde Ventas' : 'cada venta se descuenta sola'}</div></td>
+        <td data-label="Estado">${r.solo_publicaciones ? '<span class="chip info">Cuenta propia</span><div class="muted small">solo publicar</div>' : `<span class="chip ${ec}">${et}</span>`}${r.estado === 'inactivo' ? `<div class="muted small">${r.desactivado_modo === 'stock_cero' ? 'stock en 0' : 'sin actualizar'}</div>` : ''}
+          <div style="margin-top:6px">${r.solo_publicaciones ? '' : r.estado === 'inactivo' ? '<button class="btn sm primary" data-a="activar">Activar</button>' : r.estado === 'activo' ? '<button class="btn sm danger" data-a="desactivar">Desactivar</button>' : ''}</div></td>
+        <td data-label="Stock">${r.solo_publicaciones ? '<span class="muted small">No se toca: lo maneja Ecomm-App</span>' : `
+          <label class="small" style="margin:0">Sincroniza stock</label>
+          <select data-a="stock" aria-label="Sincroniza stock de ${esc(r.nickname || '')}"><option value="no" ${r.sincroniza_stock ? '' : 'selected'}>No (prueba)</option><option value="si" ${r.sincroniza_stock ? 'selected' : ''}>Sí, en vivo</option></select>
+          <label class="small" style="margin:6px 0 0">Descuento de ventas</label>
+          <select data-a="descuento" aria-label="Descuento de stock de ${esc(r.nickname || '')}"><option value="auto" ${r.descuento_auto !== false ? 'selected' : ''}>Automático</option><option value="manual" ${r.descuento_auto === false ? 'selected' : ''}>Manual</option></select>
+          <div class="muted small">${!r.sincroniza_stock ? 'sin sincronizar: no se le manda stock ni se descuentan sus ventas' : r.descuento_auto === false ? 'stock en vivo · las ventas las descontás vos desde Ventas' : 'stock en vivo · cada venta se descuenta sola'}</div>`}</td>
         <td class="r num" data-label="Publicaciones"><a href="vinculadas.html?r=${r.id}">${num.format(r.publicaciones.vinculadas)}</a><div class="muted small">${r.publicaciones.activas} activas</div></td>
         <td data-label="Usuarios">${usuarios.get(r.id) ? esc(usuarios.get(r.id)) : '<span class="muted">ninguno</span>'}</td>
         <td class="r num" data-label="Te debe" style="font-weight:600">${peso0(cuenta.get(r.id)?.saldo || 0)}</td>
@@ -55,6 +59,13 @@ function pintarRevendedores(revsRpc, cuenta) {
     else if (b.dataset.a === 'acceso') abrirAcceso(r);
   };
   $('#revSec').onchange = async (e) => {
+    const st = e.target.closest('[data-a="stock"]');
+    if (st) {
+      const tr = st.closest('tr[data-id]'), si = st.value === 'si', r = porId.get(tr.dataset.id);
+      if (si && !confirm(`Vas a sincronizar en vivo a ${r.nickname}: el sistema le va a poner el stock a sus ${r.publicaciones.vinculadas} publicaciones vinculadas (cada 5 minutos)${r.descuento_auto !== false ? ' y va a descontar sus ventas en Ecomm-App' : ''}. ¿Seguro?`)) { st.value = 'no'; return; }
+      try { await apiPublicar('admin/revendedor/stock', { id: Number(tr.dataset.id), sincroniza: si }); cargar(); } catch (err) { $('[data-e]', tr).textContent = err.message; st.value = si ? 'no' : 'si'; }
+      return;
+    }
     const sel = e.target.closest('[data-a="descuento"]'); if (!sel) return;
     const tr = sel.closest('tr[data-id]'), auto = sel.value === 'auto';
     if (!auto && !confirm('Con descuento manual, las ventas de este revendedor NO se van a descontar solas en Ecomm-App: las vas a tener que descontar vos desde Ventas. ¿Seguro?')) { sel.value = 'auto'; return; }

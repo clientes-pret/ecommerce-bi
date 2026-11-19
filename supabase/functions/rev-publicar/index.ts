@@ -19,7 +19,7 @@ import {
 import { marcaDe } from "./logic.ts";
 import { etiquetas, listarVentas, type Quien } from "./ventas.ts";
 import {
-  cambiarColchon, cambiarDescuento, cambiarEstado, descontarVenta, guardarAcceso, guardarFicha, guardarLogo, linkConectar, publicaciones as publicacionesAdmin, resumen as resumenAdmin,
+  cambiarColchon, cambiarDescuento, cambiarEstado, cambiarSincroniza, descontarVenta, guardarAcceso, guardarFicha, guardarLogo, linkConectar, publicaciones as publicacionesAdmin, resumen as resumenAdmin,
 } from "./admin.ts";
 
 const CORS = {
@@ -40,7 +40,11 @@ async function revendedorDe(req: Request): Promise<{ rev: Revendedor; jwt: strin
   const { data: rev } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).eq("id", vin.revendedor_id).maybeSingle();
   if (!rev) return fallo("No encontré tu cuenta.", 403);
   if ((rev as Revendedor).estado === "inactivo") return fallo("Tu cuenta está desactivada: hablá con Pret a Home.", 403);
-  if ((rev as Revendedor).estado !== "activo") return fallo("Tu cuenta de Mercado Libre no está conectada: pedile a Pret a Home el link para reconectarla.", 409);
+  // Cuentas propias de "solo publicar" (ej. LAVANCASA): quedan 'pausadas' para que nunca se les toque el stock ni las
+  // ventas, pero sí pueden usar el portal para publicar (19/11/2026).
+  const { data: flags } = await supabase.from("rev_revendedores").select("solo_publicaciones").eq("id", (rev as Revendedor).id).maybeSingle();
+  const soloPublicar = flags?.solo_publicaciones === true && (rev as Revendedor).estado === "pausado";
+  if ((rev as Revendedor).estado !== "activo" && !soloPublicar) return fallo("Tu cuenta de Mercado Libre no está conectada: pedile a Pret a Home el link para reconectarla.", 409);
   return { rev: rev as Revendedor, jwt };
 }
 
@@ -219,6 +223,7 @@ Deno.serve(async (req) => {
       try {
         if (ruta.endsWith("/admin/revendedor/estado")) return json(await cambiarEstado(b));
         if (ruta.endsWith("/admin/revendedor/descuento")) return json(await cambiarDescuento(b));
+        if (ruta.endsWith("/admin/revendedor/stock")) return json(await cambiarSincroniza(b));
         if (ruta.endsWith("/admin/revendedor/ficha")) return json(await guardarFicha(b));
         if (ruta.endsWith("/admin/revendedor/logo")) return json(await guardarLogo(b));
         if (ruta.endsWith("/admin/descontar")) return json(await descontarVenta(b));

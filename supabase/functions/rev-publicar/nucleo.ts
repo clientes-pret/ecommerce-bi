@@ -149,6 +149,11 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
     if (condiciones.has(sku)) return condiciones.get(sku)!;
     const { data } = await supabase.from("rev_publicaciones").select("ml_item_id").eq("revendedor_id", rev.id).eq("sku", sku);
     const ids = [...new Set(((data ?? []) as { ml_item_id: string }[]).map((x) => x.ml_item_id))];
+    // Además, lo que la cuenta ya tenga publicado con ese SKU aunque no esté vinculado (publicado a mano, o una cuenta
+    // propia como LAVANCASA con su catálogo de siempre).
+    const bus = await mlGet<{ results?: string[] }>(tokRev, `/users/${rev.ml_user_id}/items/search?seller_sku=${encodeURIComponent(sku)}&limit=50`);
+    if (bus.status === 429) throw new LimiteML("Mercado Libre pidió ir más despacio.");
+    for (const id of bus.body?.results ?? []) if (!ids.includes(id)) ids.push(id);
     const set = new Set<string>();
     for (const id of ids) {
       const r = await mlGet<{ status?: string; listing_type_id?: string; catalog_listing?: boolean }>(tokRev, `/items/${id}?attributes=id,status,listing_type_id,catalog_listing`);

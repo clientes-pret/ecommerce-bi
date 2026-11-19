@@ -46,12 +46,18 @@ export async function moverStock(token: string, o: { sku: string; cantidad: numb
 export async function procesarDescuentos(supabase: SupabaseClient, ecommToken: string, opciones: { soloOrden?: number } = {}) {
   const { data: cfg } = await supabase.from("rev_config").select("valor").eq("clave", "warehouse_id").maybeSingle();
   const warehouseId = Number(cfg?.valor ?? 1083);
-  const { data: revs } = await supabase.from("rev_revendedores").select("id,nickname,descuento_auto");
+  const { data: revs } = await supabase.from("rev_revendedores").select("id,nickname,descuento_auto,sincroniza_stock,solo_publicaciones");
+  const { data: cm } = await supabase.from("rev_config").select("valor").eq("clave", "modo").maybeSingle();
+  const modoReal = cm?.valor === "real" || cm?.valor === "activo";
+  // En vivo: con el sistema en modo real, todos; si no, solo los que tienen "Sincroniza stock" (19/11/2026). Las cuentas
+  // propias de "solo publicar" nunca (su stock lo maneja Ecomm-App).
+  const enVivo = new Set(((revs ?? []) as { id: number; sincroniza_stock: boolean; solo_publicaciones: boolean }[])
+    .filter((r) => !r.solo_publicaciones && (modoReal || r.sincroniza_stock)).map((r) => r.id));
   const nick = new Map(((revs ?? []) as { id: number; nickname: string | null }[]).map((r) => [r.id, r.nickname]));
   // Revendedores con descuento MANUAL: sus ventas solo se descuentan (o se les devuelve el stock) cuando el administrador
   // lo pide para esa venta (`soloOrden`), nunca en la corrida automática.
   const manual = new Set(((revs ?? []) as { id: number; descuento_auto: boolean }[]).filter((r) => r.descuento_auto === false).map((r) => r.id));
-  const tocar = (f: Fila) => opciones.soloOrden != null || !manual.has(f.revendedor_id);
+  const tocar = (f: Fila) => opciones.soloOrden != null || (enVivo.has(f.revendedor_id) && !manual.has(f.revendedor_id));
   const cols = "id,revendedor_id,ml_order_id,sku,cantidad,estado,descontado_at,repuesto_at,reposicion,recibido_estado";
   const cuenta = { manuales_salteadas: 0, descontadas: 0, sin_stock: 0, errores: 0, a_reintentar: 0, repuestas: 0, errores_reposicion: 0 };
   const ahora = () => new Date().toISOString();
@@ -61,7 +67,13 @@ export async function procesarDescuentos(supabase: SupabaseClient, ecommToken: s
   if (opciones.soloOrden) q = q.eq("ml_order_id", opciones.soloOrden);
   const { data: aDescontar, error: e1 } = await q;
   if (e1) throw new Error(`rev_ordenes: ${e1.message}`);
-  for (const f of ((aDescontar ?? []) as Fila[]).filter(tocar)) {
+  // Solo se descuentan SKUs del catálogo de revendedores (nunca un producto propio del revendedor con un SKU parecido).
+  const candidatos = ((aDescontar ?? []) as Fila[]).filter(tocar);
+  const { data: enCat } = candidatos.length
+    ? await supabase.from("rev_catalogo").select("sku").in("sku", [...new Set(candidatos.map((f) => f.sku))])
+    : { data: [] as { sku: string }[] };
+  const delCatalogo = new Set(((enCat ?? []) as { sku: string }[]).map((x) => x.sku));
+  for (const f of candidatos.filter((x) => delCatalogo.has(x.sku))) {
     const clave = claveIdempotente(f.ml_order_id, f.sku, "venta");
     const m = await moverStock(ecommToken, { sku: f.sku, cantidad: -f.cantidad, warehouseId, clave, motivo: motivoMovimiento("venta", nick.get(f.revendedor_id), f.ml_order_id, f.sku) });
     const t = transicionDescuento(m.res, m.http, m.codigoError);

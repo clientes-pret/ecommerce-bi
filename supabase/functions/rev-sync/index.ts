@@ -25,7 +25,9 @@ import { enLotes, publicacionesAActualizar, stockOfrecido } from "./logic.ts";
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const ECOMM_TOKEN = Deno.env.get("ECOMMAPP_TOKEN") ?? "";
 const ECOMM_CONSULTA = "https://admin.ecomm-app.com/api/v3/public/inventario/productos/consulta";
-const MAX_ACTUALIZACIONES_POR_CORRIDA = 300;
+// Tope por corrida (cada 5 min): ~0,6 s por publicación, para no pasar el límite de duración de la función ni el ritmo
+// que pide ML. Lo que falta sigue en la próxima corrida.
+const MAX_ACTUALIZACIONES_POR_CORRIDA = 120;
 const MINIMO_ENCONTRADOS = 0.5; // si Ecomm-App devuelve menos de la mitad del catálogo, algo anda mal: no se actualiza nada
 
 type Json = Record<string, unknown>;
@@ -138,10 +140,13 @@ async function sincronizar(): Promise<Json> {
     if (error) throw new Error(`rev_stock_ofrecido: ${error.message}`);
   }
 
-  const revs = await leerTodo<Revendedor & { desactivado_modo: string | null }>("rev_revendedores", COLUMNAS_REVENDEDOR + ",desactivado_modo", "id");
-  // Activos: se les manda el stock ofrecido. Desactivados con "stock en 0": se les manda 0 (una vez) a todas sus
-  // publicaciones vinculadas. Desactivados con "dejar de actualizar" (congelar), pausados o desconectados: no se tocan.
+  const revs = await leerTodo<Revendedor & { desactivado_modo: string | null; sincroniza_stock: boolean }>("rev_revendedores", COLUMNAS_REVENDEDOR + ",desactivado_modo,sincroniza_stock", "id");
+  // A quién se le MANDA el stock (19/11/2026: por revendedor):
+  //   - activos con "Sincroniza stock" prendido (o todos los activos si el sistema está en modo real);
+  //   - desactivados con "stock en 0": se les manda 0 (una vez) a sus publicaciones vinculadas.
+  // Al resto (activos sin sincronizar, pausados/cuentas propias, congelados, desconectados) solo se les calcula.
   const aCero = new Set(revs.filter((r) => r.estado === "inactivo" && r.desactivado_modo === "stock_cero").map((r) => r.id));
+  const enVivo = new Set(revs.filter((r) => r.estado === "activo" && (modo === "activo" || r.sincroniza_stock)).map((r) => r.id));
   const activos = new Map(revs.filter((r) => r.estado === "activo" || aCero.has(r.id)).map((r) => [r.id, r]));
   // `sku` puede ser nulo (publicación todavía sin reconocer, ver migración del portal): esas no se sincronizan.
   const pubs = (await leerTodo<{
@@ -171,18 +176,22 @@ async function sincronizar(): Promise<Json> {
     publicaciones_a_actualizar: cambios.length,
   };
 
-  if (modo === "sombra") {
-    resumen.haria = cambios.slice(0, 10).map((c) => ({ item: c.ml_item_id, sku: c.sku, de: c.ultima_cantidad_enviada, a: c.nueva }));
+  const aEnviar = cambios.filter((c) => enVivo.has(c.revendedor_id) || aCero.has(c.revendedor_id));
+  const simulados = cambios.filter((c) => !enVivo.has(c.revendedor_id) && !aCero.has(c.revendedor_id));
+  resumen.revendedores_en_vivo = [...enVivo].map((id) => activos.get(id)?.nickname ?? id);
+  resumen.a_enviar = aEnviar.length;
+  resumen.haria = simulados.slice(0, 10).map((c) => ({ item: c.ml_item_id, sku: c.sku, de: c.ultima_cantidad_enviada, a: c.nueva }));
+  if (!aEnviar.length) {
     resumen.segundos = Math.round((Date.now() - t0) / 100) / 10;
-    await guardarEstado("sombra_ok", resumen);
+    await guardarEstado(modo === "sombra" ? "sombra_ok" : "activo_ok", resumen);
     return { ok: true, ...resumen };
   }
 
-  // MODO ACTIVO: actualizar publicaciones de revendedores (tope por corrida; el resto sigue en la próxima).
+  // EN VIVO: actualizar las publicaciones de esos revendedores (tope por corrida; el resto sigue en la próxima).
   let enviadas = 0;
   let fallidas = 0;
   const porRevendedor = new Map<number, typeof cambios>();
-  for (const c of cambios.slice(0, MAX_ACTUALIZACIONES_POR_CORRIDA)) {
+  for (const c of aEnviar.slice(0, MAX_ACTUALIZACIONES_POR_CORRIDA)) {
     porRevendedor.set(c.revendedor_id, [...(porRevendedor.get(c.revendedor_id) ?? []), c]);
   }
   for (const [revId, lista] of porRevendedor) {
@@ -209,6 +218,7 @@ async function sincronizar(): Promise<Json> {
   resumen.enviadas = enviadas;
   resumen.fallidas = fallidas;
   resumen.segundos = Math.round((Date.now() - t0) / 100) / 10;
+  resumen.pendientes_proxima = Math.max(0, aEnviar.length - MAX_ACTUALIZACIONES_POR_CORRIDA);
   await guardarEstado(fallidas ? "activo_con_fallas" : "activo_ok", resumen);
   return { ok: true, ...resumen };
 }
