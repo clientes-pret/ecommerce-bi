@@ -132,3 +132,11 @@ Deno.test("enLotes: parte en grupos del tamaño pedido", () => {
   assertEquals(enLotes([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
   assertEquals(enLotes([], 100), []);
 });
+
+import { motivoMovimiento } from "./logic.ts";
+Deno.test("motivo en Ecomm-App: venta-<revendedor> con número de venta y SKU", () => {
+  assertEquals(motivoMovimiento("venta", "CASALAVAN", 2000012345678901, "PRET210-CBOGRIS"), "venta-casalavan #2000012345678901 SKU PRET210-CBOGRIS");
+  assertEquals(motivoMovimiento("devolucion", "Casa Pinar", 1, "X"), "devolucion-casapinar #1 SKU X");
+  assertEquals(motivoMovimiento("venta", null, 1, "X"), "venta-revendedor #1 SKU X");
+  assertEquals(motivoMovimiento("venta", "A", 1, "S".repeat(300)).length, 200);
+});

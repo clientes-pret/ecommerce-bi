@@ -202,3 +202,13 @@ Deno.test("etiqueta: solo cuando el envío está listo para despachar", () => {
   assertEquals(etiquetaDisponible({ status: "delivered" }), false);
   assertEquals(etiquetaDisponible(null), false);
 });
+
+import { periodo } from "./logic.ts";
+Deno.test("período de ventas", () => {
+  const ahora = new Date("2026-11-19T12:00:00Z"); // 09:00 en Argentina
+  assertEquals(periodo(null, null, ahora), { desde: "2026-10-21", hasta: "2026-11-19" }); // últimos 30 días
+  assertEquals(periodo("2026-11-01", "2026-11-15", ahora), { desde: "2026-11-01", hasta: "2026-11-15" });
+  assertEquals(periodo("2026-11-15", "2026-11-01", ahora), null);          // al revés
+  assertEquals(periodo("2024-01-01", "2026-11-01", ahora), null);          // más de un año
+  assertEquals(periodo(null, null, new Date("2026-11-20T02:00:00Z"))?.hasta, "2026-11-19"); // 23 h en Argentina: sigue siendo 19
+});

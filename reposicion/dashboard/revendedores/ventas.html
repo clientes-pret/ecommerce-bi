@@ -37,20 +37,39 @@ const ENVIO = {
 };
 const LOGISTICA = { xd_drop_off: 'Despacho en agencia', drop_off: 'Correo', self_service: 'Flex', cross_docking: 'Colecta', fulfillment: 'Full' };
 
-$('#app').innerHTML = `<div class="cabecera"><div><h1>Ventas</h1><p>${admin ? 'Ventas de todos los revendedores' : 'Tus ventas de Mercado Libre'} de los últimos 90 días: qué se vendió, en qué estado está el pedido y la etiqueta de envío.</p></div></div>
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Ventas</h1><p>${admin ? 'Ventas de todos los revendedores' : 'Tus ventas de Mercado Libre'} : qué se vendió, en qué estado está el pedido y la etiqueta de envío.</p></div></div>
 <div class="centro-comando compacto" id="kpis"></div>
 <section class="card tabla"><div class="cab"><div><h2>Pedidos</h2><span class="muted" id="cuenta">Cargando…</span></div>
   <div class="row wrapRow filtros">
+    <select id="per" aria-label="Período">${[['hoy', 'Hoy'], ['7', 'Últimos 7 días'], ['30', 'Últimos 30 días'], ['90', 'Últimos 90 días'], ['mes', 'Este mes'], ['mesant', 'Mes pasado'], ['otro', 'Elegir fechas…']].map(([k, t]) => `<option value="${k}" ${k === '30' ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    <span id="fechas" class="row" style="gap:6px;display:none"><input type="date" id="desde" aria-label="Desde"><span class="muted">a</span><input type="date" id="hasta" aria-label="Hasta"></span>
     <input id="q" class="busca" placeholder="Buscar por venta, SKU, MLA, comprador…" aria-label="Buscar">
     ${admin ? '<select id="rev" aria-label="Revendedor"><option value="">Todos los revendedores</option></select>' : ''}
     <div class="seg gris full" role="group" aria-label="Estado">${[['todas', 'Todas'], ['despachar', 'Por despachar'], ['camino', 'En camino'], ['entregadas', 'Entregadas'], ['canceladas', 'Canceladas']].map(([k, t]) => `<button type="button" data-f="${k}" aria-pressed="${k === 'todas'}">${t}</button>`).join('')}</div>
   </div></div>
   <div class="scroll"><table class="apilar" style="min-width:900px"><thead><tr><th scope="col" style="width:36px"><input type="checkbox" class="sel" id="todas" aria-label="Elegir todas las que tienen la etiqueta lista" title="Elegir todas las que tienen la etiqueta lista"></th><th scope="col">Venta</th><th scope="col">Productos</th><th scope="col">Estado del pedido</th><th scope="col">Etiqueta</th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="row between pager" style="padding:12px 24px;flex-wrap:wrap"><span class="muted small" id="pagInfo"></span><div class="row"><button class="btn sm" id="ant">← Anterior</button><button class="btn sm" id="sig">Siguiente →</button></div></div>
 </section>
 <div class="barra" id="barra" hidden><span class="grow" id="selTxt"></span><button class="btn" id="limpiar">Vaciar</button><button class="btn primary" id="imprimir">Imprimir etiquetas</button></div>
 <p class="muted small" id="aviso" style="margin-top:12px"></p>`;
 
-let ventas = [], filtro = 'todas';
+let ventas = [], filtro = 'todas', pag = 0, info = null;
+const POR_PAG = 25;
+
+// Período en días de Argentina (YYYY-MM-DD). El servidor acepta hasta un año.
+const diaAR = (d) => new Date(d.getTime() - 3 * 3600_000).toISOString().slice(0, 10);
+function periodoElegido() {
+  const p = $('#per').value, hoy = new Date(), h = diaAR(hoy);
+  const atras = (n) => diaAR(new Date(hoy.getTime() - (n - 1) * 86400_000));
+  if (p === 'hoy') return { desde: h, hasta: h };
+  if (p === 'mes') return { desde: h.slice(0, 8) + '01', hasta: h };
+  if (p === 'mesant') {
+    const [y, m] = h.split('-').map(Number), ini = new Date(Date.UTC(m === 1 ? y - 1 : y, m === 1 ? 11 : m - 2, 1)), fin = new Date(Date.UTC(y, m - 1, 0));
+    return { desde: ini.toISOString().slice(0, 10), hasta: fin.toISOString().slice(0, 10) };
+  }
+  if (p === 'otro') return { desde: $('#desde').value || atras(30), hasta: $('#hasta').value || h };
+  return { desde: atras(Number(p)), hasta: h };
+}
 const sel = new Set();
 
 // Estado del pedido en palabras + en qué grupo cae para el filtro.
@@ -73,7 +92,9 @@ function estadoDe(v) {
 async function cargar() {
   $('#cuenta').textContent = 'Cargando…';
   try {
-    const r = await apiPublicar('ventas', admin && $('#rev')?.value ? { revendedor_id: Number($('#rev').value) } : {});
+    const per = periodoElegido();
+    const r = await apiPublicar('ventas', { ...per, ...(admin && $('#rev')?.value ? { revendedor_id: Number($('#rev').value) } : {}) });
+    info = r;
     ventas = r.ventas || [];
     if (admin && r.revendedores && $('#rev').options.length === 1) {
       $('#rev').insertAdjacentHTML('beforeend', r.revendedores.map((x) => `<option value="${x.id}">${esc(x.nickname || x.id)}</option>`).join(''));
@@ -93,6 +114,7 @@ async function cargar() {
     ['Canceladas', num.format(c('canceladas')), ''],
   ].map(([l, v, s], i) => `<div class="cc-card ${i === 1 && Number(v) ? 'alerta' : ''}"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${s}</div></div>`).join('');
   for (const k of [...sel]) if (!ventas.some((v) => String(v.ml_order_id) === k && v.etiqueta)) sel.delete(k);
+  pag = 0;
   pintar();
 }
 
@@ -101,8 +123,14 @@ const fecha = (iso) => new Date(iso).toLocaleString('es-AR', { timeZone: 'Americ
 
 function pintar() {
   const tk = $('#q').value.toLowerCase().split(/\s+/).filter(Boolean);
-  const v = ventas.filter((x) => (filtro === 'todas' || x.e.grupo === filtro) && tk.every((t) => x.hay.includes(t)));
-  $('#cuenta').textContent = `${num.format(v.length)} ${v.length === 1 ? 'venta' : 'ventas'}`;
+  const todasFiltradas = ventas.filter((x) => (filtro === 'todas' || x.e.grupo === filtro) && tk.every((t) => x.hay.includes(t)));
+  const pags = Math.max(1, Math.ceil(todasFiltradas.length / POR_PAG));
+  if (pag >= pags) pag = pags - 1;
+  const ini = pag * POR_PAG, v = todasFiltradas.slice(ini, ini + POR_PAG);
+  const fmtDia = (d) => d.split('-').reverse().join('/');
+  $('#cuenta').textContent = `${num.format(todasFiltradas.length)} ${todasFiltradas.length === 1 ? 'venta' : 'ventas'}${info?.periodo ? ` · del ${fmtDia(info.periodo.desde)} al ${fmtDia(info.periodo.hasta)}` : ''}`;
+  $('#pagInfo').textContent = todasFiltradas.length ? `${ini + 1}–${ini + v.length} de ${num.format(todasFiltradas.length)}${ventas.some((x) => !x.en_vivo) ? ' · las más viejas muestran el último estado guardado' : ''}` : '';
+  $('#ant').disabled = pag === 0; $('#sig').disabled = pag >= pags - 1;
   $('#tb').innerHTML = v.map((x) => `<tr>
     <td class="ck">${x.etiqueta ? `<input type="checkbox" class="sel" data-o="${x.ml_order_id}" ${sel.has(String(x.ml_order_id)) ? 'checked' : ''} aria-label="Elegir la venta ${x.ml_order_id}">` : ''}</td>
     <th scope="row" style="font-weight:500"><b>${esc(String(x.orden_ml?.pack_id || x.ml_order_id))}</b>
@@ -112,7 +140,7 @@ function pintar() {
     <td data-label="Estado"><span class="chip ${x.e.chip}">${esc(x.e.txt)}</span>${x.e.extra ? `<div class="small warn-t">${esc(x.e.extra)}</div>` : ''}
       ${x.envio?.logistic_type ? `<div class="muted small">${esc(LOGISTICA[x.envio.logistic_type] || x.envio.logistic_type)}${x.envio.tracking ? ' · seguimiento ' + esc(x.envio.tracking) : ''}</div>` : ''}</td>
     <td data-label="Etiqueta">${x.etiqueta ? `<button class="btn sm primary" data-imp="${x.ml_order_id}">Imprimir</button>` : '<span class="muted small">—</span>'}</td></tr>`).join('')
-    || `<tr><td colspan="5" class="muted">${ventas.length ? 'No hay ventas con ese filtro.' : 'Todavía no hay ventas registradas en los últimos 90 días.'}</td></tr>`;
+    || `<tr><td colspan="5" class="muted">${ventas.length ? 'No hay ventas con ese filtro.' : 'No hay ventas en este período.'}</td></tr>`;
   const imprimibles = v.filter((x) => x.etiqueta).map((x) => String(x.ml_order_id));
   $('#todas').checked = imprimibles.length > 0 && imprimibles.every((k) => sel.has(k));
   $('#todas').disabled = !imprimibles.length;
@@ -146,8 +174,13 @@ $('#todas').onchange = (e) => {
   pintar();
 };
 $('#imprimir').onclick = () => imprimir([...sel]);
-$$('[data-f]').forEach((b) => (b.onclick = () => { filtro = b.dataset.f; $$('[data-f]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
-let t; $('#q').oninput = () => { clearTimeout(t); t = setTimeout(pintar, 200); };
+$('#ant').onclick = () => { pag--; pintar(); scrollTo(0, 0); };
+$('#sig').onclick = () => { pag++; pintar(); scrollTo(0, 0); };
+// (las fechas se muestran con display y no con `hidden`, porque la clase .row lo pisa)
+$('#per').onchange = () => { $('#fechas').style.display = $('#per').value === 'otro' ? 'flex' : 'none'; if ($('#per').value !== 'otro') { sel.clear(); cargar(); } };
+['desde', 'hasta'].forEach((id) => ($('#' + id).onchange = () => { if ($('#desde').value && $('#hasta').value) { sel.clear(); cargar(); } }));
+$$('[data-f]').forEach((b) => (b.onclick = () => { filtro = b.dataset.f; pag = 0; $$('[data-f]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
+let t; $('#q').oninput = () => { clearTimeout(t); t = setTimeout(() => { pag = 0; pintar(); }, 200); };
 if (admin) $('#rev').onchange = () => { sel.clear(); cargar(); };
 await cargar();
 </script>

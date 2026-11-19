@@ -103,3 +103,14 @@ export function enLotes<T>(lista: T[], tamano: number): T[][] {
   for (let i = 0; i < lista.length; i += tamano) out.push(lista.slice(i, i + tamano));
   return out;
 }
+
+// ── Motivo del movimiento en Ecomm-App (campo `reason`, 1–200 letras) ───────────────────────────────────────────
+// Pedido del usuario (19/11/2026): que en Ecomm-App quede asentado de qué revendedor es cada movimiento, con el formato
+// "venta-casalavan", "venta-casapinar", etc., más el número de venta de ML para poder rastrearla.
+//   venta          → "venta-casalavan #2000012345678901 SKU PRET210-CBOGRIS"
+//   cancelacion    → "cancelacion-casalavan #…" (vuelve el stock de una venta cancelada antes de despachar)
+//   devolucion     → "devolucion-casalavan #…" (vuelve el stock cuando el depósito recibe la devolución)
+export function motivoMovimiento(tipo: "venta" | "cancelacion" | "devolucion", revendedor: string | null | undefined, mlOrderId: string | number, sku: string): string {
+  const quien = String(revendedor ?? "revendedor").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 40) || "revendedor";
+  return `${tipo}-${quien} #${mlOrderId} SKU ${sku.trim()}`.slice(0, 200);
+}

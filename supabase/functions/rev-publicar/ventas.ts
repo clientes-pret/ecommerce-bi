@@ -9,12 +9,11 @@
 
 import { COLUMNAS_REVENDEDOR, ML_API, mlGet, type Revendedor, tokenValido, USER_AGENT } from "../_shared/rev_ml.ts";
 import { supabase } from "./nucleo.ts";
-import { etiquetaDisponible } from "./logic.ts";
+import { etiquetaDisponible, periodo } from "./logic.ts";
 
 export interface Quien { rev: Revendedor | null; admin: boolean }
 
-const DIAS = 90;
-const MAX_ORDENES_EN_VIVO = 80;   // las más recientes se consultan en ML; las más viejas se muestran con lo guardado
+const MAX_ORDENES_EN_VIVO = 150; // las más recientes del período se consultan en ML; las más viejas se muestran con lo guardado
 const MAX_ETIQUETAS = 50;
 
 interface FilaOrden {
@@ -38,10 +37,12 @@ async function revendedores(ids: number[]): Promise<Map<number, Revendedor>> {
 }
 
 export async function listarVentas(q: Quien, b: Record<string, unknown>) {
-  const desde = new Date(Date.now() - DIAS * 86400_000).toISOString();
+  const per = periodo(b.desde, b.hasta);
+  if (!per) throw new Error("El período no es válido (máximo un año, y la fecha de inicio antes que la de fin).");
   let consulta = supabase.from("rev_ordenes")
     .select("id,revendedor_id,ml_order_id,ml_item_id,sku,cantidad,precio_unitario,estado,despachada,reposicion,devolucion,creado_at")
-    .gte("creado_at", desde).order("creado_at", { ascending: false }).order("id").limit(1000);
+    .gte("creado_at", `${per.desde}T00:00:00-03:00`).lte("creado_at", `${per.hasta}T23:59:59.999-03:00`)
+    .order("creado_at", { ascending: false }).order("id").limit(5000);
   if (!q.admin) consulta = consulta.eq("revendedor_id", q.rev!.id);
   else if (b.revendedor_id) consulta = consulta.eq("revendedor_id", Number(b.revendedor_id));
   const { data, error } = await consulta;
@@ -90,7 +91,8 @@ export async function listarVentas(q: Quien, b: Record<string, unknown>) {
         etiqueta: etiquetaDisponible(v?.env),
       };
     }),
-    dias: DIAS,
+    periodo: per,
+    en_vivo_max: MAX_ORDENES_EN_VIVO,
     revendedores: q.admin ? [...revs.values()].map((r) => ({ id: r.id, nickname: r.nickname })) : null,
   };
 }

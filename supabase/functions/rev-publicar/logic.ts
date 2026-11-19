@@ -309,3 +309,18 @@ export function estadoFinal(resultados: { ok: boolean }[]): "listo" | "parcial" 
  *  retiró (lista para imprimir o ya impresa, para reimprimirla). */
 export const etiquetaDisponible = (e: { status?: string; substatus?: string | null } | null | undefined): boolean =>
   e?.status === "ready_to_ship" && (e.substatus == null || e.substatus === "ready_to_print" || e.substatus === "printed");
+
+// Ventas: período por defecto y máximo (días de Argentina).
+const DIAS_VENTAS = 30;
+const MAX_DIAS_VENTAS = 366;
+/** Período pedido (días de Argentina, YYYY-MM-DD, ambos incluidos). Sin fechas: los últimos 30 días. */
+export function periodo(desde: unknown, hasta: unknown, ahora = new Date()): { desde: string; hasta: string } | null {
+  const ok = (x: unknown) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x);
+  const hoyAR = new Date(ahora.getTime() - 3 * 3600_000).toISOString().slice(0, 10);
+  const h = ok(hasta) ? String(hasta) : hoyAR;
+  const d = ok(desde) ? String(desde) : new Date(Date.parse(h + "T12:00:00Z") - (DIAS_VENTAS - 1) * 86400_000).toISOString().slice(0, 10);
+  if (d > h) return null;
+  if ((Date.parse(h) - Date.parse(d)) / 86400_000 > MAX_DIAS_VENTAS) return null;
+  return { desde: d, hasta: h };
+}
+
