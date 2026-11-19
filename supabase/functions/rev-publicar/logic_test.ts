@@ -192,3 +192,13 @@ Deno.test("precio por ganancia neta: el ejemplo del usuario (costo 60, ML 30 %, 
   // se redondea hacia arriba: nunca por debajo de la ganancia pedida
   assert(margenDePrecio(precioPorMargen(34500, 10)!, 34500)! >= 10);
 });
+
+import { etiquetaDisponible } from "./logic.ts";
+Deno.test("etiqueta: solo cuando el envío está listo para despachar", () => {
+  assertEquals(etiquetaDisponible({ status: "ready_to_ship", substatus: "ready_to_print" }), true);
+  assertEquals(etiquetaDisponible({ status: "ready_to_ship", substatus: "printed" }), true);
+  assertEquals(etiquetaDisponible({ status: "ready_to_ship", substatus: "picked_up" }), false);
+  assertEquals(etiquetaDisponible({ status: "handling" }), false);
+  assertEquals(etiquetaDisponible({ status: "delivered" }), false);
+  assertEquals(etiquetaDisponible(null), false);
+});

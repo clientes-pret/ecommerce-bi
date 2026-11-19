@@ -43,11 +43,12 @@ $('#app').innerHTML = `<div class="cabecera"><div><h1>Mis publicaciones</h1><p>T
   </form>
 </section>
 <section class="card tabla"><div class="cab"><div><h2>Publicaciones</h2><span class="muted" id="cuenta"></span></div>
-  <div class="row wrapRow filtros"><div class="seg gris full" role="group" aria-label="Qué ver">${[['todas', 'Todas'], ['sin', 'Sin vincular'], ['min', 'Bajo el mínimo']].map(([k, t]) => `<button type="button" data-f="${k}" aria-pressed="${k === 'todas'}">${t}</button>`).join('')}</div></div></div>
+  <div class="row wrapRow filtros"><div class="seg gris full" role="group" aria-label="Qué ver">${[['todas', 'Todas'], ['vin', 'Vinculadas'], ['sin', 'Sin vincular'], ['min', 'Bajo el mínimo']].map(([k, t]) => `<button type="button" data-f="${k}" aria-pressed="${k === 'todas'}">${t}</button>`).join('')}</div>
+    <div class="seg gris full" role="group" aria-label="Estado en Mercado Libre">${[['todas', 'Activas y pausadas'], ['active', 'Activas'], ['paused', 'Pausadas']].map(([k, t]) => `<button type="button" data-e="${k}" aria-pressed="${k === 'todas'}">${t}</button>`).join('')}</div></div></div>
   <div class="scroll"><table class="apilar" style="min-width:980px"><thead><tr><th scope="col">Vínculo</th><th scope="col">Publicación</th><th scope="col">Producto (SKU)</th><th scope="col">Estado</th><th scope="col" class="r">Tu precio</th><th scope="col" class="r">Stock</th><th scope="col"></th></tr></thead><tbody id="tb"></tbody></table></div>
 </section><datalist id="skus"></datalist>`;
 
-let pubs = [], filtro = 'todas';
+let pubs = [], filtro = 'todas', filtroEstado = 'todas';
 const ESTADO_ML = { active: ['Activa', 'ok'], paused: ['Pausada', 'warn'], closed: ['Cerrada', ''], under_review: ['En revisión', 'warn'] };
 
 async function cargar() {
@@ -57,14 +58,16 @@ async function cargar() {
   const sin = pubs.filter((p) => !vinculada(p)).length, bajo = pubs.filter((p) => p.bajo_minimo).length;
   $('#kpis').innerHTML = [
     ['Publicaciones', num.format(pubs.length), `${num.format(pubs.filter((p) => p.estado_ml === 'active').length)} activas`],
+    ['Vinculadas', num.format(pubs.length - sin), 'se les mantiene el stock'],
     ['Sin vincular', num.format(sin), sin ? 'corregilas abajo' : 'todas reconocidas'],
     ['Bajo el mínimo', num.format(bajo), bajo ? 'revisá el precio' : 'ninguna'],
-  ].map(([l, v, s], i) => `<div class="cc-card ${(i === 1 && sin) || (i === 2 && bajo) ? 'alerta' : ''}"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${s}</div></div>`).join('');
+  ].map(([l, v, s], i) => `<div class="cc-card ${(i === 2 && sin) || (i === 3 && bajo) ? 'alerta' : ''}"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${s}</div></div>`).join('');
   pintar();
 }
 
 function pintar() {
-  const v = pubs.filter((p) => filtro === 'todas' || (filtro === 'sin' && !vinculada(p)) || (filtro === 'min' && p.bajo_minimo));
+  const v = pubs.filter((p) => (filtro === 'todas' || (filtro === 'vin' && vinculada(p)) || (filtro === 'sin' && !vinculada(p)) || (filtro === 'min' && p.bajo_minimo))
+    && (filtroEstado === 'todas' || p.estado_ml === filtroEstado));
   $('#cuenta').textContent = `${num.format(v.length)} ${v.length === 1 ? 'publicación' : 'publicaciones'}`;
   $('#tb').innerHTML = v.map((p) => {
     const [et, ec] = ESTADO_ML[p.estado_ml] || [p.estado_ml || '—', ''];
@@ -105,6 +108,7 @@ $('#tb').onclick = async (e) => {
   }
 };
 $$('[data-f]').forEach((b) => (b.onclick = () => { filtro = b.dataset.f; $$('[data-f]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
+$$('[data-e]').forEach((b) => (b.onclick = () => { filtroEstado = b.dataset.e; $$('[data-e]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
 
 $('#fa').onsubmit = async (e) => {
   e.preventDefault(); $('#errA').textContent = '';

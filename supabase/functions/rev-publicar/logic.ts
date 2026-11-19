@@ -304,3 +304,8 @@ export function estadoFinal(resultados: { ok: boolean }[]): "listo" | "parcial" 
   const ok = resultados.filter((r) => r.ok).length;
   return ok && ok === resultados.length ? "listo" : ok ? "parcial" : "error";
 }
+
+/** Ventas: la etiqueta de envío se puede imprimir cuando el envío está "listo para enviar" y el correo todavía no lo
+ *  retiró (lista para imprimir o ya impresa, para reimprimirla). */
+export const etiquetaDisponible = (e: { status?: string; substatus?: string | null } | null | undefined): boolean =>
+  e?.status === "ready_to_ship" && (e.substatus == null || e.substatus === "ready_to_print" || e.substatus === "printed");

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ventas · Revendedores</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <style>
+    .sel { width: 22px; height: 22px; min-height: 0; }
+    .linea { font-size: 13px; line-height: 1.4; }
+    .linea + .linea { margin-top: 6px; }
+    .barra { position: sticky; bottom: 0; z-index: 10; background: var(--ink); color: #fff; border-radius: 12px; padding: 12px 16px; margin-top: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; box-shadow: 0 -4px 14px rgba(0,0,0,.12); }
+    .barra[hidden] { display: none; }
+    .barra .grow { font-weight: 600; flex: 1; }
+    .barra .btn.primary { background: #fff; color: var(--ink); border-color: #fff; }
+    .barra .btn:not(.primary) { background: transparent; color: #fff; border-color: rgba(255,255,255,.35); }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Ventas del portal de revendedores (19/11/2026): las ventas de Mercado Libre registradas (rev_ordenes) con su publicación
+// (MLA) y SKU, el estado del pedido y del envío leído en vivo de ML, y la etiqueta de envío en PDF. El revendedor ve las
+// suyas; el admin/dueño, las de todos (filtro por revendedor). Los datos los da rev-publicar /ventas y /etiquetas.
+import { $, $$, esc, peso0, num, guardRev, navRev, apiPublicar, apiPublicarArchivo } from './app.js';
+
+const sesion = await guardRev(['rev', 'admin']);
+navRev(sesion, 'ventas');
+const admin = sesion.tipo === 'admin';
+
+const ENVIO = {
+  pending: 'Pendiente', handling: 'En preparación', ready_to_print: 'Lista para imprimir la etiqueta', printed: 'Etiqueta impresa',
+  picked_up: 'Retirada por el correo', dropped_off: 'Entregada en el punto de despacho', in_hub: 'En el centro de distribución',
+  shipped: 'En camino', delivered: 'Entregada', not_delivered: 'No entregada', cancelled: 'Envío cancelado',
+};
+const LOGISTICA = { xd_drop_off: 'Despacho en agencia', drop_off: 'Correo', self_service: 'Flex', cross_docking: 'Colecta', fulfillment: 'Full' };
+
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Ventas</h1><p>${admin ? 'Ventas de todos los revendedores' : 'Tus ventas de Mercado Libre'} de los últimos 90 días: qué se vendió, en qué estado está el pedido y la etiqueta de envío.</p></div></div>
+<div class="centro-comando compacto" id="kpis"></div>
+<section class="card tabla"><div class="cab"><div><h2>Pedidos</h2><span class="muted" id="cuenta">Cargando…</span></div>
+  <div class="row wrapRow filtros">
+    <input id="q" class="busca" placeholder="Buscar por venta, SKU, MLA, comprador…" aria-label="Buscar">
+    ${admin ? '<select id="rev" aria-label="Revendedor"><option value="">Todos los revendedores</option></select>' : ''}
+    <div class="seg gris full" role="group" aria-label="Estado">${[['todas', 'Todas'], ['despachar', 'Por despachar'], ['camino', 'En camino'], ['entregadas', 'Entregadas'], ['canceladas', 'Canceladas']].map(([k, t]) => `<button type="button" data-f="${k}" aria-pressed="${k === 'todas'}">${t}</button>`).join('')}</div>
+  </div></div>
+  <div class="scroll"><table class="apilar" style="min-width:900px"><thead><tr><th scope="col" style="width:36px"><input type="checkbox" class="sel" id="todas" aria-label="Elegir todas las que tienen la etiqueta lista" title="Elegir todas las que tienen la etiqueta lista"></th><th scope="col">Venta</th><th scope="col">Productos</th><th scope="col">Estado del pedido</th><th scope="col">Etiqueta</th></tr></thead><tbody id="tb"></tbody></table></div>
+</section>
+<div class="barra" id="barra" hidden><span class="grow" id="selTxt"></span><button class="btn" id="limpiar">Vaciar</button><button class="btn primary" id="imprimir">Imprimir etiquetas</button></div>
+<p class="muted small" id="aviso" style="margin-top:12px"></p>`;
+
+let ventas = [], filtro = 'todas';
+const sel = new Set();
+
+// Estado del pedido en palabras + en qué grupo cae para el filtro.
+function estadoDe(v) {
+  if (v.estado === 'cancelada' || v.orden_ml?.status === 'cancelled') {
+    const reclamo = v.devolucion?.reclamos?.length;
+    return { grupo: 'canceladas', txt: v.despachada ? 'Cancelada después de despachar' : 'Cancelada', chip: 'bad', extra: reclamo ? 'con devolución' : '' };
+  }
+  const e = v.envio;
+  if (!e) return { grupo: v.en_vivo ? 'despachar' : 'todas', txt: v.en_vivo ? 'Sin envío de Mercado Envíos' : 'Sin datos de Mercado Libre ahora', chip: '' };
+  const clave = e.status === 'ready_to_ship' ? (e.substatus && ENVIO[e.substatus] ? e.substatus : 'ready_to_print') : e.status;
+  const grupo = e.status === 'delivered' ? 'entregadas'
+    : (e.status === 'shipped' || ['picked_up', 'dropped_off', 'in_hub'].includes(e.substatus)) ? 'camino'
+    : e.status === 'cancelled' ? 'canceladas' : 'despachar';
+  const chip = grupo === 'entregadas' ? 'ok' : grupo === 'camino' ? 'info' : grupo === 'canceladas' ? 'bad' : 'warn';
+  const reclamo = v.devolucion?.reclamos?.length ? 'con reclamo/devolución' : '';
+  return { grupo, txt: ENVIO[clave] || e.status, chip, extra: reclamo };
+}
+
+async function cargar() {
+  $('#cuenta').textContent = 'Cargando…';
+  try {
+    const r = await apiPublicar('ventas', admin && $('#rev')?.value ? { revendedor_id: Number($('#rev').value) } : {});
+    ventas = r.ventas || [];
+    if (admin && r.revendedores && $('#rev').options.length === 1) {
+      $('#rev').insertAdjacentHTML('beforeend', r.revendedores.map((x) => `<option value="${x.id}">${esc(x.nickname || x.id)}</option>`).join(''));
+    }
+  } catch (e) { $('#tb').innerHTML = `<tr><td colspan="5" class="err">No pude cargar las ventas: ${esc(e.message)}</td></tr>`; $('#cuenta').textContent = ''; return; }
+  for (const v of ventas) {
+    v.e = estadoDe(v);
+    v.hay = [v.ml_order_id, v.orden_ml?.pack_id, v.orden_ml?.comprador, v.revendedor, ...v.lineas.flatMap((l) => [l.sku, l.ml_item_id, l.titulo])].join(' ').toLowerCase();
+  }
+  const c = (g) => ventas.filter((v) => v.e.grupo === g).length;
+  const unidades = ventas.filter((v) => v.e.grupo !== 'canceladas').reduce((s, v) => s + v.lineas.reduce((a, l) => a + l.cantidad, 0), 0);
+  $('#kpis').innerHTML = [
+    ['Ventas', num.format(ventas.length), `${num.format(unidades)} unidades vendidas`],
+    ['Por despachar', num.format(c('despachar')), `${num.format(ventas.filter((v) => v.etiqueta).length)} con etiqueta lista`],
+    ['En camino', num.format(c('camino')), ''],
+    ['Entregadas', num.format(c('entregadas')), ''],
+    ['Canceladas', num.format(c('canceladas')), ''],
+  ].map(([l, v, s], i) => `<div class="cc-card ${i === 1 && Number(v) ? 'alerta' : ''}"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${s}</div></div>`).join('');
+  for (const k of [...sel]) if (!ventas.some((v) => String(v.ml_order_id) === k && v.etiqueta)) sel.delete(k);
+  pintar();
+}
+
+const linkML = (id) => `https://articulo.mercadolibre.com.ar/${String(id).replace(/^([A-Z]{3})(\d+)$/, '$1-$2')}`;
+const fecha = (iso) => new Date(iso).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+function pintar() {
+  const tk = $('#q').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const v = ventas.filter((x) => (filtro === 'todas' || x.e.grupo === filtro) && tk.every((t) => x.hay.includes(t)));
+  $('#cuenta').textContent = `${num.format(v.length)} ${v.length === 1 ? 'venta' : 'ventas'}`;
+  $('#tb').innerHTML = v.map((x) => `<tr>
+    <td class="ck">${x.etiqueta ? `<input type="checkbox" class="sel" data-o="${x.ml_order_id}" ${sel.has(String(x.ml_order_id)) ? 'checked' : ''} aria-label="Elegir la venta ${x.ml_order_id}">` : ''}</td>
+    <th scope="row" style="font-weight:500"><b>${esc(String(x.orden_ml?.pack_id || x.ml_order_id))}</b>
+      <div class="muted small">${fecha(x.fecha)}${x.orden_ml?.comprador ? ' · ' + esc(x.orden_ml.comprador) : ''}${admin && x.revendedor ? ' · <b>' + esc(x.revendedor) + '</b>' : ''}</div></th>
+    <td data-label="Productos">${x.lineas.map((l) => `<div class="linea"><b>${esc(l.titulo || l.sku)}</b><br>
+      <span class="muted">${esc(l.sku)}${l.ml_item_id ? ` · <a href="${linkML(l.ml_item_id)}" target="_blank" rel="noopener">${esc(l.ml_item_id)} ↗</a>` : ''} · ${l.cantidad} u.${l.precio_unitario != null ? ' × ' + peso0(l.precio_unitario) : ''}</span></div>`).join('')}</td>
+    <td data-label="Estado"><span class="chip ${x.e.chip}">${esc(x.e.txt)}</span>${x.e.extra ? `<div class="small warn-t">${esc(x.e.extra)}</div>` : ''}
+      ${x.envio?.logistic_type ? `<div class="muted small">${esc(LOGISTICA[x.envio.logistic_type] || x.envio.logistic_type)}${x.envio.tracking ? ' · seguimiento ' + esc(x.envio.tracking) : ''}</div>` : ''}</td>
+    <td data-label="Etiqueta">${x.etiqueta ? `<button class="btn sm primary" data-imp="${x.ml_order_id}">Imprimir</button>` : '<span class="muted small">—</span>'}</td></tr>`).join('')
+    || `<tr><td colspan="5" class="muted">${ventas.length ? 'No hay ventas con ese filtro.' : 'Todavía no hay ventas registradas en los últimos 90 días.'}</td></tr>`;
+  const imprimibles = v.filter((x) => x.etiqueta).map((x) => String(x.ml_order_id));
+  $('#todas').checked = imprimibles.length > 0 && imprimibles.every((k) => sel.has(k));
+  $('#todas').disabled = !imprimibles.length;
+  $('#barra').hidden = sel.size === 0;
+  $('#selTxt').textContent = `${sel.size} ${sel.size === 1 ? 'venta elegida' : 'ventas elegidas'}`;
+}
+
+// La etiqueta llega en PDF: se abre en otra pestaña para imprimir (la pestaña se abre antes de pedirla, así el
+// navegador no la bloquea).
+async function imprimir(ordenes) {
+  const w = window.open('', '_blank');
+  $('#aviso').className = 'muted small'; $('#aviso').textContent = 'Pidiendo la etiqueta a Mercado Libre…';
+  try {
+    const blob = await apiPublicarArchivo('etiquetas', { ordenes: ordenes.map(Number) });
+    const url = URL.createObjectURL(blob);
+    if (w) w.location.href = url; else location.href = url;
+    $('#aviso').textContent = `Listo: ${ordenes.length === 1 ? 'etiqueta' : ordenes.length + ' etiquetas'} en otra pestaña.`;
+    setTimeout(cargar, 3000); // ML la marca como impresa
+  } catch (e) {
+    if (w) w.close();
+    $('#aviso').className = 'err small'; $('#aviso').textContent = e.message;
+  }
+}
+
+$('#tb').onclick = (e) => { const b = e.target.closest('[data-imp]'); if (b) imprimir([b.dataset.imp]); };
+$('#tb').onchange = (e) => { const c = e.target.closest('[data-o]'); if (!c) return; c.checked ? sel.add(c.dataset.o) : sel.delete(c.dataset.o); pintar(); };
+$('#limpiar').onclick = () => { sel.clear(); pintar(); };
+// Casilla de arriba: todas las ventas visibles que tienen la etiqueta lista.
+$('#todas').onchange = (e) => {
+  for (const c of $$('#tb [data-o]')) e.target.checked ? sel.add(c.dataset.o) : sel.delete(c.dataset.o);
+  pintar();
+};
+$('#imprimir').onclick = () => imprimir([...sel]);
+$$('[data-f]').forEach((b) => (b.onclick = () => { filtro = b.dataset.f; $$('[data-f]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
+let t; $('#q').oninput = () => { clearTimeout(t); t = setTimeout(pintar, 200); };
+if (admin) $('#rev').onchange = () => { sel.clear(); cargar(); };
+await cargar();
+</script>
+</body>
+</html>

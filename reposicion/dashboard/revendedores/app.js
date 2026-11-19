@@ -23,6 +23,22 @@ export async function apiPublicar(ruta, body) {
   return j;
 }
 
+// Igual que apiPublicar, para respuestas que son un archivo (la etiqueta de envío en PDF).
+export async function apiPublicarArchivo(ruta, body) {
+  const { data } = await sb.auth.getSession();
+  const r = await fetch(`${API_PUBLICAR}/${ruta}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${data.session?.access_token ?? ''}` },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    let j = null;
+    try { j = await r.json(); } catch { /* sin cuerpo */ }
+    throw new Error(j?.error || `No se pudo (HTTP ${r.status}).`);
+  }
+  return await r.blob();
+}
+
 export const num = new Intl.NumberFormat('es-AR');
 export const quitarAcentos = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
@@ -74,7 +90,7 @@ export function navRev(sesion, activa) {
   el.setAttribute('aria-label', 'Portal de revendedores');
   const admin = sesion.tipo === 'admin';
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Revendedores</div></div>' +
-    '<div class="links">' + it('catalogo.html', 'Catálogo', 'catalogo') + it('publicaciones.html', 'Mis publicaciones', 'publicaciones') + it('cuenta.html', 'Mi cuenta', 'cuenta') +
+    '<div class="links">' + it('catalogo.html', 'Catálogo', 'catalogo') + it('publicaciones.html', 'Mis publicaciones', 'publicaciones') + it('ventas.html', 'Ventas', 'ventas') + it('cuenta.html', 'Mi cuenta', 'cuenta') +
     (admin ? '<div class="grupo">Administración</div>' + it('admin.html', 'Revendedores y pagos', 'admin') + it('estado.html', 'Estado del sistema', 'estado') + '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel') : '') +
     '<span class="sp"></span></div>' +
     `<div class="usuario"><span>${esc(sesion.nombre)}</span><a href="#" id="salir">Salir</a></div>`;

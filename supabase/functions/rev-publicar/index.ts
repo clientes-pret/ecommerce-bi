@@ -17,6 +17,7 @@ import {
   publicacionesPret, publicarProducto, supabase, tokenPret,
 } from "./nucleo.ts";
 import { marcaDe } from "./logic.ts";
+import { etiquetas, listarVentas, type Quien } from "./ventas.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -37,6 +38,23 @@ async function revendedorDe(req: Request): Promise<{ rev: Revendedor; jwt: strin
   if (!rev) return fallo("No encontré tu cuenta.", 403);
   if ((rev as Revendedor).estado !== "activo") return fallo("Tu cuenta de Mercado Libre no está conectada: pedile a Pret a Home el link para reconectarla.", 409);
   return { rev: rev as Revendedor, jwt };
+}
+
+/** Para Ventas: un revendedor (aunque su cuenta esté desconectada, para que vea lo registrado) o el admin/dueño del panel. */
+async function quienLlama(req: Request): Promise<Quien | Response> {
+  const jwt = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!jwt) return fallo("Tenés que entrar al portal.", 401);
+  const { data: u, error } = await supabase.auth.getUser(jwt);
+  if (error || !u?.user) return fallo("Tu sesión venció: volvé a entrar.", 401);
+  const { data: vin } = await supabase.from("rev_usuarios").select("revendedor_id").eq("user_id", u.user.id).maybeSingle();
+  if (vin) {
+    const { data: rev } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).eq("id", vin.revendedor_id).maybeSingle();
+    if (!rev) return fallo("No encontré tu cuenta.", 403);
+    return { rev: rev as Revendedor, admin: false };
+  }
+  const { data: perfil } = await supabase.from("cc_perfiles").select("rol").eq("id", u.user.id).maybeSingle();
+  if (perfil && ["admin", "dueno"].includes(String(perfil.rol))) return { rev: null, admin: true };
+  return fallo("Tu usuario no tiene acceso.", 403);
 }
 
 // ───────────────────────── /preparar ─────────────────────────
@@ -184,9 +202,19 @@ Deno.serve(async (req) => {
       if (error || ok !== true) return new Response("No autorizado", { status: 401 });
       return json(await procesarCola());
     }
+    let body: Json = {};
+    // Ventas y etiquetas: las ve el revendedor (las suyas) y el admin/dueño del panel (las de todos).
+    if (ruta.endsWith("/ventas") || ruta.endsWith("/etiquetas")) {
+      const q = await quienLlama(req);
+      if (q instanceof Response) return q;
+      try { body = await req.json(); } catch { /* vacío */ }
+      if (ruta.endsWith("/ventas")) return json(await listarVentas(q, body));
+      const r = await etiquetas(q, body);
+      if (r instanceof Response) return new Response(r.body, { status: 200, headers: { ...CORS, "Content-Type": "application/pdf" } });
+      return fallo(r.error, r.status ?? 400);
+    }
     const quien = await revendedorDe(req);
     if (quien instanceof Response) return quien;
-    let body: Json = {};
     try { body = await req.json(); } catch { /* vacío */ }
     if (ruta.endsWith("/preparar")) return await preparar(quien.rev, quien.jwt, body);
     if (ruta.endsWith("/publicar")) return await publicarUno(quien.rev, body);
