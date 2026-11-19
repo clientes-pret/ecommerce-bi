@@ -13,3 +13,30 @@ verify_jwt = false
 # es el token secreto de la URL (?t=...) que valida index.ts contra VENTAS_WEBHOOK_TOKEN.
 [functions.ventas-webhook]
 verify_jwt = false
+
+# Prueba de dropshipping con revendedores de ML: la abre el revendedor desde su navegador y la llama ML
+# (avisos de venta), sin JWT de Supabase. El `state` firmado protege la conexión; ver index.ts.
+[functions.rev-prueba]
+verify_jwt = false
+
+# Sincronización de stock de revendedores: la dispara la base (pg_cron + pg_net) con un token de Vault que la propia
+# función valida contra la base, sin JWT de Supabase.
+[functions.rev-sync]
+verify_jwt = false
+
+# Vinculación de publicaciones de revendedores con SKU: mismo esquema de disparo y token que rev-sync.
+[functions.rev-vincular]
+verify_jwt = false
+
+# Registro de ventas de revendedores (modo sombra: no descuenta nada): mismo esquema de disparo y token.
+[functions.rev-ordenes]
+verify_jwt = false
+
+# Conciliación de ventas de revendedores (red de seguridad de rev-ordenes): mismo esquema de disparo y token.
+[functions.rev-conciliar]
+verify_jwt = false
+
+# "Publicar en mi cuenta" del portal de revendedores: la llama el navegador con la sesión del revendedor; la función
+# valida esa sesión ella misma (supabase.auth.getUser) y busca a qué revendedor pertenece.
+[functions.rev-publicar]
+verify_jwt = false

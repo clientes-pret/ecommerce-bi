@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Devoluciones · Operaciones Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <style>
+    .acc { display: flex; gap: 6px; flex-wrap: wrap; }
+    .que { font-size: 13px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Devoluciones de revendedores (19/11/2026). Ventas de revendedores que se cancelaron o devolvieron DESPUÉS de que el
+// paquete salió del depósito (rev_ordenes.reposicion = 'al_recibir'), y ventas con un reclamo/devolución en curso en ML
+// (rev_ordenes.devolucion). Regla acordada con el usuario: ese stock vuelve recién cuando el depósito recibe el producto
+// y lo marca acá ("Llegó bien"). Si llega dañado o no llega, no se repone. Las canceladas ANTES de despachar no aparecen:
+// su stock vuelve solo. Los datos los cargan rev-ordenes / rev-conciliar (funciones rev_devoluciones_listar /
+// rev_devolucion_recibir / rev_devolucion_deshacer, solo admin/dueño). En modo prueba no se mueve stock en Ecomm-App.
+import { sb, $, $$, esc, guard, navOperaciones } from '../proveedores/app.js';
+const perfil = await guard(['admin', 'dueno']);
+navOperaciones(perfil, 'devoluciones');
+
+const AR = { timeZone: 'America/Argentina/Buenos_Aires' };
+const fh = (iso) => new Date(iso).toLocaleString('es-AR', { ...AR, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const TIPO = { returns: 'Devolución', mediations: 'Reclamo', cancel_purchase: 'Cancelación de compra' };
+const ESTADO_DEV = { label_generated: 'el comprador tiene la etiqueta', shipped: 'en camino al depósito', delivered: 'entregada en el depósito según ML', closed: 'cerrada', cancelled: 'cancelada', expired: 'vencida' };
+const ENVIO = { pending: 'pendiente', ready_to_ship: 'por despachar', shipped: 'en camino', delivered: 'entregado según ML', not_delivered: 'no entregado', cancelled: 'cancelado' };
+const RESOLUCION = { item_returned: 'producto devuelto', payment_refunded: 'dinero devuelto', coverage_decision: 'resolvió ML', no_bpp: 'sin cobertura' };
+const RECIBIDO = { bien: ['Llegó bien', 'ok'], danado: ['Llegó dañado', 'warn'], no_llego: ['No llegó', 'bad'] };
+
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Devoluciones de revendedores</h1>
+  <p>Ventas de revendedores canceladas o devueltas después de que el paquete salió del depósito. El stock vuelve recién cuando el producto llega y lo marcás acá.</p></div></div>
+<div class="card" style="background:var(--warn-bg)"><b>Modo prueba:</b> por ahora marcar una devolución solo la registra; todavía no se suma stock en Ecomm-App. Quién paga el costo de una devolución está pendiente de definir.</div>
+<div class="centro-comando compacto" id="kpis"></div>
+<section class="card tabla"><div class="cab"><div><h2>Ventas</h2><span class="muted" id="cuenta"></span></div>
+  <div class="row wrapRow filtros"><div class="seg gris" role="group" aria-label="Qué ver">${[['pend', 'Por recibir'], ['rec', 'Recibidas'], ['todas', 'Todas']].map(([k, t]) => `<button type="button" data-f="${k}" aria-pressed="${k === 'pend'}">${t}</button>`).join('')}</div></div></div>
+  <div class="scroll"><table class="apilar" style="min-width:900px"><thead><tr><th scope="col">Venta</th><th scope="col">Producto</th><th scope="col" class="r">Cant.</th><th scope="col">Qué pasó</th><th scope="col">En el depósito</th></tr></thead><tbody id="tb"></tbody></table></div>
+</section>`;
+
+let filas = [], filtro = 'pend';
+
+async function cargar() {
+  const { data, error } = await sb.rpc('rev_devoluciones_listar');
+  if (error) { $('#tb').innerHTML = `<tr><td colspan="5" class="err">No se pudo cargar: ${esc(error.message)}</td></tr>`; return; }
+  filas = data || [];
+  const pend = filas.filter((f) => !f.recibido_at);
+  const enCamino = pend.filter((f) => ultimo(f)?.envio_vuelta === 'shipped' || ultimo(f)?.devolucion_estado === 'shipped').length;
+  const mes = new Date().toLocaleDateString('en-CA', AR).slice(0, 7);
+  const recMes = filas.filter((f) => f.recibido_at && new Date(f.recibido_at).toLocaleDateString('en-CA', AR).slice(0, 7) === mes);
+  $('#kpis').innerHTML = [
+    ['Por recibir', pend.length, `${pend.reduce((s, f) => s + f.cantidad, 0)} unidades`],
+    ['En camino al depósito', enCamino, 'según Mercado Libre'],
+    ['Recibidas este mes', recMes.length, `${recMes.filter((f) => f.recibido_estado === 'bien').length} llegaron bien`],
+  ].map(([l, v, s], i) => `<div class="cc-card ${i === 0 && v ? 'alerta' : ''}"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${s}</div></div>`).join('');
+  pintar();
+}
+
+const ultimo = (f) => { const r = f.devolucion?.reclamos || []; return r[r.length - 1] || null; };
+
+function quePaso(f) {
+  const out = [];
+  if (f.estado === 'cancelada') out.push(f.despachada === true ? '<b>Cancelada después de despachar</b>' : f.despachada === null ? '<b>Cancelada</b> <span class="muted">(no se sabe si había salido)</span>' : '<b>Cancelada</b>');
+  for (const r of f.devolucion?.reclamos || []) {
+    const partes = [TIPO[r.tipo] || r.tipo || 'Reclamo', r.estado === 'opened' ? 'abierto' : r.estado === 'closed' ? 'cerrado' : r.estado];
+    if (r.resolucion) partes.push(RESOLUCION[r.resolucion] || r.resolucion);
+    if (r.devolucion_estado) partes.push(ESTADO_DEV[r.devolucion_estado] || r.devolucion_estado);
+    else if (r.envio_vuelta) partes.push('envío de vuelta: ' + (ENVIO[r.envio_vuelta] || r.envio_vuelta));
+    out.push(partes.filter(Boolean).map(esc).join(' · '));
+  }
+  if (f.estado !== 'cancelada' && f.devolucion) out.push('<span class="muted">La venta sigue paga en Mercado Libre</span>');
+  return `<div class="que">${out.join('<br>')}</div>`;
+}
+
+function pintar() {
+  const v = filas.filter((f) => filtro === 'todas' || (filtro === 'pend' ? !f.recibido_at : !!f.recibido_at));
+  $('#cuenta').textContent = `${v.length} ${v.length === 1 ? 'venta' : 'ventas'}`;
+  $('#tb').innerHTML = v.map((f) => `<tr data-id="${f.id}">
+    <th scope="row" style="font-weight:500"><b>${esc(String(f.ml_order_id))}</b><div class="muted small">${esc(f.revendedor || '')} · ${fh(f.actualizado_at)}</div></th>
+    <td data-label="Producto">${esc(f.titulo || f.sku)}<div class="muted small">${esc(f.sku)}</div></td>
+    <td class="r num" data-label="Cant.">${f.cantidad}</td>
+    <td data-label="Qué pasó">${quePaso(f)}</td>
+    <td data-label="En el depósito">${f.recibido_at
+      ? `<span class="chip ${RECIBIDO[f.recibido_estado][1]}">${RECIBIDO[f.recibido_estado][0]}</span><div class="muted small">${fh(f.recibido_at)}${f.recibido_por ? ' · ' + esc(f.recibido_por) : ''}</div><button class="btn sm" data-deshacer style="margin-top:6px">Deshacer</button>`
+      : `<div class="acc"><button class="btn sm primary" data-r="bien" title="Vuelve al stock">Llegó bien</button><button class="btn sm" data-r="danado" title="No vuelve al stock">Llegó dañado</button><button class="btn sm danger" data-r="no_llego">No llegó</button></div><span class="small err" data-e></span>`}</td></tr>`).join('')
+    || `<tr><td colspan="5" class="muted">${filtro === 'pend' ? 'No hay devoluciones por recibir.' : 'Nada para mostrar.'}</td></tr>`;
+}
+
+$('#tb').onclick = async (e) => {
+  const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+  const id = Number(tr.dataset.id);
+  const b = e.target.closest('[data-r]');
+  if (b) {
+    if (b.dataset.r !== 'bien' && !confirm(b.dataset.r === 'danado' ? '¿Llegó dañado? No vuelve al stock.' : '¿No llegó? No vuelve al stock.')) return;
+    const { error } = await sb.rpc('rev_devolucion_recibir', { p_id: id, p_estado: b.dataset.r, p_por: perfil.nombre || '' });
+    if (error) { $('[data-e]', tr).textContent = error.message; return; }
+    return cargar();
+  }
+  if (e.target.closest('[data-deshacer]')) {
+    if (!confirm('¿Deshacer la marca de recepción?')) return;
+    const { error } = await sb.rpc('rev_devolucion_deshacer', { p_id: id });
+    if (error) { alert(error.message); return; }
+    return cargar();
+  }
+};
+$$('[data-f]').forEach((b) => (b.onclick = () => { filtro = b.dataset.f; $$('[data-f]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
+await cargar();
+</script>
+</body>
+</html>

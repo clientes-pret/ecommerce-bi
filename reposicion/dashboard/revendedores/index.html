@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Revendedores · Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+</head>
+<body>
+<div class="narrow" style="padding-top:64px">
+  <h1>Revendedores</h1>
+  <p class="muted">Pret a Home · Casa Lavan</p>
+  <form class="card" id="f">
+    <label for="email">Email o usuario</label><input type="text" id="email" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="pass">Contraseña</label><input type="password" id="pass" autocomplete="current-password" required>
+    <p class="err" id="err"></p>
+    <p class="ok-t" id="info"></p>
+    <button class="btn primary big" id="ok" style="margin-top:16px">Entrar</button>
+    <p class="small" style="text-align:center;margin:14px 0 0"><a href="#" id="olvide">¿Olvidaste tu contraseña?</a></p>
+  </form>
+  <form class="card" id="fn" hidden>
+    <h2 style="margin-top:0">Elegí tu contraseña nueva</h2>
+    <p class="muted small" id="quien"></p>
+    <label for="p1">Contraseña nueva</label><input type="password" id="p1" autocomplete="new-password" minlength="8" required>
+    <label for="p2">Repetila</label><input type="password" id="p2" autocomplete="new-password" minlength="8" required>
+    <p class="muted small">Mínimo 8 caracteres.</p>
+    <p class="err" id="errn"></p>
+    <button class="btn primary big" id="okn" style="margin-top:8px">Guardar y entrar</button>
+  </form>
+  <p class="muted small" style="text-align:center">¿Todavía no tenés usuario? Pedile la invitación a Pret a Home.</p>
+</div>
+<script type="module">
+import { sb, $, LINK_RECUPERO, qs, emailDeUsuario, esUsuarioSinEmail } from './app.js';
+
+if (qs('sinacceso')) $('#err').textContent = 'Tu usuario todavía no está habilitado como revendedor. Avisale a Pret a Home.';
+
+// Revendedor → catálogo. Alguien del equipo (admin/dueño) → administración. Cualquier otro usuario → sin acceso.
+async function entrar(uid) {
+  const { data: cu } = await sb.rpc('rev_mi_cuenta');
+  if (cu?.length) { location.replace('catalogo.html'); return; }
+  const { data: p } = await sb.from('cc_perfiles').select('rol').eq('id', uid).maybeSingle();
+  if (p && ['admin', 'dueno'].includes(p.rol)) { location.replace('admin.html'); return; }
+  await sb.auth.signOut();
+  $('#err').textContent = 'Tu usuario todavía no está habilitado como revendedor. Avisale a Pret a Home.';
+  $('#ok').disabled = false;
+}
+
+function pedirNueva(session) {
+  $('#f').hidden = true; $('#fn').hidden = false;
+  $('#quien').textContent = 'Usuario: ' + session.user.email;
+  $('#p1').focus();
+  $('#fn').onsubmit = async (e) => {
+    e.preventDefault();
+    const p1 = $('#p1').value, p2 = $('#p2').value;
+    if (p1.length < 8) { $('#errn').textContent = 'Tiene que tener al menos 8 caracteres.'; return; }
+    if (p1 !== p2) { $('#errn').textContent = 'Las dos contraseñas no coinciden.'; return; }
+    $('#errn').textContent = ''; $('#okn').disabled = true;
+    const { error } = await sb.auth.updateUser({ password: p1 });
+    if (error) { $('#errn').textContent = 'No se pudo guardar: ' + error.message; $('#okn').disabled = false; return; }
+    entrar(session.user.id);
+  };
+}
+
+const { data } = await sb.auth.getSession();
+if (LINK_RECUPERO.get('error')) {
+  $('#err').textContent = LINK_RECUPERO.get('error_code') === 'otp_expired'
+    ? 'El link para cambiar la contraseña venció o ya se usó. Pedí uno nuevo con "¿Olvidaste tu contraseña?".'
+    : 'El link no funcionó. Pedí uno nuevo con "¿Olvidaste tu contraseña?".';
+  history.replaceState(null, '', location.pathname);
+} else if (data.session && LINK_RECUPERO.get('type') === 'recovery') pedirNueva(data.session);
+else if (data.session && !qs('sinacceso')) entrar(data.session.user.id);
+
+$('#olvide').onclick = async (e) => {
+  e.preventDefault();
+  const email = $('#email').value.trim();
+  $('#err').textContent = ''; $('#info').textContent = '';
+  if (!email) { $('#err').textContent = 'Escribí tu email arriba y volvé a tocar "¿Olvidaste tu contraseña?".'; $('#email').focus(); return; }
+  // Un usuario sin email (ej. "casalavan") no tiene casilla donde recibir el link: la contraseña la cambia Pret a Home.
+  if (esUsuarioSinEmail(email)) { $('#err').textContent = 'Tu usuario no tiene email: pedile a Pret a Home que te cambie la contraseña.'; return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  if (error) { $('#err').textContent = 'No se pudo mandar el mail: ' + error.message; return; }
+  $('#info').textContent = `Listo: si ${email} tiene usuario, le llega un mail con un link para elegir contraseña nueva.`;
+};
+
+$('#f').onsubmit = async (e) => {
+  e.preventDefault();
+  $('#err').textContent = ''; $('#ok').disabled = true;
+  const { data, error } = await sb.auth.signInWithPassword({ email: emailDeUsuario($('#email').value), password: $('#pass').value });
+  if (error || !data.user) { $('#err').textContent = 'Usuario o contraseña incorrectos.'; $('#ok').disabled = false; return; }
+  entrar(data.user.id);
+};
+</script>
+</body>
+</html>

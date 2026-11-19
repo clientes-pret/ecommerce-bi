@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administración · Revendedores</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, $$, esc, peso0, fecha, hoy, fechaHora, num, guardRev, navRev, parseMonto } from './app.js';
+
+const sesion = await guardRev(['admin']);
+navRev(sesion, 'admin');
+
+$('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando…</p>';
+async function cargar() {
+  const [rv, cu, mg] = await Promise.all([sb.rpc('rev_admin_revendedores'), sb.rpc('rev_cuenta_resumen'), sb.rpc('rev_admin_margen')]);
+  const error = rv.error || cu.error || mg.error;
+  if (error) { $('#app').innerHTML = `<p class="err">No pude cargar: ${esc(error.message)}</p>`; return; }
+  const cuenta = new Map(cu.data.map((c) => [c.revendedor_id, c]));
+  const revs = rv.data, margen = mg.data;
+  const deuda = cu.data.reduce((s, c) => s + Number(c.saldo), 0);
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Revendedores y pagos</h1><p>Quién vende, cuánto te debe cada uno y el margen mayorista</p></div></div>
+  <div class="centro-comando compacto">
+    <div class="cc-card"><div class="cc-label">Revendedores</div><div class="cc-valor num">${revs.length}</div><div class="cc-sub">${revs.filter((r) => r.usuarios).length} con usuario para entrar</div></div>
+    <div class="cc-card destacada"><div class="cc-label">Te deben</div><div class="cc-valor num">${peso0(deuda)}</div><div class="cc-sub">vendido a mayorista − pagado</div></div>
+  </div>
+  <section class="card"><h2 style="margin-top:0">Margen mayorista</h2>
+    <p class="muted small" style="margin-top:0">Precio mayorista = costo del producto + este %. Lo que ve el revendedor ya viene calculado: nunca ve el costo.</p>
+    <form id="fm" class="row wrapRow"><div style="width:140px"><label for="mg" style="margin-top:0">Margen sobre costo (%)</label><input id="mg" inputmode="decimal" value="${margen != null ? String(margen).replace('.', ',') : ''}" placeholder="ej. 30" required></div>
+    <button class="btn primary" style="align-self:flex-end">Guardar margen</button><span id="mgMsg" class="small" style="align-self:flex-end;padding-bottom:12px"></span></form>
+    ${margen == null ? '<p class="warn-t small" style="margin-bottom:0"><b>Todavía no está definido:</b> los revendedores ven "a definir" en el precio mayorista y las ventas no suman al saldo.</p>' : ''}
+  </section>
+  <section class="card tabla"><div class="cab"><div><h2>Revendedores</h2><span class="muted">Cuenta de Mercado Libre conectada y usuario del portal</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:860px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Mercado Libre</th><th scope="col">Usuarios del portal</th><th scope="col" class="r">Te debe</th><th scope="col"></th></tr></thead><tbody>${
+      revs.map((r) => { const c = cuenta.get(r.id); return `<tr><th scope="row" class="tit">${esc(r.nickname || 'Sin nombre')}<div class="muted small">ID ${r.id} · ${esc(r.estado)}</div></th>
+      <td data-label="Mercado Libre">${r.conectada ? '<span class="chip ok">conectada</span>' : '<span class="chip bad">sin conexión</span>'} <span class="muted small">${r.ml_user_id}</span></td>
+      <td data-label="Usuarios">${r.usuarios ? esc(r.usuarios) : '<span class="muted">ninguno</span>'}</td>
+      <td class="r num" data-label="Te debe" style="font-weight:600">${peso0(c?.saldo || 0)}</td>
+      <td class="full"><a class="btn sm" href="cuenta.html?r=${r.id}">Ver cuenta</a></td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Todavía no hay revendedores conectados.</td></tr>'}</tbody></table></div></section>
+  <div class="grid dos">
+    <section class="card"><h2 style="margin-top:0">Dar acceso al portal</h2>
+      <p class="muted small" style="margin-top:0">Primero invitá a la persona desde Supabase → Authentication → Users → Invite user. Después vinculá su email al revendedor.</p>
+      <form id="fu"><label for="uEmail">Email del usuario</label><input id="uEmail" type="email" required>
+      <label for="uRev">Revendedor</label><select id="uRev" required>${revs.map((r) => `<option value="${r.id}">${esc(r.nickname || 'ID ' + r.id)}</option>`).join('')}</select>
+      <div class="pie"><span id="uMsg" class="small"></span><button class="btn primary">Vincular</button></div></form></section>
+    <section class="card"><h2 style="margin-top:0">Registrar un pago recibido</h2>
+      <form id="fp"><label for="pRev">Revendedor</label><select id="pRev" required>${revs.map((r) => `<option value="${r.id}">${esc(r.nickname || 'ID ' + r.id)}</option>`).join('')}</select>
+      <div class="campos"><div><label for="pFecha">Fecha</label><input id="pFecha" type="date" value="${hoy()}" required></div><div><label for="pMonto">Monto ($)</label><input id="pMonto" inputmode="decimal" placeholder="0" required></div></div>
+      <label for="pNota">Nota (opcional)</label><input id="pNota" placeholder="Transferencia, semana del…">
+      <div class="pie"><span id="pMsg" class="small"></span><button class="btn primary">Registrar pago</button></div></form></section>
+  </div>`;
+
+  $('#fm').onsubmit = async (e) => {
+    e.preventDefault();
+    const v = parseMonto($('#mg').value);
+    const { error } = await sb.rpc('rev_set_margen', { p: v });
+    $('#mgMsg').className = 'small ' + (error ? 'err' : 'ok-t');
+    $('#mgMsg').textContent = error ? error.message : 'Guardado.';
+    if (!error) setTimeout(cargar, 600);
+  };
+  $('#fu').onsubmit = async (e) => {
+    e.preventDefault();
+    const { error } = await sb.rpc('rev_vincular_usuario', { p_email: $('#uEmail').value, p_revendedor: Number($('#uRev').value) });
+    $('#uMsg').className = 'small ' + (error ? 'err' : 'ok-t');
+    $('#uMsg').textContent = error ? error.message : 'Vinculado.';
+    if (!error) setTimeout(cargar, 600);
+  };
+  $('#fp').onsubmit = async (e) => {
+    e.preventDefault();
+    const monto = parseMonto($('#pMonto').value);
+    if (!(monto > 0)) { $('#pMsg').className = 'small err'; $('#pMsg').textContent = 'Poné un monto mayor a cero.'; return; }
+    const { error } = await sb.rpc('rev_registrar_pago', { p_revendedor: Number($('#pRev').value), p_fecha: $('#pFecha').value, p_monto: monto, p_nota: $('#pNota').value });
+    $('#pMsg').className = 'small ' + (error ? 'err' : 'ok-t');
+    $('#pMsg').textContent = error ? error.message : 'Pago registrado.';
+    if (!error) setTimeout(cargar, 600);
+  };
+}
+await cargar();
+</script>
+</body>
+</html>

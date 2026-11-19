@@ -190,6 +190,7 @@ export function navOperaciones(perfil, activa) {
   el.setAttribute('aria-label', 'Operaciones Pret a Home');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Operaciones</div></div>' +
     '<div class="links">' + it('empaquetado.html', 'Empaquetado', 'empaquetado') + it('perdido.html', 'Stock perdido', 'perdido') +
+      it('devoluciones.html', 'Devoluciones', 'devoluciones') +
     '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel') + '<span class="sp"></span></div>' +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');

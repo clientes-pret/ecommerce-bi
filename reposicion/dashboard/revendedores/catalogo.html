@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Catálogo · Revendedores</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <style>
+    .foto { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: var(--line-soft); display: block; }
+    .barra { position: sticky; bottom: 0; z-index: 10; background: var(--ink); color: #fff; border-radius: 12px; padding: 12px 16px; margin-top: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; box-shadow: 0 -4px 14px rgba(0,0,0,.12); }
+    .barra[hidden] { display: none; }
+    .barra .grow { font-weight: 600; }
+    .barra .btn { min-height: 40px; }
+    .barra .btn.primary { background: #fff; color: var(--ink); border-color: #fff; }
+    .barra .btn:not(.primary) { background: transparent; color: #fff; border-color: rgba(255,255,255,.35); }
+    .sel { width: 22px; height: 22px; min-height: 0; }
+    .stock0 { color: var(--bad); font-weight: 600; }
+    .pubcol { display: flex; flex-direction: column; gap: 6px; min-width: 150px; align-items: flex-start; }
+    .pubcol .links { font-size: 12px; line-height: 1.5; }
+    .pubcol .links a { white-space: nowrap; }
+    dialog.panel { width: min(760px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); border: 0; border-radius: 16px; padding: 0; box-shadow: 0 20px 60px rgba(0,0,0,.25); outline: none; }
+    dialog.panel[open] { display: flex; flex-direction: column; overflow: hidden; }
+    dialog.panel::backdrop { background: rgba(20,20,20,.45); }
+    .dp-cab { flex: none; background: var(--card, #fff); padding: 18px 22px 12px; border-bottom: 1px solid var(--line); z-index: 2; display: flex; gap: 12px; align-items: flex-start; }
+    .dp-cab h2 { margin: 0; font-size: 18px; } .dp-cab .grow { flex: 1; }
+    .dp-cuerpo { padding: 6px 22px 18px; overflow: auto; flex: 1 1 auto; min-height: 0; }
+    .dp-pie { flex: none; background: var(--card, #fff); border-top: 1px solid var(--line); padding: 12px 22px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .dp-pie .grow { flex: 1; min-width: 200px; }
+    .paso { margin-top: 16px; } .paso > h3 { font-size: 14px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #666); }
+    .opciones { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+    .op { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; margin: 0; font-weight: 500; }
+    .op:has(input:checked) { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink) inset; }
+    .op:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+    .op input { width: 18px; height: 18px; min-height: 0; margin-top: 2px; flex: none; }
+    .op .muted { font-size: 12px; font-weight: 400; display: block; }
+    .colores { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; padding: 6px; }
+    .colores .op { border: 0; padding: 6px 8px; align-items: center; } .colores .op:has(input:checked) { background: var(--line-soft); box-shadow: none; }
+    .colores img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; flex: none; }
+    .colores .grow { flex: 1; min-width: 0; }
+    .colores .der { text-align: right; font-size: 12px; white-space: nowrap; }
+    .cuentas { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
+    .cuentas div { background: var(--line-soft); border-radius: 8px; padding: 8px 10px; font-size: 13px; } .cuentas b { display: block; font-size: 16px; }
+    .res { display: flex; flex-direction: column; gap: 8px; }
+    .res > div { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    .res .ok { border-left: 4px solid #2e9e5b; } .res .no { border-left: 4px solid #d14343; }
+    .prog { height: 8px; background: var(--line-soft); border-radius: 99px; overflow: hidden; margin: 10px 0 6px; }
+    .prog > span { display: block; height: 100%; background: #2e9e5b; transition: width .4s; }
+    #avance .fila { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    #avance .fila .grow { flex: 1; min-width: 220px; }
+    .det-prod { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    .det-prod .small a { white-space: nowrap; }
+    .regla { display: flex; flex-direction: column; gap: 6px; }
+    .regla .op input[type=number] { width: 80px; min-height: 0; padding: 4px 8px; display: inline-block; margin: 0 4px; }
+    @media (max-width: 760px) {
+      .barra { gap: 8px; } .barra .grow { flex: 1 1 100%; } .barra .btn { flex: 1 1 auto; }
+      table.apilar tr { position: relative; padding-left: 84px; }
+      table.apilar td.ft { position: absolute; left: 16px; top: 14px; }
+      table.apilar td.ck { position: absolute; right: 14px; top: 12px; }
+      table.apilar .tit { padding-right: 36px !important; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, $$, esc, peso0, num, guardRev, navRev, leerRpc, quitarAcentos, leerSeleccion, guardarSeleccion, apiPublicar } from './app.js';
+
+const sesion = await guardRev();
+navRev(sesion, 'catalogo');
+const POR_PAG = 50;
+
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Catálogo</h1><p>Productos que podés vender, con el stock del depósito y tu costo mayorista</p></div></div>
+<div class="centro-comando compacto" id="kpis"></div>
+<section class="card" id="avance" hidden></section>
+<section class="card tabla"><div class="cab"><div><h2>Productos</h2><span class="muted" id="cuenta"></span></div>
+  <div class="row wrapRow filtros">
+    <input id="q" class="busca" placeholder="Buscar por nombre, SKU, color, medida…" aria-label="Buscar">
+    <select id="cat" aria-label="Categoría"><option value="">Todas las categorías</option></select>
+    <select id="tipo" aria-label="Tipo de publicación"><option value="">Tradicional y catálogo</option><option value="tra">Con publicación tradicional</option><option value="cat">Con catálogo para sumarse</option><option value="marca">Se puede con mi marca</option></select>
+    <select id="pub" aria-label="Publicación"><option value="">Publicados y no</option><option value="si">Ya los publiqué</option><option value="no">Todavía no los publiqué</option></select>
+    <select id="ord" aria-label="Ordenar"><option value="stock">Más stock primero</option><option value="nombre">Nombre A→Z</option><option value="mayorista">Costo mayorista de menor a mayor</option><option value="sugerido">Sugerido de mayor a menor</option></select>
+    <label style="margin:0;font-weight:500"><input type="checkbox" id="conStock" checked> Solo con stock</label>
+  </div></div>
+  <div class="scroll"><table class="apilar" style="min-width:1000px"><thead><tr><th scope="col" style="width:36px"><input type="checkbox" class="sel" id="todos" aria-label="Elegir todos los de esta página"></th><th scope="col" style="width:72px"></th><th scope="col">Producto</th><th scope="col" class="r">Stock</th><th scope="col" class="r">Costo mayorista</th><th scope="col" class="r">Sugerido</th><th scope="col" class="r">Mínimo</th><th scope="col">Publicar</th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="row between pager" style="padding:12px 24px;flex-wrap:wrap"><span class="muted small" id="pagInfo"></span><div class="row"><button class="btn sm" id="ant">← Anterior</button><button class="btn sm" id="sig">Siguiente →</button></div></div>
+</section>
+<div class="barra" id="barra" hidden><span class="grow" id="selTxt"></span><button class="btn" id="limpiar">Vaciar</button><button class="btn primary" id="pubSel">Publicar seleccionados</button></div>
+<p class="muted small" id="aviso" style="margin-top:12px"></p>`;
+
+let todos = [];
+try { todos = await leerRpc('rev_catalogo_listar'); }
+catch (e) { $('#app').insertAdjacentHTML('beforeend', `<p class="err">No pude cargar el catálogo: ${esc(e.message)}</p>`); throw e; }
+
+// Publicaciones de Pret a Home en ML por SKU, separadas: tradicional (se copia tal cual o, si es marca Pret, con la marca
+// del revendedor) y catálogo (sumarse a la ficha de ML, siempre con la marca original). Dato opcional: si falla, el
+// catálogo se muestra igual, sin esa columna.
+const pubsPret = new Map();
+try {
+  for (const r of await leerRpc('rev_catalogo_publicaciones_pret')) {
+    if (!pubsPret.has(r.sku)) pubsPret.set(r.sku, {});
+    pubsPret.get(r.sku)[r.tipo] = r;
+  }
+} catch (e) { console.warn('publicaciones de Pret:', e.message); }
+
+const primerNivel = (c) => (c ? String(c).split(' / ')[0].trim() : 'Sin categoría');
+for (const p of todos) {
+  p.cat1 = primerNivel(p.categoria); p.hay = quitarAcentos([p.sku, p.titulo, p.color, p.medida, p.categoria].join(' '));
+  const pp = pubsPret.get(p.sku) || {};
+  p.tra = pp.tradicional || null; p.cat = pp.catalogo || null;
+}
+const cats = [...new Set(todos.map((p) => p.cat1))].sort((a, b) => a.localeCompare(b, 'es'));
+$('#cat').insertAdjacentHTML('beforeend', cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join(''));
+
+const conStock = todos.filter((p) => p.stock_ofrecido > 0);
+$('#kpis').innerHTML = [
+  ['Productos habilitados', num.format(todos.length), `${num.format(conStock.length)} con stock hoy`],
+  ['Unidades ofrecidas', num.format(conStock.reduce((s, p) => s + p.stock_ofrecido, 0)), 'Stock del depósito'],
+  ['Ya publicados por mí', num.format(todos.filter((p) => p.ya_publicado).length), 'vinculados a un SKU'],
+].map(([l, v, s]) => `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${s}</div></div>`).join('');
+if (!todos.length) $('#aviso').textContent = 'Todavía no hay productos habilitados en el catálogo.';
+
+const sel = leerSeleccion();
+for (const k of [...sel]) if (!todos.some((p) => p.sku === k)) sel.delete(k);
+let vista = [], pag = 0;
+
+function filtrar() {
+  const tk = quitarAcentos($('#q').value).split(/\s+/).filter(Boolean), cat = $('#cat').value, pub = $('#pub').value, cs = $('#conStock').checked, o = $('#ord').value;
+  const tipo = $('#tipo').value;
+  const okTipo = (p) => !tipo || (tipo === 'tra' && p.tra) || (tipo === 'cat' && p.cat) || (tipo === 'marca' && p.tra?.marca_propia);
+  vista = todos.filter((p) => (!cs || p.stock_ofrecido > 0) && (!cat || p.cat1 === cat) && (!pub || (pub === 'si') === p.ya_publicado) && okTipo(p) && tk.every((t) => p.hay.includes(t)));
+  const k = { stock: (a, b) => b.stock_ofrecido - a.stock_ofrecido, nombre: (a, b) => (a.titulo || '').localeCompare(b.titulo || '', 'es'),
+    mayorista: (a, b) => (a.precio_mayorista ?? Infinity) - (b.precio_mayorista ?? Infinity), sugerido: (a, b) => (b.precio_sugerido ?? -1) - (a.precio_sugerido ?? -1) }[o];
+  vista.sort((a, b) => k(a, b) || a.sku.localeCompare(b.sku));
+  pag = 0; pintar();
+}
+
+function pintar() {
+  const ini = pag * POR_PAG, fil = vista.slice(ini, ini + POR_PAG);
+  $('#cuenta').textContent = `${num.format(vista.length)} ${vista.length === 1 ? 'producto' : 'productos'}`;
+  $('#pagInfo').textContent = vista.length ? `${ini + 1}–${ini + fil.length} de ${num.format(vista.length)}` : '';
+  $('#ant').disabled = pag === 0; $('#sig').disabled = ini + POR_PAG >= vista.length;
+  $('#tb').innerHTML = fil.map((p) => `<tr>
+    <td class="ck"><input type="checkbox" class="sel" data-sku="${esc(p.sku)}" ${sel.has(p.sku) ? 'checked' : ''} aria-label="Elegir ${esc(p.sku)}"></td>
+    <td class="ft">${p.foto ? `<img class="foto" loading="lazy" src="${esc(p.foto)}" alt="">` : '<div class="foto"></div>'}</td>
+    <th scope="row" class="tit" style="font-weight:500"><b>${esc(p.titulo || p.sku)}</b>${p.ya_publicado ? ' <span class="chip ok">publicado</span>' : ''}<div class="muted small">${esc(p.sku)}${p.categoria ? ' · ' + esc(primerNivel(p.categoria)) : ''}</div></th>
+    <td class="r num ${p.stock_ofrecido ? '' : 'stock0'}" data-label="Stock">${num.format(p.stock_ofrecido)}</td>
+    <td class="r num" data-label="Costo mayorista" style="font-weight:600">${p.precio_mayorista != null ? peso0(p.precio_mayorista) : '<span class="muted" title="El costo mayorista todavía no está definido">a definir</span>'}</td>
+    <td class="r num" data-label="Sugerido">${p.precio_sugerido != null ? peso0(p.precio_sugerido) : '—'}</td>
+    <td class="r num" data-label="Mínimo">${p.precio_minimo != null ? `<span class="chip warn" title="No publiques por debajo de este precio">${peso0(p.precio_minimo)}</span>` : '<span class="muted">sin mínimo</span>'}</td>
+    <td data-label="Publicar">${modos(p)}</td></tr>`).join('')
+    || '<tr><td colspan="8" class="muted">No hay productos con esos filtros.</td></tr>';
+  $('#todos').checked = fil.length > 0 && fil.every((p) => sel.has(p.sku));
+  barra();
+}
+
+// Columna "Publicar": el botón abre el panel para publicar en la cuenta del revendedor. Los links chicos muestran la
+// publicación de Pret a Home (tradicional) y la ficha de catálogo de ML, para mirarlas.
+function modos(p) {
+  if (!p.tra && !p.cat) return '<span class="muted small">Pret a Home no lo tiene publicado hoy en Mercado Libre</span>';
+  const links = [];
+  if (p.tra) links.push(`<a href="${esc(p.tra.permalink || 'https://articulo.mercadolibre.com.ar/' + p.tra.ml_item_id)}" target="_blank" rel="noopener">Ver tradicional ↗</a>`);
+  if (p.cat) links.push(`<a href="${esc(p.cat.catalog_product_id ? 'https://www.mercadolibre.com.ar/p/' + encodeURIComponent(p.cat.catalog_product_id) : p.cat.permalink || '#')}" target="_blank" rel="noopener">Ver catálogo ↗</a>`);
+  return `<div class="pubcol"><button class="btn sm primary" data-publicar="${esc(p.sku)}" ${p.stock_ofrecido ? '' : 'disabled title="Sin stock para ofrecer"'}>Publicar</button>
+    <div class="links">${links.join(' · ')}</div>
+    <div class="muted small">${[p.tra ? (p.tra.marca_propia ? 'Tradicional (con tu marca o tal cual)' : 'Tradicional') : '', p.cat ? 'Catálogo' : ''].filter(Boolean).join(' · ')}</div></div>`;
+}
+
+function barra() {
+  $('#barra').hidden = sel.size === 0;
+  $('#selTxt').textContent = `${sel.size} ${sel.size === 1 ? 'producto elegido' : 'productos elegidos'}`;
+}
+
+$('#tb').onchange = (e) => {
+  const c = e.target.closest('[data-sku]'); if (!c) return;
+  c.checked ? sel.add(c.dataset.sku) : sel.delete(c.dataset.sku);
+  guardarSeleccion(sel); $('#todos').checked = [...$$('#tb [data-sku]')].every((x) => x.checked); barra();
+};
+$('#todos').onchange = (e) => {
+  for (const c of $$('#tb [data-sku]')) { c.checked = e.target.checked; e.target.checked ? sel.add(c.dataset.sku) : sel.delete(c.dataset.sku); }
+  guardarSeleccion(sel); barra();
+};
+$('#limpiar').onclick = () => { sel.clear(); guardarSeleccion(sel); pintar(); };
+$('#ant').onclick = () => { pag--; pintar(); scrollTo(0, 0); };
+$('#sig').onclick = () => { pag++; pintar(); scrollTo(0, 0); };
+let t; $('#q').oninput = () => { clearTimeout(t); t = setTimeout(filtrar, 200); };
+['cat', 'tipo', 'pub', 'ord', 'conStock'].forEach((id) => ($('#' + id).onchange = filtrar));
+
+
+// ───────────────────────── Panel "Publicar en mi cuenta" ─────────────────────────
+// 1) Qué publicar (tradicional y/o catálogo) · 2) colores · 3) marca (solo productos Pret, solo tradicional) ·
+// 4) precio · 5) Clásica y/o Premium · opción de dejarla pausada. El servidor (rev-publicar) vuelve a controlar todo.
+const MAX_PUB = 12;
+document.body.insertAdjacentHTML('beforeend', '<dialog id="dp" class="panel" aria-labelledby="dpTit"></dialog>');
+const dp = $('#dp');
+let st = null;
+
+$('#tb').addEventListener('click', (e) => { const b = e.target.closest('[data-publicar]'); if (b) abrirPanel(b.dataset.publicar); });
+
+async function abrirPanel(sku) {
+  st = { sku, d: null, resultados: null, enviando: false };
+  dp.innerHTML = `<div class="dp-cab"><div class="grow"><h2 id="dpTit">Publicar en mi cuenta</h2><div class="muted small">${esc(sku)}</div></div><button class="btn sm" data-cerrar>Cerrar</button></div>
+    <div class="dp-cuerpo"><p class="muted">Buscando la publicación de Pret a Home y sus colores…</p></div>`;
+  dp.showModal();
+  try { st.d = await apiPublicar('preparar', { sku }); }
+  catch (e) { $('.dp-cuerpo', dp).innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  const d = st.d, c0 = d.colores.find((c) => c.sku === sku) || d.colores[0];
+  // Primero los colores que se pueden publicar (con stock), después el resto; dentro de cada grupo, el orden de Pret.
+  d.colores = [...d.colores.filter(puedeColor), ...d.colores.filter((c) => !puedeColor(c))];
+  // Por defecto se publica el producto completo, como lo tiene Pret: todos los colores con stock (pedido del usuario).
+  st.sel = new Set(d.colores.filter(puedeColor).map((c) => c.sku));
+  st.tra = !!d.item; st.cat = !d.item && d.colores.some((c) => c.catalogo);
+  st.marcaPropia = false; st.marca = '';
+  st.precio = c0?.precio_pret ? Math.round(c0.precio_pret) : '';
+  // Precio por ganancia neta (opción por defecto): ML + impuestos ≈ comision_ml % del precio.
+  st.ml = Number(d.comision_ml ?? 30); st.ganancia = Number(d.ganancia_defecto ?? 10); st.modoPrecio = 'margen';
+  st.tipos = new Set(['gold_special']); st.pausada = false;
+  pintarPanel();
+}
+
+const puedeColor = (c) => c.en_catalogo && c.ofrecido > 0;
+// Mismas cuentas que rev-publicar/logic.ts: precio = costo / (1 − ML − ganancia). Ej.: costo 60, ML 30 %, ganancia 10 % → 100.
+function precioMargen(costo, ganancia, ml) { const r = 1 - ml / 100 - ganancia / 100; return costo > 0 && r >= 0.05 ? Math.ceil(costo / r) : null; }
+const elegidos = () => st.d.colores.filter((c) => st.sel.has(c.sku));
+function cuantas() {
+  const cs = elegidos(), t = st.tipos.size;
+  return (st.tra && st.d.item ? cs.length * t : 0) + (st.cat ? cs.filter((c) => c.catalogo).length * t : 0);
+}
+
+function pintarPanel() {
+  const d = st.d, it = d.item, hayCat = d.colores.some((c) => c.catalogo);
+  if (st.resultados) return pintarResultados();
+  const cs = elegidos();
+  const costo = Math.max(0, ...cs.map((c) => Number(c.costo_mayorista ?? 0)));
+  const minimo = Math.max(0, ...cs.map((c) => Number(c.precio_minimo ?? 0)));
+  const costos = cs.map((c) => Number(c.costo_mayorista ?? 0)).filter((x) => x > 0);
+  if (st.modoPrecio === 'margen' && costo > 0) st.precio = precioMargen(costo, st.ganancia, st.ml) ?? st.precio;
+  const precio = Number(st.precio) || 0, n = cuantas();
+  const mlPesos = Math.round(precio * st.ml / 100), queda = costo && precio ? precio - mlPesos - costo : null;
+  // Precio escrito a mano: el campo de ganancia muestra la que resulta de ese precio.
+  if (st.modoPrecio === 'manual' && queda != null) st.ganancia = Math.round((queda / precio) * 100);
+  const sinCatSel = st.cat ? cs.filter((c) => !c.catalogo) : [];
+  const problemas = [];
+  if (!st.tra && !st.cat) problemas.push('Elegí tradicional, catálogo o las dos.');
+  if (!cs.length) problemas.push('Elegí al menos un color.');
+  if (!st.tipos.size) problemas.push('Elegí Clásica, Premium o las dos.');
+  if (!(precio > 0)) problemas.push('Poné tu precio de venta.');
+  if (minimo && precio < minimo) problemas.push(`El precio mínimo es ${peso0(minimo)}.`);
+  if (st.modoPrecio === 'margen' && costo > 0 && precioMargen(costo, st.ganancia, st.ml) == null) problemas.push('Esa ganancia estimada no es posible: probá con un porcentaje menor.');
+  if (st.tra && st.marcaPropia && st.marca.trim().length < 2) problemas.push('Escribí el nombre de tu marca.');
+  if (n > MAX_PUB) problemas.push(`Son ${n} publicaciones; el máximo por vez es ${MAX_PUB}.`);
+  if (cs.length && n === 0) problemas.push('Ninguno de los colores elegidos tiene catálogo: tildá también tradicional.');
+
+  dp.innerHTML = `<div class="dp-cab"><div class="grow"><h2 id="dpTit">Publicar en mi cuenta</h2>
+      <div class="muted small">${it ? `${esc(it.titulo)} · marca ${esc(it.marca || '—')} · <a href="${esc(it.permalink || '#')}" target="_blank" rel="noopener">ver la de Pret a Home ↗</a>` : 'Solo se puede sumar al catálogo'}</div></div>
+      <button class="btn sm" data-cerrar>Cerrar</button></div>
+    <div class="dp-cuerpo">
+      <div class="paso"><h3>1 · Qué publicar</h3><div class="opciones">
+        <label class="op"><input type="checkbox" data-k="tra" ${st.tra ? 'checked' : ''} ${it ? '' : 'disabled'}><span>Publicación tradicional<span class="muted">${it ? 'Copia de la publicación de Pret: fotos, ficha y descripción' : 'Pret a Home no tiene publicación tradicional de este producto'}</span></span></label>
+        <label class="op"><input type="checkbox" data-k="cat" ${st.cat ? 'checked' : ''} ${hayCat ? '' : 'disabled'}><span>Sumarme al catálogo<span class="muted">${hayCat ? 'Compite en la misma ficha de Mercado Libre, con la marca original' : 'Este producto no tiene ficha de catálogo'}</span></span></label>
+      </div><p class="muted small" style="margin:6px 0 0">Si tildás las dos se crean publicaciones separadas; todas comparten el mismo stock del SKU.</p></div>
+
+      <div class="paso"><h3>2 · Colores</h3>
+        <p class="muted small" style="margin:0 0 6px">Van todos los que tienen stock. Mercado Libre los muestra como una sola publicación con selector de color. <a href="#" data-todos="1">Todos</a> · <a href="#" data-todos="0">Ninguno</a></p>
+        <div class="colores">${d.colores.map((c) => `
+        <label class="op"><input type="checkbox" data-color="${esc(c.sku)}" ${st.sel.has(c.sku) ? 'checked' : ''} ${puedeColor(c) ? '' : 'disabled'}>
+          ${c.foto ? `<img src="${esc(c.foto)}" alt="" loading="lazy">` : ''}
+          <span class="grow"><b>${esc(c.color || c.sku)}</b><span class="muted">${esc(c.sku)}${c.catalogo ? ' · tiene catálogo' : ''}${c.ya_publicadas ? ` · <span class="warn-t">ya lo publicaste (${c.ya_publicadas})</span>` : ''}</span></span>
+          <span class="der">${!c.en_catalogo ? '<span class="muted">no está en tu catálogo</span>' : c.ofrecido > 0 ? `stock <b>${num.format(c.ofrecido)}</b><br><span class="muted">costo ${c.costo_mayorista != null ? peso0(c.costo_mayorista) : 'a definir'}</span>` : '<span class="bad-t">sin stock</span>'}</span>
+        </label>`).join('')}</div>
+        ${sinCatSel.length ? `<p class="muted small" style="margin:6px 0 0">${sinCatSel.map((c) => esc(c.color || c.sku)).join(', ')}: sin ficha de catálogo, ${sinCatSel.length === 1 ? 'va' : 'van'} solo como tradicional.</p>` : ''}</div>
+
+      ${it?.marca_propia && st.tra ? `<div class="paso"><h3>3 · Marca</h3><div class="opciones">
+        <label class="op"><input type="radio" name="marca" data-k="marcaPret" ${st.marcaPropia ? '' : 'checked'}><span>Tal cual, marca ${esc(it.marca)}<span class="muted">Con el código de barras de Pret</span></span></label>
+        <label class="op"><input type="radio" name="marca" data-k="marcaMia" ${st.marcaPropia ? 'checked' : ''}><span>Con mi marca<span class="muted">Sin código de barras; "Pret" se reemplaza en título y descripción</span></span></label>
+      </div>${st.marcaPropia ? `<label for="dpMarca" style="margin-top:8px">Nombre de tu marca</label><input id="dpMarca" maxlength="60" value="${esc(st.marca)}" placeholder="Ej.: Casa Nube" autocomplete="off">` : ''}
+      ${st.cat ? '<p class="muted small" style="margin:6px 0 0">En catálogo la marca no se cambia: va con la marca original.</p>' : ''}</div>`
+      : it && st.tra ? `<div class="paso"><h3>3 · Marca</h3><p class="muted small" style="margin:0">Va con la marca original (${esc(it.marca || 'del proveedor')}). Solo los productos marca Pret se pueden publicar con tu marca.</p></div>` : ''}
+
+      <div class="paso"><h3>${it && st.tra ? '4' : '3'} · Precio de venta</h3>
+        <div class="row wrapRow" style="gap:12px;align-items:flex-end">
+          <div><label for="dpGan" style="margin-top:0">Ganancia neta estimada que querés</label><div class="row" style="gap:6px;align-items:center"><input id="dpGan" type="number" inputmode="decimal" min="0" max="50" step="1" value="${esc(st.ganancia)}" style="width:90px" ${costo ? '' : 'disabled'}> <span>%</span></div><div class="row" style="gap:4px;margin-top:6px">${[10, 15, 20].map((g) => `<button type="button" class="btn sm ${st.modoPrecio === 'margen' && Number(st.ganancia) === g ? 'primary' : ''}" data-gan="${g}" ${costo ? '' : 'disabled'}>${g} %</button>`).join('')}</div></div>
+          <div><label for="dpPrecio" style="margin-top:0">Precio de publicación</label><input id="dpPrecio" type="number" inputmode="decimal" min="1" step="1" value="${esc(st.precio)}" style="max-width:200px" aria-label="Precio de venta"></div>
+        </div>
+        <p class="muted small" style="margin:6px 0 0">${costo ? `El precio se calcula solo para que te quede aproximadamente esa ganancia. Es una estimación: suponemos que Mercado Libre + impuestos se quedan cerca del ${st.ml} % del precio (el cargo real depende de la categoría, el envío y el tipo de publicación) y vos le pagás a Pret a Home el costo mayorista.${costos.length > 1 && Math.min(...costos) !== costo ? ' Se toma el costo más alto de los colores elegidos.' : ''} Si cambiás el precio a mano, abajo ves cuánto te queda.` : 'Este producto todavía no tiene costo mayorista: poné el precio a mano.'}</p>
+        <div class="cuentas">
+          <div>Precio de publicación<b>${precio ? peso0(precio) : '—'}</b></div>
+          <div>ML + impuestos (estimado, ≈ ${st.ml} %)<b>${precio ? '− ' + peso0(mlPesos) : '—'}</b></div>
+          <div>Tu costo mayorista<b>${cs.length ? (costo ? '− ' + peso0(costo) : 'a definir') : '—'}</b></div>
+          <div style="${queda != null ? (queda >= 0 ? 'background:var(--ok-bg, #e6f4ea)' : 'background:var(--bad-bg, #fde8e8)') : ''}">Te queda (estimado, aprox.)<b>${queda != null ? peso0(queda) + ` · ${Math.round((queda / precio) * 100)} %` : '—'}</b></div>
+          <div>Precio mínimo<b>${minimo ? peso0(minimo) : 'sin mínimo'}</b></div>
+          ${cs[0]?.precio_pret ? `<div>Pret a Home lo vende a<b>${peso0(cs[0].precio_pret)}</b></div>` : ''}
+        </div></div>
+
+      <div class="paso"><h3>${it && st.tra ? '5' : '4'} · Cuotas</h3><div class="opciones">
+        <label class="op"><input type="checkbox" data-tipo="gold_special" ${st.tipos.has('gold_special') ? 'checked' : ''}><span>Clásica<span class="muted">Sin cuotas sin interés · menos comisión</span></span></label>
+        <label class="op"><input type="checkbox" data-tipo="gold_pro" ${st.tipos.has('gold_pro') ? 'checked' : ''}><span>Premium<span class="muted">Con cuotas sin interés · más comisión</span></span></label>
+      </div><p class="muted small" style="margin:6px 0 0">Si tildás las dos, se crea una publicación de cada una.</p></div>
+
+      <div class="paso"><h3>${it && st.tra ? '6' : '5'} · Cómo queda en Mercado Libre</h3><div class="opciones">
+        <label class="op"><input type="radio" name="estadoPub" data-k="activa" ${st.pausada ? '' : 'checked'}><span>Activa<span class="muted">Queda a la venta enseguida</span></span></label>
+        <label class="op"><input type="radio" name="estadoPub" data-k="pausada" ${st.pausada ? 'checked' : ''}><span>Pausada<span class="muted">La revisás en Mercado Libre y la activás vos cuando quieras</span></span></label>
+      </div></div>
+    </div>
+    <div class="dp-pie"><div class="grow">${problemas.length ? `<span class="err small">${esc(problemas[0])}</span>` : `<b>Se ${n === 1 ? 'crea 1 publicación' : `crean ${n} publicaciones`}</b> <span class="muted small">en tu cuenta de Mercado Libre, ${st.pausada ? (n === 1 ? 'pausada' : 'pausadas') : (n === 1 ? 'activa' : 'activas')}</span>`}</div>
+      <button class="btn primary" id="dpOk" ${problemas.length || st.enviando ? 'disabled' : ''}>${st.enviando ? 'Publicando…' : 'Publicar en mi cuenta'}</button></div>`;
+}
+
+function pintarResultados() {
+  const r = st.resultados, ok = r.filter((x) => x.ok).length;
+  const TIPO = { tradicional: 'Tradicional', catalogo: 'Catálogo' }, VENTA = { gold_special: 'Clásica', gold_pro: 'Premium' };
+  const color = (sku) => st.d.colores.find((c) => c.sku === sku)?.color || sku;
+  dp.innerHTML = `<div class="dp-cab"><div class="grow"><h2 id="dpTit">${ok === r.length ? '¡Listo!' : ok ? 'Se publicó una parte' : 'No se pudo publicar'}</h2>
+      <div class="muted small">${ok} de ${r.length} ${r.length === 1 ? 'publicación creada' : 'publicaciones creadas'}. Ya quedan vinculadas: las ves en Mis publicaciones.</div></div><button class="btn sm" data-cerrar>Cerrar</button></div>
+    <div class="dp-cuerpo"><div class="res">${r.map((x) => `<div class="${x.ok ? 'ok' : 'no'}">
+      <b>${esc(color(x.sku))}</b> · ${TIPO[x.tipo]} · ${VENTA[x.tipo_venta] || x.tipo_venta} <span class="muted small">${esc(x.sku)}</span>
+      <div class="small">${x.ok ? `<a href="${esc(x.permalink || 'https://articulo.mercadolibre.com.ar/' + x.ml_item_id)}" target="_blank" rel="noopener">${esc(x.ml_item_id)} ↗</a> · ${x.estado === 'paused' ? 'pausada' : 'activa'}` : `<span class="err">${esc(x.error)}</span>`}${x.aviso ? `<div class="warn-t">${esc(x.aviso)}</div>` : ''}</div></div>`).join('')}</div></div>
+    <div class="dp-pie"><div class="grow"></div><a class="btn" href="publicaciones.html">Ir a Mis publicaciones</a><button class="btn primary" data-cerrar>Cerrar</button></div>`;
+}
+
+dp.addEventListener('click', (e) => {
+  if (e.target === dp || e.target.closest('[data-cerrar]')) { const recargar = st?.resultados?.some((x) => x.ok); dp.close(); if (recargar) location.reload(); return; }
+  if (e.target.closest('#dpOk')) publicarYa();
+  const bg = e.target.closest('[data-gan]');
+  if (bg) { st.ganancia = Number(bg.dataset.gan); st.modoPrecio = 'margen'; pintarPanel(); return; }
+  const t = e.target.closest('[data-todos]');
+  if (t) { e.preventDefault(); st.sel = new Set(t.dataset.todos === '1' ? st.d.colores.filter(puedeColor).map((c) => c.sku) : []); pintarPanel(); }
+});
+dp.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.color) t.checked ? st.sel.add(t.dataset.color) : st.sel.delete(t.dataset.color);
+  else if (t.dataset.tipo) t.checked ? st.tipos.add(t.dataset.tipo) : st.tipos.delete(t.dataset.tipo);
+  else if (t.dataset.k === 'tra') st.tra = t.checked;
+  else if (t.dataset.k === 'cat') st.cat = t.checked;
+  else if (t.dataset.k === 'marcaPret') st.marcaPropia = false;
+  else if (t.dataset.k === 'marcaMia') st.marcaPropia = true;
+  else if (t.dataset.k === 'pausada') st.pausada = true;
+  else if (t.dataset.k === 'activa') st.pausada = false;
+  else return;
+  const y = $('.dp-cuerpo', dp)?.scrollTop; pintarPanel(); if (y != null && $('.dp-cuerpo', dp)) $('.dp-cuerpo', dp).scrollTop = y;
+});
+// Precio y marca se escriben: se actualiza solo el resumen sin redibujar el campo (para no perder el cursor).
+dp.addEventListener('input', (e) => {
+  if (e.target.id === 'dpPrecio') { st.precio = e.target.value; st.modoPrecio = 'manual'; }
+  else if (e.target.id === 'dpGan') { st.ganancia = Number(e.target.value) || 0; st.modoPrecio = 'margen'; }
+  else if (e.target.id === 'dpMarca') st.marca = e.target.value;
+  else return;
+  const foco = e.target.id, pos = e.target.selectionStart;
+  pintarPanel();
+  const el = $('#' + foco, dp); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch { /* number */ } }
+});
+
+async function publicarYa() {
+  if (st.enviando) return;
+  st.enviando = true; pintarPanel();
+  try {
+    const r = await apiPublicar('publicar', {
+      item_id: st.d.item?.id ?? null, skus: [...st.sel], tradicional: st.tra && !!st.d.item, catalogo: st.cat,
+      marca: st.tra && st.marcaPropia ? st.marca.trim() : null, precio: Number(st.precio), tipos_venta: [...st.tipos], pausada: st.pausada,
+    });
+    st.resultados = r.resultados || [];
+  } catch (e) {
+    st.enviando = false; pintarPanel();
+    $('.dp-pie .grow', dp).innerHTML = `<span class="err small">${esc(e.message)}</span>`;
+    return;
+  }
+  st.enviando = false; pintarPanel();
+}
+
+
+// ───────────────────────── Publicación masiva ─────────────────────────
+// El revendedor elige productos (casillas) y "Publicar seleccionados": quedan en una cola y el sistema los publica de a
+// poco por detrás (rev-publicar, cada minuto). Opciones comunes y precio por regla (no hay un precio para cientos).
+const ESTADO_COLA = { pendiente: ['En espera', ''], procesando: ['Publicando…', 'info'], listo: ['Listo', 'ok'], parcial: ['Una parte', 'warn'], error: ['No se pudo', 'bad'], cancelado: ['Cancelado', ''] };
+const TIPO_TXT = { tradicional: 'Tradicional', catalogo: 'Catálogo' }, VENTA_TXT = { gold_special: 'Clásica', gold_pro: 'Premium' };
+const porSku = new Map(todos.map((p) => [p.sku, p]));
+let ML_EST = 30, GANANCIA_DEF = 10; // los confirma el servidor (/lotes)
+document.body.insertAdjacentHTML('beforeend', '<dialog id="dm" class="panel" aria-labelledby="dmTit"></dialog>');
+const dm = $('#dm');
+let om = null;
+
+$('#pubSel').onclick = () => {
+  om = { tra: true, cat: false, todosColores: true, marcaPropia: false, marca: '', regla: 'margen', pctMargen: GANANCIA_DEF, pctPret: 0, pctCosto: 60, tipos: new Set(['gold_special']), pausada: false, enviando: false };
+  pintarMasivo(); dm.showModal();
+};
+
+function pintarMasivo() {
+  const elegidos = [...sel].map((k) => porSku.get(k)).filter(Boolean);
+  const conTra = elegidos.filter((p) => p.tra).length, conCat = elegidos.filter((p) => p.cat).length;
+  const pret = elegidos.filter((p) => p.tra?.marca_propia).length;
+  const aplica = elegidos.filter((p) => (om.tra && p.tra) || (om.cat && p.cat)).length;
+  // Con "costo mayorista + %" se puede anticipar cuántos quedan bajo el mínimo; con el precio de Pret se ve al publicar.
+  // Con las reglas que parten del costo se puede anticipar cuántos quedan bajo el mínimo o sin costo; con el precio de Pret se ve al publicar.
+  const precioCosto = (p) => om.regla === 'margen' ? precioMargen(p.precio_mayorista, om.pctMargen, ML_EST) : Math.round(p.precio_mayorista * (1 + om.pctCosto / 100));
+  const usaCosto = om.regla === 'costo' || om.regla === 'margen';
+  const bajoMin = usaCosto ? elegidos.filter((p) => p.precio_mayorista != null && p.precio_minimo != null && precioCosto(p) != null && precioCosto(p) < p.precio_minimo).length : 0;
+  const sinCosto = usaCosto ? elegidos.filter((p) => p.precio_mayorista == null).length : 0;
+  const prob = [];
+  if (!om.tra && !om.cat) prob.push('Elegí tradicional, catálogo o las dos.');
+  if (!om.tipos.size) prob.push('Elegí Clásica, Premium o las dos.');
+  if (om.marcaPropia && om.marca.trim().length < 2) prob.push('Escribí el nombre de tu marca.');
+  if (!aplica) prob.push('Ninguno de los productos elegidos tiene ese tipo de publicación.');
+  dm.innerHTML = `<div class="dp-cab"><div class="grow"><h2 id="dmTit">Publicar ${num.format(elegidos.length)} ${elegidos.length === 1 ? 'producto' : 'productos'}</h2>
+      <div class="muted small">${conTra} con publicación tradicional · ${conCat} con catálogo · ${pret} marca Pret</div></div><button class="btn sm" data-cerrar>Cerrar</button></div>
+    <div class="dp-cuerpo">
+      <div class="paso"><h3>1 · Qué publicar</h3><div class="opciones">
+        <label class="op"><input type="checkbox" data-m="tra" ${om.tra ? 'checked' : ''}><span>Publicación tradicional<span class="muted">${conTra} de los elegidos</span></span></label>
+        <label class="op"><input type="checkbox" data-m="cat" ${om.cat ? 'checked' : ''}><span>Sumarme al catálogo<span class="muted">${conCat} de los elegidos</span></span></label>
+      </div></div>
+      <div class="paso"><h3>2 · Colores</h3>
+        <label class="op"><input type="checkbox" data-m="todosColores" ${om.todosColores ? 'checked' : ''}><span>Todos los colores con stock de cada producto<span class="muted">Como lo publica Pret a Home. Si lo destildás, solo los colores que tildaste.</span></span></label></div>
+      <div class="paso"><h3>3 · Marca</h3><div class="opciones">
+        <label class="op"><input type="radio" name="mm" data-m="marcaPret" ${om.marcaPropia ? '' : 'checked'}><span>Tal cual<span class="muted">Cada producto con su marca</span></span></label>
+        <label class="op"><input type="radio" name="mm" data-m="marcaMia" ${om.marcaPropia ? 'checked' : ''}><span>Con mi marca<span class="muted">Solo en los ${pret} productos Pret (tradicional); el resto va con su marca</span></span></label>
+      </div>${om.marcaPropia ? `<label for="dmMarca" style="margin-top:8px">Nombre de tu marca</label><input id="dmMarca" maxlength="60" value="${esc(om.marca)}" placeholder="Ej.: Casa Nube" autocomplete="off">` : ''}</div>
+      <div class="paso"><h3>4 · Precio de venta</h3><div class="regla">
+        <label class="op"><input type="radio" name="rg" data-r="margen" ${om.regla === 'margen' ? 'checked' : ''}><span>Ganancia neta estimada para todos: <input type="number" id="pctMargen" value="${om.pctMargen}" step="1" min="0" max="50" aria-label="Ganancia neta estimada"> %
+          <span class="row" style="gap:4px;margin:6px 0">${[10, 15, 20].map((g) => `<button type="button" class="btn sm ${om.regla === 'margen' && Number(om.pctMargen) === g ? 'primary' : ''}" data-mg="${g}">${g} %</button>`).join('')}</span>
+          <span class="muted">Recomendado. Calcula el precio de cada producto para que, después de Mercado Libre + impuestos y tu costo mayorista, te quede aproximadamente ese porcentaje. Es una estimación: suponemos que ML + impuestos se quedan cerca del ${ML_EST} % del precio. Ej.: costo $60 → publicás a $100, ML se queda aprox. $30, te quedan aprox. $10.</span></span></label>
+        <label class="op"><input type="radio" name="rg" data-r="pret" ${om.regla === 'pret' ? 'checked' : ''}><span>Igual que Pret a Home</span></label>
+        <label class="op"><input type="radio" name="rg" data-r="pretPct" ${om.regla === 'pretPct' ? 'checked' : ''}><span>Pret a Home <input type="number" id="pctPret" value="${om.pctPret}" step="1" min="-89" max="500" aria-label="Porcentaje sobre Pret"> % <span class="muted">(ej. -5 = 5 % más barato que Pret)</span></span></label>
+        <label class="op"><input type="radio" name="rg" data-r="costo" ${om.regla === 'costo' ? 'checked' : ''}><span>Costo mayorista + <input type="number" id="pctCosto" value="${om.pctCosto}" step="1" min="0" max="1000" aria-label="Porcentaje sobre el costo"> %</span></label>
+      </div><p class="muted small" style="margin:6px 0 0">${bajoMin ? `<b class="warn-t">${bajoMin} quedarían debajo de su precio mínimo y se van a saltear.</b> ` : ''}${sinCosto ? `${sinCosto} no tienen costo mayorista y se van a saltear. ` : ''}Si alguno queda debajo de su precio mínimo, se saltea y te avisamos.</p></div>
+      <div class="paso"><h3>5 · Cuotas</h3><div class="opciones">
+        <label class="op"><input type="checkbox" data-t="gold_special" ${om.tipos.has('gold_special') ? 'checked' : ''}><span>Clásica<span class="muted">Sin cuotas sin interés · menos comisión</span></span></label>
+        <label class="op"><input type="checkbox" data-t="gold_pro" ${om.tipos.has('gold_pro') ? 'checked' : ''}><span>Premium<span class="muted">Con cuotas sin interés · más comisión</span></span></label>
+      </div></div>
+      <div class="paso"><h3>6 · Cómo quedan en Mercado Libre</h3><div class="opciones">
+        <label class="op"><input type="radio" name="estadoMas" data-m="activa" ${om.pausada ? '' : 'checked'}><span>Activas<span class="muted">Quedan a la venta enseguida</span></span></label>
+        <label class="op"><input type="radio" name="estadoMas" data-m="pausada" ${om.pausada ? 'checked' : ''}><span>Pausadas<span class="muted">Las revisás en Mercado Libre y las activás vos cuando quieras</span></span></label>
+      </div></div>
+    </div>
+    <div class="dp-pie"><div class="grow">${prob.length ? `<span class="err small">${esc(prob[0])}</span>` : `<b>${num.format(aplica)} ${aplica === 1 ? 'producto' : 'productos'}</b> <span class="muted small">se ${aplica === 1 ? 'publica' : 'publican'} de a poco por detrás, ${om.pausada ? 'pausadas' : 'activas'}; podés cerrar esta página</span>`}</div>
+      <button class="btn primary" id="dmOk" ${prob.length || om.enviando ? 'disabled' : ''}>${om.enviando ? 'Enviando…' : 'Publicar'}</button></div>`;
+}
+
+dm.addEventListener('click', (e) => {
+  if (e.target === dm || e.target.closest('[data-cerrar]')) { dm.close(); return; }
+  if (e.target.closest('#dmOk')) encolarYa();
+  const mg = e.target.closest('[data-mg]');
+  if (mg) { e.preventDefault(); om.pctMargen = Number(mg.dataset.mg); om.regla = 'margen'; const y = $('.dp-cuerpo', dm)?.scrollTop; pintarMasivo(); if ($('.dp-cuerpo', dm)) $('.dp-cuerpo', dm).scrollTop = y; }
+});
+dm.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.m === 'activa') om.pausada = false;
+  else if (t.dataset.m === 'pausada') om.pausada = true;
+  else if (t.dataset.m === 'marcaPret') om.marcaPropia = false;
+  else if (t.dataset.m === 'marcaMia') om.marcaPropia = true;
+  else if (t.dataset.m) om[t.dataset.m] = t.checked;
+  else if (t.dataset.t) t.checked ? om.tipos.add(t.dataset.t) : om.tipos.delete(t.dataset.t);
+  else if (t.dataset.r) om.regla = t.dataset.r;
+  else if (t.id === 'pctPret' || t.id === 'pctCosto' || t.id === 'pctMargen') return;
+  else return;
+  const y = $('.dp-cuerpo', dm)?.scrollTop; pintarMasivo(); if ($('.dp-cuerpo', dm)) $('.dp-cuerpo', dm).scrollTop = y;
+});
+dm.addEventListener('input', (e) => {
+  const t = e.target;
+  if (t.id === 'dmMarca') om.marca = t.value;
+  else if (t.id === 'pctPret') { om.pctPret = Number(t.value) || 0; om.regla = 'pretPct'; }
+  else if (t.id === 'pctCosto') { om.pctCosto = Number(t.value) || 0; om.regla = 'costo'; }
+  else if (t.id === 'pctMargen') { om.pctMargen = Number(t.value) || 0; om.regla = 'margen'; }
+  else return;
+  const id = t.id, y = $('.dp-cuerpo', dm)?.scrollTop; pintarMasivo();
+  if ($('.dp-cuerpo', dm)) $('.dp-cuerpo', dm).scrollTop = y;
+  const el = $('#' + id, dm); if (el) { el.focus(); if (el.type === 'text') try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* */ } }
+});
+
+async function encolarYa() {
+  om.enviando = true; pintarMasivo();
+  const regla = om.regla === 'margen' ? { tipo: 'margen', valor: om.pctMargen } : om.regla === 'pret' ? { tipo: 'pret' } : om.regla === 'pretPct' ? { tipo: 'pret_pct', valor: om.pctPret } : { tipo: 'costo_pct', valor: om.pctCosto };
+  try {
+    const r = await apiPublicar('encolar', {
+      skus: [...sel], tradicional: om.tra, catalogo: om.cat, todos_colores: om.todosColores, marca: om.marcaPropia ? om.marca.trim() : null,
+      regla, tipos_venta: [...om.tipos], pausada: om.pausada,
+    });
+    dm.close();
+    sel.clear(); guardarSeleccion(sel); pintar();
+    $('#aviso').className = 'muted small';
+    $('#aviso').textContent = `Listo: ${r.productos} ${r.productos === 1 ? 'producto quedó' : 'productos quedaron'} para publicar.` + (r.sin_publicacion?.length ? ` ${r.sin_publicacion.length} no tienen publicación de Pret de ese tipo y se omitieron.` : '');
+    await verAvance(true);
+  } catch (e) {
+    om.enviando = false; pintarMasivo();
+    $('.dp-pie .grow', dm).innerHTML = `<span class="err small">${esc(e.message)}</span>`;
+  }
+}
+
+// Avance: tarjeta arriba del catálogo con el último lote (se actualiza sola mientras hay algo pendiente).
+let filasCola = [], timerAvance = null, detalleAbierto = false;
+async function verAvance(forzar = false) {
+  try { const r = await apiPublicar('lotes', {}); filasCola = r.filas || []; ML_EST = Number(r.comision_ml ?? ML_EST); GANANCIA_DEF = Number(r.ganancia_defecto ?? GANANCIA_DEF); } catch { return; } // si la función no responde, no se muestra
+  if (!filasCola.length) { $('#avance').hidden = true; return; }
+  const lote = filasCola[0].lote, fl = filasCola.filter((f) => f.lote === lote);
+  const hechos = fl.filter((f) => !['pendiente', 'procesando'].includes(f.estado)).length;
+  const res = fl.flatMap((f) => f.resultados || []);
+  const ok = res.filter((r) => r.ok).length, errs = res.filter((r) => r.error).length;
+  const enCurso = fl.some((f) => ['pendiente', 'procesando'].includes(f.estado));
+  const pend = fl.filter((f) => f.estado === 'pendiente').length;
+  const pct = Math.round((hechos / fl.length) * 100);
+  $('#avance').hidden = false;
+  $('#avance').innerHTML = `<div class="fila"><div class="grow"><b>${enCurso ? 'Publicando por detrás' : 'Última publicación masiva'}</b>
+      <span class="muted small"> · ${new Date(fl[fl.length - 1].creado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+      <div class="prog"><span style="width:${pct}%"></span></div>
+      <span class="small">${hechos} de ${fl.length} productos · <b>${ok}</b> ${ok === 1 ? 'publicación creada' : 'publicaciones creadas'}${errs ? ` · <span class="bad-t">${errs} con problema</span>` : ''}${enCurso ? ' · se actualiza solo' : ''}</span></div>
+    <button class="btn sm" id="avDet">${detalleAbierto ? 'Ocultar detalle' : 'Ver detalle'}</button>${pend ? `<button class="btn sm danger" id="avCan">Cancelar lo que falta (${pend})</button>` : ''}</div>
+    <div id="avLista" ${detalleAbierto ? '' : 'hidden'} style="margin-top:12px;display:${detalleAbierto ? 'flex' : 'none'};flex-direction:column;gap:8px">${fl.slice().reverse().map(filaDetalle).join('')}</div>`;
+  $('#avDet').onclick = () => { detalleAbierto = !detalleAbierto; verAvance(); };
+  if ($('#avCan')) $('#avCan').onclick = async () => {
+    if (!confirm('¿Cancelar los productos que todavía no se publicaron? Lo ya publicado queda.')) return;
+    try { await apiPublicar('cancelar', { lote }); } catch (e) { alert(e.message); }
+    verAvance();
+  };
+  clearTimeout(timerAvance);
+  if (enCurso) timerAvance = setTimeout(verAvance, 5000);
+  else if (forzar) timerAvance = setTimeout(verAvance, 5000); // recién encolado: la primera vuelta puede tardar
+}
+
+function filaDetalle(f) {
+  const p = porSku.get(f.skus[0]);
+  const [et, ec] = ESTADO_COLA[f.estado] || [f.estado, ''];
+  const res = (f.resultados || []);
+  return `<div class="det-prod"><div><span class="chip ${ec}">${et}</span> <b>${esc(p?.titulo || f.skus[0])}</b> <span class="muted small">${f.skus.length > 1 ? f.skus.length + ' colores elegidos' : esc(f.skus[0])}</span></div>
+    ${res.length ? `<div class="small" style="margin-top:6px;display:flex;flex-direction:column;gap:3px">${res.map((r) => r.ok
+      ? `<span>✓ ${esc(r.sku)} · ${TIPO_TXT[r.tipo]} · ${VENTA_TXT[r.tipo_venta] || ''} · ${r.precio != null ? peso0(r.precio) + ' · ' : ''}<a href="${esc(r.permalink || 'https://articulo.mercadolibre.com.ar/' + r.ml_item_id)}" target="_blank" rel="noopener">${esc(r.ml_item_id)} ↗</a>${r.estado === 'paused' ? ' · pausada' : ''}</span>`
+      : r.error ? `<span class="bad-t">✕ ${esc(r.sku)}${r.tipo ? ' · ' + TIPO_TXT[r.tipo] : ''}: ${esc(r.error)}</span>`
+      : `<span class="warn-t">${esc(r.aviso || '')}</span>`).join('')}</div>` : ''}
+    ${f.error ? `<div class="small bad-t">${esc(f.error)}</div>` : ''}</div>`;
+}
+verAvance();
+
+filtrar();
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mi cuenta · Revendedores</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, $$, esc, qs, peso0, fecha, fechaHora, num, guardRev, navRev, chipOrden, diaAR, lunesDe, sumarDias } from './app.js';
+
+const sesion = await guardRev();
+navRev(sesion, 'cuenta');
+const admin = sesion.tipo === 'admin';
+const rid = admin ? Number(qs('r')) || null : null;
+if (admin && !rid) { location.replace('admin.html'); throw new Error('falta el revendedor'); }
+const arg = admin ? { p_revendedor: rid } : {};
+
+$('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando tu cuenta…</p>';
+const [rs, vs, ps] = await Promise.all([sb.rpc('rev_cuenta_resumen', arg), sb.rpc('rev_ventas', arg), sb.rpc('rev_pagos_listar', arg)]);
+const error = rs.error || vs.error || ps.error;
+if (error) { $('#app').innerHTML = `<p class="err">No pude cargar la cuenta: ${esc(error.message)}</p>`; throw error; }
+const r = rs.data[0];
+if (!r) { $('#app').innerHTML = '<p class="muted">No hay datos de cuenta.</p>'; throw new Error('sin cuenta'); }
+const ventas = vs.data, pagos = ps.data;
+
+// Semanas (lunes a domingo, hora de Argentina) con lo confirmado a precio mayorista y lo pagado.
+const semanas = new Map();
+const sem = (d) => { const k = lunesDe(d); if (!semanas.has(k)) semanas.set(k, { k, ordenes: new Set(), u: 0, total: 0, sim: 0, pagado: 0 }); return semanas.get(k); };
+for (const v of ventas) {
+  const w = sem(diaAR(v.creado_at)), sub = v.precio_mayorista != null ? v.cantidad * Number(v.precio_mayorista) : 0;
+  if (v.estado === 'descontada') { w.ordenes.add(v.ml_order_id); w.u += v.cantidad; w.total += sub; }
+  else if (v.estado === 'sombra') w.sim += sub;
+}
+for (const g of pagos) sem(g.fecha).pagado += Number(g.monto);
+const filasSem = [...semanas.values()].sort((a, b) => (a.k < b.k ? 1 : -1));
+
+const saldo = Number(r.saldo);
+$('#app').innerHTML = `<div class="cabecera"><div><h1>${admin ? 'Cuenta de ' + esc(r.nickname) : 'Mi cuenta'}</h1><p>Lo vendido a precio mayorista, lo que ya pagaste y lo que queda por pagar a Pret a Home</p></div>${admin ? '<a class="btn" href="admin.html">← Volver</a>' : ''}</div>
+<div class="centro-comando compacto">
+  <div class="cc-card ${saldo > 0 ? 'destacada' : ''}"><div class="cc-label">Saldo a pagar</div><div class="cc-valor num">${peso0(saldo)}</div><div class="cc-sub">${saldo < 0 ? 'a tu favor' : 'vendido − pagado'}</div></div>
+  <div class="cc-card"><div class="cc-label">Vendido (mayorista)</div><div class="cc-valor num">${peso0(r.ventas_mayorista)}</div><div class="cc-sub">${num.format(r.ordenes)} órdenes confirmadas</div></div>
+  <div class="cc-card"><div class="cc-label">Pagado</div><div class="cc-valor num">${peso0(r.pagado)}</div><div class="cc-sub">${num.format(pagos.length)} ${pagos.length === 1 ? 'pago registrado' : 'pagos registrados'}</div></div>
+  <div class="cc-card"><div class="cc-label">Simulado (prueba)</div><div class="cc-valor num">${peso0(r.ventas_simuladas)}</div><div class="cc-sub">todavía no se cobra</div></div>
+</div>
+${r.sin_precio ? `<div class="card" style="background:var(--warn-bg)"><b>${r.sin_precio} ${r.sin_precio === 1 ? 'orden' : 'órdenes'} sin precio mayorista</b> (el producto no tiene costo cargado o el margen no está definido). No suman al saldo hasta que Pret a Home lo complete.</div>` : ''}
+<section class="card tabla"><div class="cab"><div><h2>Liquidación semanal</h2><span class="muted">De lunes a domingo, a precio mayorista · solo órdenes confirmadas</span></div></div>
+  <div class="scroll"><table class="apilar c3" style="min-width:620px"><thead><tr><th scope="col">Semana</th><th scope="col" class="r">Órdenes</th><th scope="col" class="r">Unidades</th><th scope="col" class="r">A pagar</th><th scope="col" class="r">Pagado esa semana</th></tr></thead><tbody>${
+    filasSem.map((w) => `<tr><th scope="row" class="tit">${fecha(w.k)} al ${fecha(sumarDias(w.k, 6))}</th><td class="r num" data-label="Órdenes">${w.ordenes.size}</td><td class="r num" data-label="Unidades">${w.u}</td>
+    <td class="r num" data-label="A pagar" style="font-weight:600">${peso0(w.total)}${w.sim ? `<div class="muted small">+ ${peso0(w.sim)} simulado</div>` : ''}</td><td class="r num" data-label="Pagado">${w.pagado ? peso0(w.pagado) : '—'}</td></tr>`).join('')
+    || '<tr><td colspan="5" class="muted">Todavía no hay ventas.</td></tr>'}</tbody></table></div></section>
+<section class="card tabla"><div class="cab"><div><h2>Ventas</h2><span class="muted" id="vCuenta"></span></div></div>
+  <div class="scroll"><table class="apilar" style="min-width:860px"><thead><tr><th scope="col">Fecha</th><th scope="col">Venta ML</th><th scope="col">Producto</th><th scope="col" class="r">Cant.</th><th scope="col" class="r">Vendiste a</th><th scope="col" class="r">Costo mayorista</th><th scope="col" class="r">Subtotal</th><th scope="col">Estado</th></tr></thead><tbody id="tv"></tbody></table></div></section>
+<section class="card tabla"><div class="cab"><div><h2>Pagos registrados</h2></div></div>
+  <div class="scroll"><table class="apilar" style="min-width:520px"><thead><tr><th scope="col">Fecha</th><th scope="col" class="r">Monto</th><th scope="col">Nota</th>${admin ? '<th scope="col"></th>' : ''}</tr></thead><tbody id="tp"></tbody></table></div></section>`;
+
+const MAX = 300;
+$('#vCuenta').textContent = ventas.length > MAX ? `Últimas ${MAX} de ${num.format(ventas.length)}` : `${num.format(ventas.length)} ${ventas.length === 1 ? 'línea' : 'líneas'}`;
+$('#tv').innerHTML = ventas.slice(0, MAX).map((v) => `<tr class="${v.estado === 'cancelada' ? '' : ''}"><td data-label="Fecha">${fechaHora(v.creado_at)}</td><td data-label="Venta ML">${v.ml_order_id}</td>
+  <th scope="row" class="tit" style="font-weight:500">${esc(v.titulo || v.sku)}<div class="muted small">${esc(v.sku)}</div></th><td class="r num" data-label="Cant.">${v.cantidad}</td>
+  <td class="r num" data-label="Vendiste a">${v.precio_unitario != null ? peso0(v.precio_unitario) : '—'}</td>
+  <td class="r num" data-label="Costo mayorista">${v.precio_mayorista != null ? peso0(v.precio_mayorista) : '<span class="muted">a definir</span>'}</td>
+  <td class="r num" data-label="Subtotal" style="font-weight:600">${v.precio_mayorista != null ? peso0(v.cantidad * v.precio_mayorista) : '—'}</td><td data-label="Estado">${chipOrden(v.estado)}</td></tr>`).join('')
+  || '<tr><td colspan="8" class="muted">Todavía no hay ventas.</td></tr>';
+$('#tp').innerHTML = pagos.map((g) => `<tr><td data-label="Fecha">${fecha(g.fecha)}</td><td class="r num" data-label="Monto" style="font-weight:600">${peso0(g.monto)}</td><td data-label="Nota">${esc(g.nota || '')}</td>${admin ? `<td class="full"><button class="btn sm danger" data-del="${g.id}">Borrar</button></td>` : ''}</tr>`).join('')
+  || `<tr><td colspan="4" class="muted">Todavía no hay pagos registrados.</td></tr>`;
+$('#tp').onclick = async (e) => {
+  const b = e.target.closest('[data-del]'); if (!b || !confirm('¿Borrar este pago? Cambia el saldo.')) return;
+  const { error } = await sb.rpc('rev_borrar_pago', { p_id: Number(b.dataset.del) });
+  if (error) alert(error.message); else location.reload();
+};
+</script>
+</body>
+</html>

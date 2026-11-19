@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Estado del sistema · Revendedores</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <style>
+    .alerta { border-left: 4px solid var(--c, #999); padding: 12px 16px; margin-bottom: 8px; }
+    .alerta.rojo { --c: #C0392B; }
+    .alerta.amarillo { --c: #D4A017; }
+    .alerta.ok { --c: #2E7D32; }
+    .alerta .t { font-weight: 600; }
+    .chips-ventas { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, esc, num, guardRev, navRev, chipOrden } from './app.js';
+import { TRABAJOS, construirAlertas, hace, minutosEntre } from './estado-lib.js';
+
+const sesion = await guardRev(['admin']);
+navRev(sesion, 'estado');
+$('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando…</p>';
+
+const CLAVE_PROCESO = { 'rev-sync-5min': 'stock', 'rev-vincular-hora': 'vinculacion', 'rev-ordenes-minuto': 'ordenes', 'rev-conciliar-6h': 'conciliacion' };
+const hora = (iso) => iso ? new Date(iso).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+const TEMAS = { orders_v2: 'ventas', items: 'publicaciones', 'stock-locations': 'stock', shipments: 'envíos', payments: 'pagos' };
+
+// Resumen en una línea de la última corrida de cada proceso.
+function resumenProceso(clave, p) {
+  if (!p) return '<span class="muted">sin corridas registradas</span>';
+  const d = p.detalle || {};
+  if (clave === 'stock') return `${num.format(d.con_oferta_hoy ?? 0)} productos con oferta · ${num.format(d.unidades_ofrecidas ?? 0)} u. · ${num.format(d.publicaciones_a_actualizar ?? 0)} publicaciones a actualizar${d.modo === 'sombra' ? ' (modo prueba)' : ''}`;
+  if (clave === 'vinculacion') return (d.resultados || []).map((r) => r.ok ? `${esc(r.revendedor)}: ${num.format(r.vinculos_leidos)} leídas, ${num.format(r.sin_reconocer)} sin reconocer` : `${esc(r.revendedor)}: ${esc(r.motivo)}`).join('<br>') || '—';
+  if (clave === 'conciliacion') return (d.resultados || []).map((r) => r.ok ? `${esc(r.revendedor)}: ${num.format(r.ventas_faltantes)} ventas faltantes, ${num.format(r.cancelaciones_sin_reflejar)} cancelaciones sin reflejar` : `${esc(r.revendedor)}: ${esc(r.motivo)}`).join('<br>') || '—';
+  if (clave === 'ordenes') return `Última tanda: ${num.format(d.avisos_nuevos ?? 0)} avisos, ${num.format(d.ventas_registradas ?? 0)} ventas registradas, ${num.format(d.fallidas ?? 0)} descartadas`;
+  return '—';
+}
+const chipResultado = (r) => !r ? '' : (['ok', 'sombra_ok', 'activo_ok'].includes(r) ? '<span class="chip ok">bien</span>' : '<span class="chip bad">' + esc(r) + '</span>');
+
+function pintar(d) {
+  const alertas = construirAlertas(d);
+  const rojas = alertas.filter((a) => a.nivel === 'rojo').length;
+  const modoPrueba = d.modo === 'sombra';
+  const avisos = Object.entries(d.avisos_24h || {}).sort((a, b) => b[1] - a[1]);
+  const totalAvisos = avisos.reduce((s, [, n]) => s + n, 0);
+  const porEstado = d.ventas?.por_estado || {};
+  const revs = d.revendedores || [];
+  const conectados = revs.filter((r) => r.estado === 'activo').length;
+
+  $('#app').innerHTML = `
+  <div class="cabecera"><div><h1>Estado del sistema</h1><p>Cómo está funcionando la sincronización con los revendedores · actualizado ${esc(hora(d.ahora))}</p></div></div>
+  ${modoPrueba ? '<section class="card alerta amarillo"><div class="t">Modo prueba</div><div class="muted small">El sistema calcula y registra todo, pero no descuenta stock en Ecomm-App ni cambia las publicaciones de los revendedores. Las ventas figuran como simuladas.</div></section>' : ''}
+  <h2 style="margin:16px 0 8px">${alertas.length ? (rojas ? `Hay ${alertas.length} ${alertas.length === 1 ? 'alerta' : 'alertas'}, ${rojas} ${rojas === 1 ? 'importante' : 'importantes'}` : `Hay ${alertas.length} ${alertas.length === 1 ? 'aviso' : 'avisos'}`) : 'Alertas'}</h2>
+  ${alertas.length ? alertas.map((a) => `<section class="card alerta ${a.nivel}"><div class="t">${esc(a.titulo)}</div><div class="muted small">${esc(a.detalle)}</div></section>`).join('')
+    : '<section class="card alerta ok"><div class="t">✓ Todo en orden</div><div class="muted small">Los procesos están al día y no hay nada que revisar.</div></section>'}
+
+  <div class="centro-comando compacto" style="margin-top:16px">
+    <div class="cc-card"><div class="cc-label">Stock ofrecido</div><div class="cc-valor num">${num.format(d.oferta?.con_oferta ?? 0)}</div><div class="cc-sub">productos con oferta de ${num.format(d.catalogo ?? 0)} · ${num.format(d.oferta?.unidades ?? 0)} u. (depósito − ${esc(d.colchon ?? '5')})</div></div>
+    <div class="cc-card"><div class="cc-label">Revendedores activos</div><div class="cc-valor num">${conectados}</div><div class="cc-sub">de ${revs.length} conectados</div></div>
+    <div class="cc-card"><div class="cc-label">Ventas (últimas 24 h)</div><div class="cc-valor num">${num.format(d.ventas?.ultimas_24h ?? 0)}</div><div class="cc-sub">${modoPrueba ? 'simuladas' : 'registradas'}</div></div>
+    <div class="cc-card"><div class="cc-label">Avisos de ML (24 h)</div><div class="cc-valor num">${num.format(totalAvisos)}</div><div class="cc-sub">${avisos.map(([t, n]) => `${esc(TEMAS[t] || t)} ${n}`).join(' · ') || 'ninguno'}</div></div>
+  </div>
+
+  <section class="card tabla"><div class="cab"><div><h2>Procesos automáticos</h2><span class="muted">Qué corre solo, cuándo corrió por última vez y cómo le fue</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:860px"><thead><tr><th scope="col">Proceso</th><th scope="col">Frecuencia</th><th scope="col">Última corrida</th><th scope="col">Resultado</th><th scope="col">Detalle</th></tr></thead><tbody>${
+      (d.trabajos || []).map((t) => { const meta = TRABAJOS[t.nombre]; const p = d.procesos?.[CLAVE_PROCESO[t.nombre]];
+        const vez = p?.ultimo_at && (!t.ultima_vez || Date.parse(p.ultimo_at) > Date.parse(t.ultima_vez)) ? p.ultimo_at : t.ultima_vez;
+        return `<tr><th scope="row" class="tit">${esc(meta?.nombre ?? t.nombre)}</th>
+        <td data-label="Frecuencia">${esc(meta?.cada ?? t.frecuencia)}${t.activo ? '' : ' <span class="chip bad">apagado</span>'}</td>
+        <td data-label="Última corrida">${vez ? `${esc(hora(vez))}<div class="muted small">${esc(hace(minutosEntre(vez, d.ahora)))}</div>` : '<span class="muted">todavía no</span>'}</td>
+        <td data-label="Resultado">${chipResultado(p?.resultado) || '<span class="muted">—</span>'}</td>
+        <td data-label="Detalle" class="small">${resumenProceso(CLAVE_PROCESO[t.nombre], p)}</td></tr>`; }).join('')}</tbody></table></div></section>
+
+  <section class="card tabla"><div class="cab"><div><h2>Revendedores</h2><span class="muted">Cuenta conectada, publicaciones reconocidas y ventas</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:860px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Conexión</th><th scope="col" class="r">Publicaciones</th><th scope="col" class="r">Reconocidas</th><th scope="col" class="r">Activas</th><th scope="col" class="r">Ventas</th><th scope="col">Última venta</th></tr></thead><tbody>${
+      revs.map((r) => `<tr><th scope="row" class="tit">${esc(r.nickname || 'Sin nombre')}<div class="muted small">conectado ${esc(hora(r.conectado_at))}</div></th>
+        <td data-label="Conexión">${r.estado === 'activo' ? '<span class="chip ok">activo</span>' : `<span class="chip bad">${esc(r.estado)}</span>`}</td>
+        <td class="r num" data-label="Publicaciones">${num.format(r.publicaciones)}</td>
+        <td class="r num" data-label="Reconocidas">${num.format(r.vinculadas)}</td>
+        <td class="r num" data-label="Activas">${num.format(r.activas)}${r.activas_sin_reconocer ? `<div class="small" style="color:#B7791F">${r.activas_sin_reconocer} sin reconocer</div>` : ''}</td>
+        <td class="r num" data-label="Ventas">${num.format(r.ventas)}</td>
+        <td data-label="Última venta">${r.ultima_venta ? esc(hora(r.ultima_venta)) : '<span class="muted">—</span>'}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Todavía no hay revendedores conectados.</td></tr>'}</tbody></table></div></section>
+
+  <section class="card"><h2 style="margin-top:0">Ventas registradas</h2>
+    <div class="chips-ventas">${Object.keys(porEstado).length ? Object.entries(porEstado).map(([e, n]) => `${chipOrden(e)} <b>${num.format(n)}</b>`).join('<span style="width:8px"></span>') : '<span class="muted">Todavía no hay ventas de revendedores registradas.</span>'}</div>
+    <p class="muted small" style="margin-bottom:0">Margen mayorista: ${d.margen != null ? esc(d.margen) + ' %' : '<b>sin definir</b>'} · Colchón de stock: ${esc(d.colchon ?? '5')} unidades por producto.</p>
+  </section>
+
+  <section class="card tabla"><div class="cab"><div><h2>Precios por debajo del mínimo</h2><span class="muted">Productos de proveedores que exigen precio mínimo (solo se avisa, no se corrige nada)</span></div></div>
+    ${(d.bajo_minimo || []).length ? `<div class="scroll"><table class="apilar" style="min-width:640px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Publicación</th><th scope="col">SKU</th><th scope="col" class="r">Precio</th><th scope="col" class="r">Mínimo</th></tr></thead><tbody>${
+      d.bajo_minimo.map((b) => `<tr><th scope="row" class="tit">${esc(b.revendedor)}</th><td data-label="Publicación">${esc(b.item)}</td><td data-label="SKU">${esc(b.sku)}</td><td class="r num" data-label="Precio">$ ${num.format(b.precio)}</td><td class="r num" data-label="Mínimo">$ ${num.format(b.minimo)}</td></tr>`).join('')}</tbody></table></div>`
+    : `<p class="muted" style="margin:12px 16px">${d.minimos_cargados ? 'Ninguna publicación está por debajo de su precio mínimo.' : 'Todavía no hay precios mínimos cargados (faltan las listas de Volf y Sakura), por eso no se controla nada.'}</p>`}
+  </section>`;
+}
+
+async function cargar() {
+  const { data, error } = await sb.rpc('rev_estado_sistema');
+  if (error) { $('#app').innerHTML = `<p class="err">No pude cargar el estado: ${esc(error.message)}</p>`; return; }
+  pintar(data);
+}
+await cargar();
+setInterval(cargar, 60000); // se actualiza solo cada minuto
+</script>
+</body>
+</html>
