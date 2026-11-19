@@ -37,6 +37,8 @@ try { d = await apiPublicar('admin/resumen', {}); }
 catch (e) { $('#app').innerHTML = `<p class="err">No pude cargar el resumen: ${esc(e.message)}</p>`; throw e; }
 
 const revs = d.revendedores, lineas = d.ventas, prueba = d.config?.modo !== 'real';
+// Con el sistema en prueba, una cuenta puede estar en vivo por su cuenta ("Sincroniza stock" en Administración).
+const enVivo = revs.filter((r) => r.estado === 'activo' && r.sincroniza_stock && !r.solo_publicaciones).map((r) => r.nickname);
 const nick = new Map(revs.map((r) => [r.id, r.nickname || 'ID ' + r.id]));
 const hace = (n) => new Date(Date.now() - n * 86400_000).toISOString();
 const ult30 = lineas.filter((l) => l.creado_at >= hace(30)), ult7 = lineas.filter((l) => l.creado_at >= hace(7));
@@ -62,7 +64,9 @@ const productos = agrupar(ult30, (l) => l.sku).sort((a, b) => b.unidades - a.uni
 
 const card = (l, v, s, cls = '') => `<div class="cc-card ${cls}"><div class="cc-label">${l}</div><div class="cc-valor num">${v}</div><div class="cc-sub">${s}</div></div>`;
 $('#app').innerHTML = `<div class="cabecera"><div><h1>Dashboard</h1><p>Cómo va el proyecto de revendedores</p></div></div>
-${prueba ? '<div class="card" style="background:var(--warn-bg)"><b>Modo prueba:</b> las ventas se registran pero todavía no se descuenta stock en Ecomm-App ni se cobran. Los montos son simulados.</div>' : ''}
+${prueba ? `<div class="card" style="background:var(--warn-bg)">${enVivo.length
+  ? `<b>En vivo: ${esc(enVivo.join(', '))}.</b> A ${enVivo.length === 1 ? 'esa cuenta' : 'esas cuentas'} se le sincroniza el stock y sus ventas se descuentan en Ecomm-App. El resto sigue en modo prueba: sus ventas se registran sin descontar stock y los montos son simulados.`
+  : '<b>Modo prueba:</b> las ventas se registran pero todavía no se descuenta stock en Ecomm-App ni se cobran. Los montos son simulados.'}</div>` : ''}
 <div class="centro-comando">
   ${card('Revendedores', num.format(activos), `${revs.length} en total · ${nuevos30} nuevos en 30 días`)}
   ${card('Publicaciones vinculadas', num.format(pubs.v), `${num.format(pubs.act)} activas · ${num.format(d.skus_publicados)} productos (SKU) distintos`)}

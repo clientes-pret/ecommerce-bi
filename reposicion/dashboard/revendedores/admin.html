@@ -167,12 +167,13 @@ function pintarVentas() {
   const lineas = resumen.ventas.filter((l) => !revSel || String(l.revendedor_id) === revSel);
   const pagos = resumen.pagos.filter((p) => !revSel || String(p.revendedor_id) === revSel);
   const t = totales(lineas), s = saldo(lineas, pagos), prueba = resumen.config?.modo !== 'real';
+  const enVivo = (resumen.revendedores || []).filter((r) => r.estado === 'activo' && r.sincroniza_stock && !r.solo_publicaciones).map((r) => r.nickname);
   const clave = gran === 'mes' ? (l) => mesDe(l.creado_at) : (l) => semanaDe(l.creado_at);
   const filas = agrupar(lineas, clave).slice(0, gran === 'mes' ? 12 : 16);
   const etq = gran === 'mes' ? etiquetaMes : (k) => 'Semana del ' + etiquetaSemana(k);
   const prom = (v, u) => (u ? peso0(v / u) : '—');
   const productos = agrupar(lineas, (l) => l.sku).filter((p) => p.unidades).sort((a, b) => b.unidades - a.unidades);
-  box.innerHTML = `<section class="card tabla"><div class="cab"><div><h2>Ventas por revendedor</h2><span class="muted">últimos 12 meses${prueba ? ' · modo prueba: ventas simuladas' : ''}</span></div>
+  box.innerHTML = `<section class="card tabla"><div class="cab"><div><h2>Ventas por revendedor</h2><span class="muted">últimos 12 meses${prueba ? (enVivo.length ? ` · en vivo: ${esc(enVivo.join(', '))}; el resto, ventas simuladas` : ' · modo prueba: ventas simuladas') : ''}</span></div>
     <div class="row wrapRow filtros">
       <select id="vRev" aria-label="Revendedor"><option value="">Todos los revendedores</option>${revs.map((r) => `<option value="${r.id}" ${String(r.id) === revSel ? 'selected' : ''}>${esc(r.nickname || 'ID ' + r.id)}</option>`).join('')}</select>
       <div class="seg gris" role="group" aria-label="Agrupar por">${[['semana', 'Por semana'], ['mes', 'Por mes']].map(([k, x]) => `<button type="button" data-g="${k}" aria-pressed="${k === gran}">${x}</button>`).join('')}</div>
