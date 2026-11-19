@@ -20,7 +20,9 @@
 <body>
 <div class="wrap" id="app"></div>
 <script type="module">
-import { sb, $, $$, esc, peso0, fechaHora, num, guardRev, navRev, leerRpc } from './app.js';
+import { sb, $, $$, esc, peso0, fechaHora, num, guardRev, navRev, leerRpc, quitarAcentos } from './app.js';
+
+const POR_PAG = 50;
 
 // Vinculada = tiene SKU y ese SKU está en el catálogo (así el sistema le mantiene el stock). `en_catalogo` lo trae la base
 // nueva; con la anterior se deduce de que haya stock calculado para ese SKU.
@@ -45,16 +47,19 @@ $('#app').innerHTML = `<div class="cabecera"><div><h1>Mis publicaciones</h1><p>T
 <section class="card tabla"><div class="cab"><div><h2>Publicaciones</h2><span class="muted" id="cuenta"></span></div>
   <div class="row wrapRow filtros"><div class="seg gris full" role="group" aria-label="Qué ver">${[['todas', 'Todas'], ['vin', 'Vinculadas'], ['sin', 'Sin vincular'], ['min', 'Bajo el mínimo']].map(([k, t]) => `<button type="button" data-f="${k}" aria-pressed="${k === 'todas'}">${t}</button>`).join('')}</div>
     <div class="seg gris full" role="group" aria-label="Estado en Mercado Libre">${[['todas', 'Activas y pausadas'], ['active', 'Activas'], ['paused', 'Pausadas']].map(([k, t]) => `<button type="button" data-e="${k}" aria-pressed="${k === 'todas'}">${t}</button>`).join('')}</div></div></div>
+  <div style="padding:0 24px 12px"><input id="q" class="busca" type="search" placeholder="Buscar por MLA, SKU, título o producto…" aria-label="Buscar publicaciones" autocomplete="off" style="width:100%;max-width:420px"></div>
   <div class="scroll"><table class="apilar" style="min-width:980px"><thead><tr><th scope="col">Vínculo</th><th scope="col">Publicación</th><th scope="col">Producto (SKU)</th><th scope="col">Estado</th><th scope="col" class="r">Tu precio</th><th scope="col" class="r">Stock</th><th scope="col"></th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="row between pager" style="padding:12px 24px;flex-wrap:wrap"><span class="muted small" id="pagInfo"></span><div class="row"><button class="btn sm" id="ant">← Anterior</button><button class="btn sm" id="sig">Siguiente →</button></div></div>
 </section><datalist id="skus"></datalist>`;
 
-let pubs = [], filtro = 'todas', filtroEstado = 'todas';
+let pubs = [], filtro = 'todas', filtroEstado = 'todas', pag = 0;
 const ESTADO_ML = { active: ['Activa', 'ok'], paused: ['Pausada', 'warn'], closed: ['Cerrada', ''], under_review: ['En revisión', 'warn'] };
 
 async function cargar() {
   const { data, error } = await sb.rpc('rev_mis_publicaciones');
   if (error) { $('#tb').innerHTML = `<tr><td colspan="7" class="err">No pude cargar tus publicaciones: ${esc(error.message)}</td></tr>`; return; }
   pubs = data;
+  for (const p of pubs) p.hay = quitarAcentos([p.ml_item_id, p.sku, p.titulo, p.producto].join(' '));
   const sin = pubs.filter((p) => !vinculada(p)).length, bajo = pubs.filter((p) => p.bajo_minimo).length;
   $('#kpis').innerHTML = [
     ['Publicaciones', num.format(pubs.length), `${num.format(pubs.filter((p) => p.estado_ml === 'active').length)} activas`],
@@ -66,10 +71,18 @@ async function cargar() {
 }
 
 function pintar() {
-  const v = pubs.filter((p) => (filtro === 'todas' || (filtro === 'vin' && vinculada(p)) || (filtro === 'sin' && !vinculada(p)) || (filtro === 'min' && p.bajo_minimo))
+  const v0 = pubs.filter((p) => (filtro === 'todas' || (filtro === 'vin' && vinculada(p)) || (filtro === 'sin' && !vinculada(p)) || (filtro === 'min' && p.bajo_minimo))
     && (filtroEstado === 'todas' || p.estado_ml === filtroEstado));
+  // Cada palabra tiene que aparecer (en cualquier orden); los guiones no cuentan, así "pret210 cbo" encuentra "PRET210-CBO…".
+  const tk = quitarAcentos($('#q').value).split(/\s+/).filter(Boolean).map((t) => t.replace(/-/g, ''));
+  const v = tk.length ? v0.filter((p) => { const h = p.hay.replace(/-/g, ''); return tk.every((t) => h.includes(t)); }) : v0;
+  if (pag * POR_PAG >= v.length) pag = Math.max(0, Math.ceil(v.length / POR_PAG) - 1);
+  const ini = pag * POR_PAG, hoja = v.slice(ini, ini + POR_PAG);
   $('#cuenta').textContent = `${num.format(v.length)} ${v.length === 1 ? 'publicación' : 'publicaciones'}`;
-  $('#tb').innerHTML = v.map((p) => {
+  $('#pagInfo').textContent = `${ini + 1}–${ini + hoja.length} de ${num.format(v.length)}`;
+  $('#ant').disabled = pag === 0; $('#sig').disabled = ini + POR_PAG >= v.length;
+  $('.pager').style.display = v.length > POR_PAG ? '' : 'none';
+  $('#tb').innerHTML = hoja.map((p) => {
     const [et, ec] = ESTADO_ML[p.estado_ml] || [p.estado_ml || '—', ''];
     const ok = vinculada(p);
     const vin = ok
@@ -81,14 +94,14 @@ function pintar() {
         + `<div class="muted small">${p.ultimo_envio_at ? 'En ML: ' + num.format(p.ultima_cantidad_enviada ?? 0) + ' · ' + hace(p.ultimo_envio_at) : 'En ML: todavía no se envía (modo prueba)'}</div>`;
     return `<tr class="${p.bajo_minimo ? 'bajomin' : ''}" data-id="${p.id}">
     <td data-label="Vínculo">${vin}</td>
-    <th scope="row" class="tit" style="font-weight:500"><a href="${linkML(p.ml_item_id)}" target="_blank" rel="noopener"><b>${esc(p.ml_item_id)}</b> ↗</a>${p.ml_variation_id ? ` <span class="muted small">var. ${p.ml_variation_id}</span>` : ''}<div class="muted small">${esc(p.titulo || (p.sku ? '' : 'Sin producto vinculado'))}</div></th>
-    <td data-label="SKU">${p.sku ? `<b>${esc(p.sku)}</b>` : '<span class="muted">—</span>'}</td>
+    <th scope="row" class="tit" style="font-weight:500"><a href="${linkML(p.ml_item_id)}" target="_blank" rel="noopener"><b>${esc(p.ml_item_id)}</b> ↗</a>${p.ml_variation_id ? ` <span class="muted small">var. ${p.ml_variation_id}</span>` : ''}<div class="muted small">${esc(p.titulo || '')}</div></th>
+    <td data-label="SKU">${p.sku ? `<b>${esc(p.sku)}</b>${p.producto ? `<div class="muted small">${esc(p.producto)}</div>` : ''}` : '<span class="muted">—</span><div class="muted small">Sin producto vinculado</div>'}</td>
     <td data-label="Estado"><span class="chip ${ec}">${esc(et)}</span></td>
     <td class="r num" data-label="Tu precio">${p.precio != null ? peso0(p.precio) : '—'}${p.bajo_minimo ? `<div class="small bad-t" style="font-weight:600">mínimo ${peso0(p.precio_minimo)}</div>` : ''}</td>
     <td class="r num" data-label="Stock">${stock}</td>
     <td class="full"><div class="acc"><input class="sku-in" list="skus" placeholder="SKU correcto" value="${esc(p.sku || '')}" aria-label="SKU de ${esc(p.ml_item_id)}" autocomplete="off">
       <button class="btn sm primary" data-g>Guardar</button>${p.vinculo === 'manual' ? '<button class="btn sm danger" data-q>Quitar</button>' : ''}<span class="small err" data-e></span></div></td></tr>`;
-  }).join('') || `<tr><td colspan="7" class="muted">${pubs.length ? 'No hay publicaciones con ese filtro.' : 'Todavía no hay publicaciones vinculadas. Cuando publiques con el SKU en el campo "SKU / código de vendedor", aparecen acá solas; si no, agregalas a mano arriba.'}</td></tr>`;
+  }).join('') || `<tr><td colspan="7" class="muted">${pubs.length ? (tk.length ? 'Ninguna publicación coincide con la búsqueda.' : 'No hay publicaciones con ese filtro.') : 'Todavía no hay publicaciones vinculadas. Cuando publiques con el SKU en el campo "SKU / código de vendedor", aparecen acá solas; si no, agregalas a mano arriba.'}</td></tr>`;
 }
 
 $('#tb').onclick = async (e) => {
@@ -107,8 +120,12 @@ $('#tb').onclick = async (e) => {
     await cargar();
   }
 };
-$$('[data-f]').forEach((b) => (b.onclick = () => { filtro = b.dataset.f; $$('[data-f]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
-$$('[data-e]').forEach((b) => (b.onclick = () => { filtroEstado = b.dataset.e; $$('[data-e]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
+$$('[data-f]').forEach((b) => (b.onclick = () => { filtro = b.dataset.f; pag = 0; $$('[data-f]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
+$$('[data-e]').forEach((b) => (b.onclick = () => { filtroEstado = b.dataset.e; pag = 0; $$('[data-e]').forEach((x) => x.setAttribute('aria-pressed', x === b)); pintar(); }));
+$('#q').oninput = () => { pag = 0; pintar(); };
+const irA = (d) => { pag += d; pintar(); $('#tb').closest('section').scrollIntoView({ block: 'start' }); };
+$('#ant').onclick = () => irA(-1);
+$('#sig').onclick = () => irA(1);
 
 $('#fa').onsubmit = async (e) => {
   e.preventDefault(); $('#errA').textContent = '';

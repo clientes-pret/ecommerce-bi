@@ -31,7 +31,7 @@ catch (e) { $('#app').innerHTML = `<p class="err">No pude cargar las publicacion
 const revs = [...new Map(pubs.map((p) => [p.revendedor_id, p.revendedor || 'ID ' + p.revendedor_id])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
 const ESTADO = { active: ['Activa', 'ok'], paused: ['Pausada', 'warn'], closed: ['Finalizada', ''], under_review: ['En revisión', 'warn'], inactive: ['Inactiva', ''] };
 const linkML = (id) => `https://articulo.mercadolibre.com.ar/${String(id).replace(/^([A-Z]{3})(\d+)$/, '$1-$2')}`;
-for (const p of pubs) p.hay = quitarAcentos([p.ml_item_id, p.sku, p.titulo, p.revendedor].join(' '));
+for (const p of pubs) p.hay = quitarAcentos([p.ml_item_id, p.sku, p.titulo, p.producto, p.revendedor].join(' '));
 const qsR = new URLSearchParams(location.search).get('r');
 
 $('#app').innerHTML = `<div class="cabecera"><div><h1>Publicaciones vinculadas</h1><p>Las publicaciones de tus revendedores en Mercado Libre que están vinculadas a un producto (SKU) del catálogo: a esas se les mantiene el stock</p></div></div>
@@ -63,7 +63,7 @@ function filtrar() {
     && (!e || (e === 'otro' ? !['active', 'paused'].includes(p.estado_ml) : p.estado_ml === e))
     && (!m || p.bajo_minimo) && tk.every((t) => p.hay.includes(t)));
   const k = { nuevas: (a, b) => String(b.creado_at).localeCompare(String(a.creado_at)), revendedor: (a, b) => String(a.revendedor).localeCompare(String(b.revendedor)),
-    producto: (a, b) => String(a.titulo || a.sku).localeCompare(String(b.titulo || b.sku), 'es'), precio: (a, b) => (Number(b.precio) || 0) - (Number(a.precio) || 0) }[o];
+    producto: (a, b) => String(a.producto || a.sku).localeCompare(String(b.producto || b.sku), 'es'), precio: (a, b) => (Number(b.precio) || 0) - (Number(a.precio) || 0) }[o];
   vista.sort((a, b) => k(a, b) || String(a.ml_item_id).localeCompare(String(b.ml_item_id)));
   pag = 0; pintar();
 }
@@ -79,7 +79,7 @@ function pintar() {
       <td class="ft">${p.foto ? `<img class="foto" loading="lazy" src="${esc(p.foto)}" alt="">` : '<div class="foto"></div>'}</td>
       <th scope="row" class="tit" style="font-weight:500"><a href="${linkML(p.ml_item_id)}" target="_blank" rel="noopener"><b>${esc(p.ml_item_id)}</b> ↗</a>${p.ml_variation_id ? ` <span class="muted small">var. ${p.ml_variation_id}</span>` : ''}<div class="muted small">${esc(p.titulo || '')}</div></th>
       <td data-label="Revendedor"><b>${esc(p.revendedor || '—')}</b></td>
-      <td data-label="SKU">${esc(p.sku)}${p.en_catalogo ? '' : '<div class="small bad-t">ya no está en el catálogo</div>'}</td>
+      <td data-label="SKU">${esc(p.sku)}${p.producto ? `<div class="muted small">${esc(p.producto)}</div>` : ''}${p.en_catalogo ? '' : '<div class="small bad-t">ya no está en el catálogo</div>'}</td>
       <td data-label="Estado"><span class="chip ${ec}">${esc(et)}</span></td>
       <td class="r num" data-label="Precio">${p.precio != null ? peso0(p.precio) : '—'}${p.precio_minimo != null ? `<div class="small ${p.bajo_minimo ? 'bad-t' : 'muted'}" style="${p.bajo_minimo ? 'font-weight:600' : ''}">mínimo ${peso0(p.precio_minimo)}</div>` : ''}</td>
       <td class="r num" data-label="Stock ofrecido">${p.ofrecido != null ? num.format(p.ofrecido) : '—'}</td>
