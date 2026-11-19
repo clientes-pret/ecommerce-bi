@@ -95,7 +95,7 @@ No esperes al horario programado — corré cada workflow a mano primero:
   su comportamiento como script. Es un buen respaldo mientras validás la app
   nueva con datos reales.
 - El valor de cobertura (`coverage_days`) vive en la tabla `repo_settings`
-  (default 60). Para cambiarlo: `update repo_settings set valor = '45' where
+  (default 30; era 60 hasta 2026-11-19). Para cambiarlo: `update repo_settings set valor = '45' where
   clave = 'coverage_days';` en el SQL Editor — el próximo cálculo semanal ya
   lo toma.
 - Si algún día querés reemplazar la contraseña compartida:

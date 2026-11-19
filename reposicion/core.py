@@ -31,7 +31,7 @@ from collections import defaultdict
 # (mismo valor que generar_reporte.py calculaba a partir de argparse al importar).
 
 DAYS          = 60
-COVERAGE_DAYS = 60
+COVERAGE_DAYS = 30
 NOW           = datetime.now(timezone.utc)
 DATE_FROM     = NOW - timedelta(days=DAYS)
 DATE_FROM_ISO = DATE_FROM.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -39,9 +39,9 @@ DATE_FROM_STR = DATE_FROM.strftime("%Y-%m-%d")
 DATE_TO_STR   = NOW.strftime("%Y-%m-%d")
 
 
-def configure(days=60, coverage_days=60, now=None):
+def configure(days=60, coverage_days=30, now=None):
     """Fija la ventana de ventas (`days`) y el target de cobertura
-    (`coverage_days`, default de negocio: 60 — ver repo_settings.coverage_days
+    (`coverage_days`, default de negocio: 30 — ver repo_settings.coverage_days
     en Supabase, editable desde la app). Llamar antes de fetch_all()/build_rows()."""
     global DAYS, COVERAGE_DAYS, NOW, DATE_FROM, DATE_FROM_ISO, DATE_FROM_STR, DATE_TO_STR
     DAYS          = days
@@ -550,8 +550,15 @@ def ml_stock_by_sku(item_details):
     producto publicado en más de una categoría) — sumar available_quantity de
     cada una sin deduplicar infla el stock Full varias veces (confirmado con
     datos reales: 31.643 sumadas vs 14.268 reales). Se cuenta cada
-    inventory_id una sola vez; publicaciones sin inventory_id no comparten
-    pool con nada, así que se suman como antes."""
+    inventory_id una sola vez.
+
+    Publicaciones con logistic_type=='fulfillment' pero SIN inventory_id NO
+    se cuentan como stock Full: no tienen pool propio en Full y ML les
+    informa en available_quantity el stock del depósito del vendedor, así
+    que sumarlas infla el Full (auditoría 2026-11-04: 399 publicaciones
+    aportaban 5.312 u. falsas en ML Pret; ej. PRET220-CBONATURAL daba 696 =
+    6 pubs x 116 de depósito, contra 0 real en el panel de ML). Contando solo
+    pools con inventory_id el total dio 13.080 vs 13.113 en el panel de Full."""
     stock_full   = defaultdict(int)
     stock_nofull = defaultdict(int)
     seen_inventory_ids = set()
@@ -580,8 +587,11 @@ def ml_stock_by_sku(item_details):
                     continue
                 qty = v.get("available_quantity", 0) or 0
                 inventory_id = v.get("inventory_id")
-                if is_full and inventory_id:
-                    if inventory_id in seen_inventory_ids:
+                if is_full:
+                    # Publicación Full sin inventory_id = sin pool propio en
+                    # Full; su available_quantity es stock del depósito del
+                    # vendedor, no stock Full (ver docstring).
+                    if not inventory_id or inventory_id in seen_inventory_ids:
                         continue
                     seen_inventory_ids.add(inventory_id)
                 (stock_full if is_full else stock_nofull)[sku] += qty
@@ -591,8 +601,8 @@ def ml_stock_by_sku(item_details):
                 continue
             qty = body.get("available_quantity", 0) or 0
             inventory_id = body.get("inventory_id")
-            if is_full and inventory_id:
-                if inventory_id in seen_inventory_ids:
+            if is_full:
+                if not inventory_id or inventory_id in seen_inventory_ids:
                     continue
                 seen_inventory_ids.add(inventory_id)
             (stock_full if is_full else stock_nofull)[sku] += qty

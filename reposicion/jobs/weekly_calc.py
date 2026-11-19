@@ -251,7 +251,7 @@ def get_coverage_days(config):
     rows = db.select(config, "repo_settings", params={"clave": "eq.coverage_days", "select": "valor"})
     if rows:
         return int(rows[0]["valor"])
-    return 60  # default de negocio (ver Contexto del plan — reemplaza el 40 hardcodeado original)
+    return 30  # default de negocio: 30 días de cobertura (pedido del usuario 2026-11-19; antes 60)
 
 
 def get_descontinuados(config):
