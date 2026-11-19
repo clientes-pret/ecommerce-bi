@@ -10,7 +10,7 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import { COLUMNAS_REVENDEDOR, ML_API, mlGet, type Revendedor, tokenValido, USER_AGENT } from "../_shared/rev_ml.ts";
 import { sinFotosDeMarca } from "../_shared/fotos_marca.ts";
 import {
-  claveResultado, COMISION_ML_ESTIMADA, colorDe, erroresML, esMarcaPropia, estadoFinal, type ItemML, limpiarDescripcion, marcaDe,
+  claveCondicion, claveResultado, COMISION_ML_ESTIMADA, colorDe, condicionDeItem, minutosDePausa, RITMO, erroresML, esMarcaPropia, estadoFinal, type ItemML, limpiarDescripcion, marcaDe,
   type OpcionesMasivas, payloadCatalogo, payloadTradicional, precioPorRegla, skuDe, type TipoVenta, type VariacionML,
 } from "./logic.ts";
 
@@ -21,6 +21,12 @@ const PRET_ML_USER = 1255615205;
 
 export type Json = Record<string, unknown>;
 export class ErrorUsuario extends Error {} // mensaje para mostrarle tal cual al revendedor
+/** ML pidió frenar (429) aunque se reintentó con espera: hay que cortar y seguir más tarde. */
+export class LimiteML extends Error {}
+/** Se llegó al cupo de publicaciones de esta corrida: se sigue en la próxima (cada minuto). */
+export class PausaRitmo extends Error {}
+const dormirMs = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
+const conAzar = (ms: number) => ms + Math.floor(Math.random() * ms * 0.5); // jitter, como pide ML
 
 export async function tokenPret(): Promise<string> {
   const { data } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).eq("ml_user_id", PRET_ML_USER).maybeSingle();
@@ -40,7 +46,8 @@ export async function mlEnviar(token: string, method: "POST" | "PUT", path: stri
     const texto = await r.text();
     let cuerpo: unknown = null;
     try { cuerpo = texto ? JSON.parse(texto) : null; } catch { cuerpo = { message: texto.slice(0, 300) }; }
-    if ((r.status === 429 || r.status >= 500) && intento < 2) { await new Promise((ok) => setTimeout(ok, 1500 * (intento + 1))); continue; }
+    if ((r.status === 429 || r.status >= 500) && intento < 2) { await dormirMs(conAzar(2000 * 2 ** intento)); continue; }
+    if (r.status === 429) throw new LimiteML("Mercado Libre pidió ir más despacio.");
     return { status: r.status, body: cuerpo };
   }
   return { status: 0, body: null };
@@ -134,13 +141,37 @@ export interface PedidoProducto {
 /** Crea las publicaciones de UN producto en la cuenta del revendedor. `hechos` = claves ya publicadas (se saltean);
  *  `alGuardar` se llama después de cada intento (la cola guarda el avance, así un corte no repite publicaciones). */
 export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret: string, p: PedidoProducto,
-  hechos = new Set<string>(), alGuardar?: (r: Resultado) => Promise<void>): Promise<Resultado[]> {
+  hechos = new Set<string>(), alGuardar?: (r: Resultado) => Promise<void>, cupo?: { restantes: number }): Promise<Resultado[]> {
   const resultados: Resultado[] = [];
+  // Publicaciones que el revendedor ya tiene de cada SKU, con su condición de venta (para no crear duplicadas).
+  const condiciones = new Map<string, Set<string>>();
+  async function condicionesDe(sku: string): Promise<Set<string>> {
+    if (condiciones.has(sku)) return condiciones.get(sku)!;
+    const { data } = await supabase.from("rev_publicaciones").select("ml_item_id").eq("revendedor_id", rev.id).eq("sku", sku);
+    const ids = [...new Set(((data ?? []) as { ml_item_id: string }[]).map((x) => x.ml_item_id))];
+    const set = new Set<string>();
+    for (const id of ids) {
+      const r = await mlGet<{ status?: string; listing_type_id?: string; catalog_listing?: boolean }>(tokRev, `/items/${id}?attributes=id,status,listing_type_id,catalog_listing`);
+      if (r.status === 429) throw new LimiteML("Mercado Libre pidió ir más despacio.");
+      const c = condicionDeItem(r.body);
+      if (c) set.add(c);
+    }
+    condiciones.set(sku, set);
+    return set;
+  }
   const anotar = async (r: Resultado) => { resultados.push(r); if (alGuardar) await alGuardar(r); };
   const filas = await publicacionesPret(p.skus);
 
   async function crear(sku: string, tipo: Resultado["tipo"], tv: TipoVenta, payload: Json, descripcion: string | null) {
     const base: Resultado = { sku, tipo, tipo_venta: tv, ok: false, precio: p.precios.get(sku) };
+    if ((await condicionesDe(sku)).has(claveCondicion(tipo, tv))) {
+      return anotar({ ...base, error: "Ya tenés una publicación igual de este producto (mismo tipo y mismas cuotas). Mercado Libre no permite publicaciones duplicadas: no se creó otra." });
+    }
+    if (cupo) {
+      if (cupo.restantes <= 0) throw new PausaRitmo("cupo de la corrida");
+      cupo.restantes--;
+    }
+    await dormirMs(conAzar(RITMO.pausaEntreCreacionesMs)); // espaciar las creaciones, como recomienda ML
     const v = await mlEnviar(tokRev, "POST", "/items/validate", payload);
     const errV = erroresML(v.status, v.body);
     if (errV.length) return anotar({ ...base, error: "Mercado Libre no lo acepta: " + errV.join(" · ") });
@@ -163,6 +194,7 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
       revendedor_id: rev.id, ml_item_id: it.id, ml_variation_id: null, sku, estado_ml: r.estado ?? null, precio: p.precios.get(sku),
     });
     if (error && !/duplicate|unique/i.test(error.message)) console.error(`rev_publicaciones ${it.id}: ${error.message}`);
+    condiciones.get(sku)?.add(claveCondicion(tipo, tv));
     await anotar(r);
   }
 
@@ -251,7 +283,7 @@ async function liberarTrabados() {
   }
 }
 
-async function procesarFila(f: FilaCola, tokPret: string) {
+async function procesarFila(f: FilaCola, tokPret: string, cupo: { restantes: number }) {
   const op = f.opciones;
   const { data: revRow } = await supabase.from("rev_revendedores").select(COLUMNAS_REVENDEDOR).eq("id", f.revendedor_id).maybeSingle();
   const rev = revRow as Revendedor | null;
@@ -304,7 +336,7 @@ async function procesarFila(f: FilaCola, tokPret: string) {
     await publicarProducto(rev, tokRev, tokPret, {
       itemId: f.item_id, skus: validos, precios, cantidades, tradicional: op.tradicional && !!f.item_id, catalogo: op.catalogo,
       marca: marcaOk ? op.marca : null, tiposVenta: op.tipos_venta, pausada: op.pausada,
-    }, hechos, async (r) => { nuevos.push(r); await guardar(); });
+    }, hechos, async (r) => { nuevos.push(r); await guardar(); }, cupo);
   }
   const todos = [...previos, ...nuevos].filter((r) => r.ml_item_id || r.error); // los avisos no cuentan para el estado
   const sinNada = !todos.length;
@@ -312,23 +344,41 @@ async function procesarFila(f: FilaCola, tokPret: string) {
 }
 
 /** Procesa la cola mientras quede tiempo (la función tiene un límite de duración). Devuelve cuántos productos procesó. */
-export async function procesarCola(presupuestoMs = 100_000): Promise<{ procesados: number }> {
+export async function procesarCola(presupuestoMs = 100_000): Promise<{ procesados: number; pausado?: string }> {
   const inicio = Date.now();
+  // Si ML pidió frenar hace poco, esta corrida no hace nada (la pausa crece si vuelve a pasar).
+  const { data: est } = await supabase.from("rev_sync_estado").select("detalle").eq("clave", "publicar_pausa").maybeSingle();
+  const pausa = (est?.detalle ?? {}) as { hasta?: string; veces?: number };
+  if (pausa.hasta && Date.parse(pausa.hasta) > Date.now()) return { procesados: 0, pausado: `hasta ${pausa.hasta}` };
   await liberarTrabados();
-  let procesados = 0;
+  let procesados = 0, frenado = false;
   let tokPret: string | null = null;
-  while (Date.now() - inicio < presupuestoMs) {
+  const cupo = { restantes: RITMO.creacionesPorCorrida };
+  while (Date.now() - inicio < presupuestoMs && cupo.restantes > 0) {
     const f = await tomarSiguiente();
     if (!f) break;
     try {
       tokPret ??= await tokenPret();
-      await procesarFila(f, tokPret);
+      await procesarFila(f, tokPret, cupo);
     } catch (e) {
+      if (e instanceof PausaRitmo || e instanceof LimiteML) {
+        // No es un error del producto: vuelve a la cola tal como estaba (sin gastar un intento) y se sigue después.
+        await supabase.from("rev_publicar_cola").update({ estado: "pendiente", intentos: f.intentos }).eq("id", f.id);
+        if (e instanceof LimiteML) {
+          frenado = true;
+          const veces = (pausa.veces ?? 0) + 1;
+          const hasta = new Date(Date.now() + minutosDePausa(veces) * 60_000).toISOString();
+          await supabase.from("rev_sync_estado").upsert({ clave: "publicar_pausa", ultimo_at: new Date().toISOString(), resultado: "pausa_por_limite_ml", detalle: { hasta, veces } }, { onConflict: "clave" });
+        }
+        break;
+      }
       console.error(`cola ${f.id}:`, (e as Error).message);
       // Error pasajero (ML, red): vuelve a la cola; el reintento saltea lo ya publicado.
       await supabase.from("rev_publicar_cola").update({ estado: f.intentos + 1 >= 3 ? "error" : "pendiente", error: (e as Error).message }).eq("id", f.id);
     }
     procesados++;
   }
+  // Una corrida sin que ML pida frenar reinicia la cuenta de pausas.
+  if (!frenado && pausa.veces) await supabase.from("rev_sync_estado").upsert({ clave: "publicar_pausa", ultimo_at: new Date().toISOString(), resultado: "ok", detalle: { veces: 0 } }, { onConflict: "clave" });
   return { procesados };
 }

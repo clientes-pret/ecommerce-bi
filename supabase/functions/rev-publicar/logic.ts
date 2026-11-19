@@ -324,3 +324,23 @@ export function periodo(desde: unknown, hasta: unknown, ahora = new Date()): { d
   return { desde: d, hasta: h };
 }
 
+
+// ───────────────────────── Cuidar la cuenta: ritmo, límites de ML y duplicados (19/11/2026) ─────────────────────────
+// Documentación de ML (developers.mercadolibre.com.ar, "Rate limit / Error 429" y "Buenas prácticas"): el límite se
+// cuenta por aplicación, no publican números; ante 429 hay que esperar (backoff) y espaciar; las acciones masivas mal
+// hechas pueden sancionar la cuenta del vendedor. Ayuda de ML 2517 "Publicaciones duplicadas": no se permite el mismo
+// producto con las mismas condiciones de venta; sí con distinta forma de envío o de pago (Clásica vs Premium).
+
+/** Cuántas publicaciones crea la publicación masiva por minuto, y la pausa entre una y otra. */
+export const RITMO = { creacionesPorCorrida: 10, pausaEntreCreacionesMs: 2000 };
+
+/** Minutos de pausa después de que ML pidió frenar (429) N veces seguidas: 1, 2, 4, 8, 16 y como máximo 30. */
+export const minutosDePausa = (vecesSeguidas: number) => Math.min(30, 2 ** Math.max(0, vecesSeguidas - 1));
+
+/** "Condición de venta" de una publicación: tradicional o catálogo + tipo (Clásica/Premium). Dos publicaciones del mismo
+ *  SKU con la misma condición en la misma cuenta son duplicadas para ML. Las finalizadas no cuentan. */
+export const claveCondicion = (tipo: "tradicional" | "catalogo", tipoVenta: string) => `${tipo}|${tipoVenta}`;
+export function condicionDeItem(it: { status?: string | null; listing_type_id?: string | null; catalog_listing?: boolean | null } | null): string | null {
+  if (!it || !it.listing_type_id || it.status === "closed") return null;
+  return claveCondicion(it.catalog_listing ? "catalogo" : "tradicional", it.listing_type_id);
+}

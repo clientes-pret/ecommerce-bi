@@ -25,7 +25,7 @@ const dlg = $('#dlg');
 const ESTADO_REV = { activo: ['Activo', 'ok'], inactivo: ['Desactivado', 'bad'], desconectado: ['Sin conexión con ML', 'warn'], pausado: ['Pausado', ''] };
 
 function pintarRevendedores(revsRpc, cuenta) {
-  const usuarios = new Map(revsRpc.map((r) => [r.id, r.usuarios]));
+  const usuarios = new Map((resumen?.revendedores || []).map((r) => [r.id, (r.usuarios || []).join(', ')]));
   const lista = resumen?.revendedores || [];
   $('#revSec').innerHTML = `<div class="cab"><div><h2>Revendedores</h2><span class="muted">Activá o desactivá cada uno, elegí si sus ventas descuentan stock solas y cargá su ficha</span></div></div>
     <div class="scroll"><table class="apilar" style="min-width:980px"><thead><tr><th scope="col">Revendedor</th><th scope="col">Estado</th><th scope="col">Descuento de stock</th><th scope="col" class="r">Publicaciones</th><th scope="col">Usuarios del portal</th><th scope="col" class="r" title="Solo ventas reales (ya descontadas del stock). En modo prueba es 0: lo simulado está arriba.">Te debe (ventas reales)</th><th scope="col"></th></tr></thead><tbody>${
@@ -42,7 +42,7 @@ function pintarRevendedores(revsRpc, cuenta) {
         <td class="r num" data-label="Publicaciones"><a href="vinculadas.html?r=${r.id}">${num.format(r.publicaciones.vinculadas)}</a><div class="muted small">${r.publicaciones.activas} activas</div></td>
         <td data-label="Usuarios">${usuarios.get(r.id) ? esc(usuarios.get(r.id)) : '<span class="muted">ninguno</span>'}</td>
         <td class="r num" data-label="Te debe" style="font-weight:600">${peso0(cuenta.get(r.id)?.saldo || 0)}</td>
-        <td class="full"><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="ficha">Ficha</button><a class="btn sm" href="cuenta.html?r=${r.id}">Ver cuenta</a></div><span class="small err" data-e></span></td></tr>`;
+        <td class="full"><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="ficha">Ficha</button><button class="btn sm" data-a="acceso">Acceso al portal</button><a class="btn sm" href="cuenta.html?r=${r.id}">Ver cuenta</a></div><span class="small err" data-e></span></td></tr>`;
     }).join('') || '<tr><td colspan="7" class="muted">Todavía no hay revendedores conectados. Pasales el link de abajo.</td></tr>'}</tbody></table></div>`;
   const porId = new Map(lista.map((r) => [String(r.id), r]));
   $('#revSec').onclick = async (e) => {
@@ -52,6 +52,7 @@ function pintarRevendedores(revsRpc, cuenta) {
       try { await apiPublicar('admin/revendedor/estado', { id: r.id, activo: true }); cargar(); } catch (err) { msg.textContent = err.message; }
     } else if (b.dataset.a === 'desactivar') abrirDesactivar(r);
     else if (b.dataset.a === 'ficha') abrirFicha(r);
+    else if (b.dataset.a === 'acceso') abrirAcceso(r);
   };
   $('#revSec').onchange = async (e) => {
     const sel = e.target.closest('[data-a="descuento"]'); if (!sel) return;
@@ -72,6 +73,35 @@ function abrirDesactivar(r) {
   $('#dOk', dlg).onclick = async () => {
     const modo = $('input[name="m"]:checked', dlg).value;
     try { await apiPublicar('admin/revendedor/estado', { id: r.id, activo: false, modo }); dlg.close(); cargar(); } catch (err) { $('#dErr', dlg).textContent = err.message; }
+  };
+}
+
+// Acceso al portal: el administrador elige usuario y contraseña (si el usuario ya existe, se le cambia la contraseña).
+function generarClave() {
+  const a = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789', x = new Uint32Array(12);
+  crypto.getRandomValues(x);
+  return [...x].map((n) => a[n % a.length]).join('');
+}
+function abrirAcceso(r) {
+  const usuarioActual = (r.usuarios || [])[0] || String(r.nickname || '').toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  dlg.innerHTML = `<form method="dialog" style="padding:20px 22px" id="fa"><h2 style="margin-top:0">Acceso al portal de ${esc(r.nickname || '')}</h2>
+    <p class="muted small">Con esto entra a https://clientes-pret.github.io/ecommerce-bi/revendedores/. Si el usuario ya existe, se le cambia la contraseña.</p>
+    <label for="aUsr">Usuario</label><input id="aUsr" value="${esc(usuarioActual)}" autocomplete="off" autocapitalize="none" spellcheck="false">
+    <label for="aPwd">Contraseña nueva</label>
+    <div class="row" style="gap:8px"><input id="aPwd" type="text" minlength="8" autocomplete="new-password" spellcheck="false" style="flex:1"><button class="btn" type="button" id="aGen">Generar</button></div>
+    <p class="muted small">Mínimo 8 caracteres. Pasásela por un canal privado.</p>
+    <p class="small" id="aMsg"></p>
+    <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn" value="no">Cerrar</button><button class="btn primary" id="aOk" type="button">Guardar acceso</button></div></form>`;
+  dlg.showModal();
+  $('#aGen', dlg).onclick = () => { $('#aPwd', dlg).value = generarClave(); };
+  $('#aOk', dlg).onclick = async () => {
+    const usuario = $('#aUsr', dlg).value.trim(), password = $('#aPwd', dlg).value;
+    try {
+      const x = await apiPublicar('admin/revendedor/acceso', { id: r.id, usuario, password });
+      $('#aMsg', dlg).className = 'small ok-t';
+      $('#aMsg', dlg).innerHTML = `${x.creado ? 'Usuario creado' : 'Contraseña cambiada'}. Usuario: <b>${esc(usuario)}</b> · <a href="#" id="aCopiar">Copiar usuario y contraseña</a>`;
+      $('#aCopiar', dlg).onclick = async (e) => { e.preventDefault(); try { await navigator.clipboard.writeText(`Portal: https://clientes-pret.github.io/ecommerce-bi/revendedores/\nUsuario: ${usuario}\nContraseña: ${password}`); $('#aCopiar', dlg).textContent = 'Copiado'; } catch { /* sin portapapeles */ } };
+    } catch (err) { $('#aMsg', dlg).className = 'small err'; $('#aMsg', dlg).textContent = err.message; }
   };
 }
 
@@ -170,6 +200,10 @@ async function cargar() {
     <form id="fm" class="row wrapRow"><div style="width:140px"><label for="mg" style="margin-top:0">Margen sobre costo (%)</label><input id="mg" inputmode="decimal" value="${margen != null ? String(margen).replace('.', ',') : ''}" placeholder="ej. 30" required></div>
     <button class="btn primary" style="align-self:flex-end">Guardar margen</button><span id="mgMsg" class="small" style="align-self:flex-end;padding-bottom:12px"></span></form>
     ${margen == null ? '<p class="warn-t small" style="margin-bottom:0"><b>Todavía no está definido:</b> los revendedores ven "a definir" en el precio mayorista y las ventas no suman al saldo.</p>' : ''}
+    <h2 style="margin:20px 0 0">Colchón de stock</h2>
+    <p class="muted small" style="margin-top:4px">Unidades que te guardás de cada producto: a los revendedores se les ofrece el stock del depósito menos este número. Se aplica en el próximo cálculo (cada 5 minutos).</p>
+    <form id="fc" class="row wrapRow"><div style="width:140px"><label for="cl" style="margin-top:0">Unidades por producto</label><input id="cl" type="number" min="0" max="100" step="1" value="${esc(String(resumen?.config?.colchon ?? ''))}" required></div>
+    <button class="btn primary" style="align-self:flex-end">Guardar colchón</button><span id="clMsg" class="small" style="align-self:flex-end;padding-bottom:12px"></span></form>
   </section>
   <section class="card tabla" id="revSec"></section>
   <section class="card"><h2 style="margin-top:0">Conectar un revendedor nuevo</h2>
@@ -177,12 +211,7 @@ async function cargar() {
     <div class="row wrapRow" style="gap:8px"><input id="lnk" readonly style="flex:1;min-width:260px" aria-label="Link para conectar">
       <button class="btn primary" id="lnkCopiar" type="button">Copiar link</button><a class="btn" id="lnkWa" target="_blank" rel="noopener">Mandar por WhatsApp</a></div>
     <span id="lnkMsg" class="small ok-t"></span></section>
-  <div class="grid dos">
-    <section class="card"><h2 style="margin-top:0">Dar acceso al portal</h2>
-      <p class="muted small" style="margin-top:0">Primero invitá a la persona desde Supabase → Authentication → Users → Invite user. Después vinculá su email al revendedor.</p>
-      <form id="fu"><label for="uEmail">Email del usuario</label><input id="uEmail" type="email" required>
-      <label for="uRev">Revendedor</label><select id="uRev" required>${revs.map((r) => `<option value="${r.id}">${esc(r.nickname || 'ID ' + r.id)}</option>`).join('')}</select>
-      <div class="pie"><span id="uMsg" class="small"></span><button class="btn primary">Vincular</button></div></form></section>
+  <div>
     <section class="card"><h2 style="margin-top:0">Registrar un pago recibido</h2>
       <form id="fp"><label for="pRev">Revendedor</label><select id="pRev" required>${revs.map((r) => `<option value="${r.id}">${esc(r.nickname || 'ID ' + r.id)}</option>`).join('')}</select>
       <div class="campos"><div><label for="pFecha">Fecha</label><input id="pFecha" type="date" value="${hoy()}" required></div><div><label for="pMonto">Monto ($)</label><input id="pMonto" inputmode="decimal" placeholder="0" required></div></div>
@@ -201,12 +230,10 @@ async function cargar() {
   pintarVentas();
   pintarRevendedores(revs, cuenta);
   pintarLink();
-  $('#fu').onsubmit = async (e) => {
+  $('#fc').onsubmit = async (e) => {
     e.preventDefault();
-    const { error } = await sb.rpc('rev_vincular_usuario', { p_email: $('#uEmail').value, p_revendedor: Number($('#uRev').value) });
-    $('#uMsg').className = 'small ' + (error ? 'err' : 'ok-t');
-    $('#uMsg').textContent = error ? error.message : 'Vinculado.';
-    if (!error) setTimeout(cargar, 600);
+    try { await apiPublicar('admin/config/colchon', { colchon: Number($('#cl').value) }); $('#clMsg').className = 'small ok-t'; $('#clMsg').textContent = 'Guardado: se aplica en el próximo cálculo de stock.'; }
+    catch (err) { $('#clMsg').className = 'small err'; $('#clMsg').textContent = err.message; }
   };
   $('#fp').onsubmit = async (e) => {
     e.preventDefault();

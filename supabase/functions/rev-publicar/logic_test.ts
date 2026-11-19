@@ -212,3 +212,14 @@ Deno.test("período de ventas", () => {
   assertEquals(periodo("2024-01-01", "2026-11-01", ahora), null);          // más de un año
   assertEquals(periodo(null, null, new Date("2026-11-20T02:00:00Z"))?.hasta, "2026-11-19"); // 23 h en Argentina: sigue siendo 19
 });
+
+import { claveCondicion, condicionDeItem, minutosDePausa } from "./logic.ts";
+Deno.test("pausa ante el límite de ML: crece y tiene tope", () => {
+  assertEquals([1, 2, 3, 4, 5, 6, 9].map(minutosDePausa), [1, 2, 4, 8, 16, 30, 30]);
+});
+Deno.test("duplicados: misma condición = mismo tipo y mismas cuotas; las finalizadas no cuentan", () => {
+  assertEquals(condicionDeItem({ status: "active", listing_type_id: "gold_special", catalog_listing: false }), claveCondicion("tradicional", "gold_special"));
+  assertEquals(condicionDeItem({ status: "paused", listing_type_id: "gold_pro", catalog_listing: true }), "catalogo|gold_pro");
+  assertEquals(condicionDeItem({ status: "closed", listing_type_id: "gold_pro" }), null);
+  assertEquals(condicionDeItem(null), null);
+});

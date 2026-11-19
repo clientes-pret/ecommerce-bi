@@ -61,8 +61,9 @@ export async function resumen() {
     if (p.sku) { r.vinculadas++; r.skus.add(p.sku); if (p.estado_ml === "active") r.activas++; }
   }
   const skusPublicados = new Set(pubs.filter((p) => p.sku).map((p) => p.sku!));
+  const usuarios = await usuariosDe(ids);
   return {
-    revendedores: revs.map((r) => ({ ...r, publicaciones: { total: porRev[r.id]?.total ?? 0, vinculadas: porRev[r.id]?.vinculadas ?? 0, activas: porRev[r.id]?.activas ?? 0, skus: porRev[r.id]?.skus.size ?? 0 } })),
+    revendedores: revs.map((r) => ({ ...r, usuarios: usuarios[r.id] ?? [], publicaciones: { total: porRev[r.id]?.total ?? 0, vinculadas: porRev[r.id]?.vinculadas ?? 0, activas: porRev[r.id]?.activas ?? 0, skus: porRev[r.id]?.skus.size ?? 0 } })),
     ventas, pagos, titulos,
     skus_publicados: skusPublicados.size,
     procesos: sync.data ?? [],
@@ -187,3 +188,69 @@ export async function descontarVenta(b: Json) {
 
 /** Link que se le pasa a un revendedor nuevo para conectar su cuenta de Mercado Libre. */
 export const linkConectar = () => ({ link: `${URL_SB}/functions/v1/rev-prueba/conectar` });
+
+// ───────────────────────── Colchón de stock y acceso al portal (19/11/2026) ─────────────────────────
+
+/** Colchón de stock: unidades que se reservan por SKU (stock ofrecido = depósito − colchón). Lo usa rev-sync en su
+ *  próxima corrida (cada 5 minutos). */
+export async function cambiarColchon(b: Json) {
+  const v = Number(b.colchon);
+  if (!Number.isInteger(v) || v < 0 || v > 100) throw new Error("El colchón tiene que ser un número entero entre 0 y 100.");
+  const { error } = await supabase.from("rev_config").upsert({ clave: "colchon", valor: v, actualizado_at: new Date().toISOString() }, { onConflict: "clave" });
+  if (error) throw new Error(error.message);
+  return { ok: true, colchon: v };
+}
+
+const DOMINIO_USUARIOS = "usuarios.revendedores.pretahome.com.ar"; // mismo que revendedores/app.js (usuario sin email)
+const emailDe = (u: string) => (u.includes("@") ? u.trim().toLowerCase() : `${u.trim().toLowerCase()}@${DOMINIO_USUARIOS}`);
+
+/** Acceso al portal de un revendedor: crea el usuario (o le cambia la contraseña si ya existe) y lo vincula. El usuario
+ *  puede ser un nombre ("casapinar") o un email. La contraseña la elige el administrador (mínimo 8 caracteres). */
+export async function guardarAcceso(b: Json) {
+  const r = await revendedorEditable(Number(b.id));
+  const usuario = String(b.usuario ?? "").trim();
+  const clave = String(b.password ?? "");
+  if (!/^[a-zA-Z0-9._@+-]{3,80}$/.test(usuario)) throw new Error("El usuario tiene que tener entre 3 y 80 letras o números (sin espacios), o ser un email.");
+  if (clave.length < 8) throw new Error("La contraseña tiene que tener al menos 8 caracteres.");
+  const email = emailDe(usuario);
+  // ¿Ya existe ese usuario? (la API de administración no busca por email: se recorre la lista, que es corta)
+  let existente: { id: string } | null = null;
+  for (let pagina = 1; pagina <= 20 && !existente; pagina++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page: pagina, perPage: 200 });
+    if (error) throw new Error(error.message);
+    existente = data.users.find((u) => (u.email ?? "").toLowerCase() === email) ?? null;
+    if (data.users.length < 200) break;
+  }
+  let uid: string;
+  if (existente) {
+    const { data: vin } = await supabase.from("rev_usuarios").select("revendedor_id").eq("user_id", existente.id).maybeSingle();
+    if (!vin) throw new Error("Ese usuario ya existe y no es de un revendedor: elegí otro nombre.");
+    if (vin.revendedor_id !== r.id) throw new Error("Ese usuario ya es de otro revendedor: elegí otro nombre.");
+    const { error } = await supabase.auth.admin.updateUserById(existente.id, { password: clave });
+    if (error) throw new Error(error.message);
+    uid = existente.id;
+  } else {
+    const { data, error } = await supabase.auth.admin.createUser({ email, password: clave, email_confirm: true, user_metadata: { usuario } });
+    if (error || !data.user) throw new Error(error?.message ?? "No se pudo crear el usuario.");
+    uid = data.user.id;
+  }
+  const { error: e2 } = await supabase.from("rev_usuarios").upsert({ user_id: uid, revendedor_id: r.id }, { onConflict: "user_id" });
+  if (e2) throw new Error(e2.message);
+  return { ok: true, usuario, creado: !existente };
+}
+
+/** Usuarios del portal de cada revendedor (para mostrar en el panel; nunca la contraseña). */
+export async function usuariosDe(ids: number[]) {
+  const { data: vin } = await supabase.from("rev_usuarios").select("user_id,revendedor_id").in("revendedor_id", ids);
+  const out: Record<number, string[]> = {};
+  if (!vin?.length) return out;
+  for (let pagina = 1; pagina <= 20; pagina++) {
+    const { data } = await supabase.auth.admin.listUsers({ page: pagina, perPage: 200 });
+    for (const u of data?.users ?? []) {
+      const v = vin.find((x) => x.user_id === u.id);
+      if (v) (out[v.revendedor_id] ??= []).push((u.email ?? "").endsWith("@" + DOMINIO_USUARIOS) ? (u.email ?? "").split("@")[0] : (u.email ?? ""));
+    }
+    if ((data?.users ?? []).length < 200) break;
+  }
+  return out;
+}

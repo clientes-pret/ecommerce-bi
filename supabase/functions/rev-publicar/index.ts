@@ -13,13 +13,13 @@
 import { COLUMNAS_REVENDEDOR, type Revendedor, tokenValido } from "../_shared/rev_ml.ts";
 import { esMarcaPropia, GANANCIA_NETA_POR_DEFECTO, leerOpcionesMasivas, leerPedido, MAX_PRODUCTOS_POR_LOTE, TIPOS_VENTA } from "./logic.ts";
 import {
-  coloresDe, comisionMLEstimada, datosSkus, detalleCatalogo, ErrorUsuario, type Json, leerItemPret, marcasPropias, procesarCola,
+  coloresDe, comisionMLEstimada, datosSkus, detalleCatalogo, ErrorUsuario, type Json, leerItemPret, LimiteML, marcasPropias, procesarCola,
   publicacionesPret, publicarProducto, supabase, tokenPret,
 } from "./nucleo.ts";
 import { marcaDe } from "./logic.ts";
 import { etiquetas, listarVentas, type Quien } from "./ventas.ts";
 import {
-  cambiarDescuento, cambiarEstado, descontarVenta, guardarFicha, guardarLogo, linkConectar, publicaciones as publicacionesAdmin, resumen as resumenAdmin,
+  cambiarColchon, cambiarDescuento, cambiarEstado, descontarVenta, guardarAcceso, guardarFicha, guardarLogo, linkConectar, publicaciones as publicacionesAdmin, resumen as resumenAdmin,
 } from "./admin.ts";
 
 const CORS = {
@@ -223,6 +223,8 @@ Deno.serve(async (req) => {
         if (ruta.endsWith("/admin/revendedor/logo")) return json(await guardarLogo(b));
         if (ruta.endsWith("/admin/descontar")) return json(await descontarVenta(b));
         if (ruta.endsWith("/admin/conectar")) return json(linkConectar());
+        if (ruta.endsWith("/admin/config/colchon")) return json(await cambiarColchon(b));
+        if (ruta.endsWith("/admin/revendedor/acceso")) return json(await guardarAcceso(b));
       } catch (e) { return fallo((e as Error).message, 400); }
       return fallo("No encontrado.", 404);
     }
@@ -246,6 +248,7 @@ Deno.serve(async (req) => {
     if (ruta.endsWith("/cancelar")) return await cancelar(quien.rev, body);
     return fallo("No encontrado.", 404);
   } catch (e) {
+    if (e instanceof LimiteML) return fallo("Mercado Libre pidió ir más despacio. Esperá unos minutos y probá de nuevo (o usá Publicar seleccionados, que va a su ritmo).", 429);
     console.error("rev-publicar:", (e as Error).message);
     return fallo(e instanceof ErrorUsuario ? e.message : (e as Error).message || "Error inesperado.", 500);
   }
