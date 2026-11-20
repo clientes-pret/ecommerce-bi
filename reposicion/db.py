@@ -18,13 +18,25 @@ import requests
 ROOT = Path(__file__).parent.parent
 
 
+# Claves que se pueden cambiar sin rehacer el secret CONFIG_JSON entero (que no se puede leer de vuelta):
+# si la variable de entorno existe y no está vacía, pisa ese campo. Rotación de credenciales del 20/11/2026.
+_OVERRIDES = {
+    "ML_PRET_CLIENT_SECRET": ("ml_pret", "client_secret"),
+}
+
+
 def load_config():
     raw = os.environ.get("CONFIG_JSON")
     if raw:
-        return json.loads(raw)
-    config_path = ROOT / "config.json"
-    with open(config_path) as f:
-        return json.load(f)
+        config = json.loads(raw)
+    else:
+        with open(ROOT / "config.json") as f:
+            config = json.load(f)
+    for var, (canal, campo) in _OVERRIDES.items():
+        valor = os.environ.get(var, "").strip()
+        if valor and canal in config.get("channels", {}):
+            config["channels"][canal][campo] = valor
+    return config
 
 
 def _sb(config):

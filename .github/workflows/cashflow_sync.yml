@@ -23,6 +23,7 @@ jobs:
       - run: python3 -m reposicion.cashflow_sync ${DESDE:+--desde "$DESDE"}
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}
           DESDE: ${{ github.event.inputs.desde }}
       # Scorecard de Tiendanube (ventas, costo y neta de Pret y Laván) desde la API. Va después del paso anterior porque
       # la neta usa los cobros de Pago Nube que calcula ese paso; corre aunque ese paso haya fallado.
@@ -30,6 +31,7 @@ jobs:
         if: always()
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}
           DESDE: ${{ github.event.inputs.desde }}
       # Scorecard de Mercado Libre (ventas, neto en MercadoPago y costo de Pret y Laván), mismos criterios que la planilla de
       # rentabilidad de ML. Siempre los últimos 4 días (la carga histórica de ML se hace a mano: es lenta).
@@ -37,3 +39,4 @@ jobs:
         if: always()
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}

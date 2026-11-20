@@ -17,3 +17,4 @@ jobs:
       - run: python3 -m reposicion.jobs.daily_stock
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}

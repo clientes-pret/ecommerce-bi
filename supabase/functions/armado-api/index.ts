@@ -59,6 +59,14 @@ type CredML = {
 const CRED: { tn: Record<Tienda, CredTN>; ml: Record<Tienda, CredML> } = JSON.parse(
   Deno.env.get("ARMADO_CREDENCIALES") ?? "{}",
 );
+// La app de ML de Pret es la misma que usan los revendedores: su clave secreta vive en ML_REV_CLIENT_SECRET y gana sobre
+// la copia de ARMADO_CREDENCIALES, así al rotarla se cambia en un solo lugar (20/11/2026).
+{
+  const revId = Deno.env.get("ML_REV_CLIENT_ID") ?? "", revSecret = Deno.env.get("ML_REV_CLIENT_SECRET") ?? "";
+  for (const t of Object.keys(CRED.ml ?? {}) as Tienda[]) {
+    if (revId && revSecret && String(CRED.ml[t].client_id) === revId) CRED.ml[t].client_secret = revSecret;
+  }
+}
 
 // El sufijo fijo que Zeta agrega al "did" del QR para armar el token de seguimiento (ZETA_TOKEN_SUFIJO,
 // ej. 1571347d54df4s8a513) vive en despacho.ts, que también interpreta los QR del modo Despacho.
