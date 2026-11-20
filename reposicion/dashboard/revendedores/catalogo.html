@@ -354,7 +354,16 @@ dp.addEventListener('change', (e) => {
   else return;
   const y = $('.dp-cuerpo', dp)?.scrollTop; pintarPanel(); if (y != null && $('.dp-cuerpo', dp)) $('.dp-cuerpo', dp).scrollTop = y;
 });
-// Precio y marca se escriben: se actualiza solo el resumen sin redibujar el campo (para no perder el cursor).
+// Después de redibujar un panel mientras se escribe, devuelve el foco al campo con el cursor donde estaba. Los campos de
+// número no informan la posición del cursor (selectionStart es null): sin esto quedaba al principio y "100" se escribía
+// "001" (20/11/2026). En esos se vuelve a poner el valor, lo que deja el cursor al final, que es donde se está escribiendo.
+function volverAlCampo(el, pos) {
+  if (!el) return;
+  el.focus();
+  if (el.type === 'number' || pos == null) { const v = el.value; el.value = ''; el.value = v; return; }
+  try { el.setSelectionRange(pos, pos); } catch { /* campo sin selección */ }
+}
+// Precio, ganancia, marca y recargo: se redibuja el panel y se vuelve al campo.
 dp.addEventListener('input', (e) => {
   if (e.target.id === 'dpPrecio') { st.precio = e.target.value; st.modoPrecio = 'manual'; }
   else if (e.target.id === 'dpGan') { st.ganancia = Number(e.target.value) || 0; st.modoPrecio = 'margen'; }
@@ -363,7 +372,7 @@ dp.addEventListener('input', (e) => {
   else return;
   const foco = e.target.id, pos = e.target.selectionStart;
   pintarPanel();
-  const el = $('#' + foco, dp); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch { /* number */ } }
+  volverAlCampo($('#' + foco, dp), pos);
 });
 
 async function publicarYa() {
@@ -479,9 +488,9 @@ dm.addEventListener('input', (e) => {
   else if (t.id === 'pctMargen') { om.pctMargen = Number(t.value) || 0; om.regla = 'margen'; }
   else if (t.id === 'pctRec') om.recargo = Number(String(t.value).replace(',', '.')) || 0;
   else return;
-  const id = t.id, y = $('.dp-cuerpo', dm)?.scrollTop; pintarMasivo();
+  const id = t.id, pos = t.selectionStart, y = $('.dp-cuerpo', dm)?.scrollTop; pintarMasivo();
   if ($('.dp-cuerpo', dm)) $('.dp-cuerpo', dm).scrollTop = y;
-  const el = $('#' + id, dm); if (el) { el.focus(); if (el.type === 'text') try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* */ } }
+  volverAlCampo($('#' + id, dm), pos);
 });
 
 async function encolarYa() {
