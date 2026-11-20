@@ -10,13 +10,31 @@ import { SUPABASE_URL } from '../proveedores/app.js';
 // Función "Publicar en mi cuenta" (Edge Function rev-publicar). Para probar con la función corriendo en la compu:
 // agregar ?api=http://localhost:8000 a la dirección de la página.
 const API_PUBLICAR = (new URLSearchParams(location.search).get('api') || `${SUPABASE_URL}/functions/v1/rev-publicar`).replace(/\/+$/, '');
+// Sesión cerrada en el servidor (por ejemplo, alguien tocó "Salir" en otro dispositivo con la versión vieja, que
+// cerraba todas): se borra la copia local y se manda a ingresar de nuevo, en vez de quedar trabado en "sesión venció".
+async function sesionCerrada() {
+  await cerrarLocal();
+  location.replace('index.html?vencida=1');
+  return new Promise(() => {}); // la página se va
+}
+
+// POST a rev-publicar con la sesión actual. Ante un 401 intenta renovar la sesión una vez; si tampoco sirve, a ingresar.
+async function postPublicar(ruta, body) {
+  for (let intento = 0; intento < 2; intento++) {
+    const { data } = intento === 0 ? await sb.auth.getSession() : await sb.auth.refreshSession();
+    if (!data?.session) return sesionCerrada();
+    const r = await fetch(`${API_PUBLICAR}/${ruta}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${data.session.access_token}` },
+      body: JSON.stringify(body),
+    });
+    if (r.status !== 401) return r;
+  }
+  return sesionCerrada();
+}
+
 export async function apiPublicar(ruta, body) {
-  const { data } = await sb.auth.getSession();
-  const r = await fetch(`${API_PUBLICAR}/${ruta}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${data.session?.access_token ?? ''}` },
-    body: JSON.stringify(body),
-  });
+  const r = await postPublicar(ruta, body);
   let j = null;
   try { j = await r.json(); } catch { /* sin cuerpo */ }
   if (!r.ok) throw new Error(j?.error || `No se pudo (HTTP ${r.status}).`);
@@ -25,12 +43,7 @@ export async function apiPublicar(ruta, body) {
 
 // Igual que apiPublicar, para respuestas que son un archivo (la etiqueta de envío en PDF).
 export async function apiPublicarArchivo(ruta, body) {
-  const { data } = await sb.auth.getSession();
-  const r = await fetch(`${API_PUBLICAR}/${ruta}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${data.session?.access_token ?? ''}` },
-    body: JSON.stringify(body),
-  });
+  const r = await postPublicar(ruta, body);
   if (!r.ok) {
     let j = null;
     try { j = await r.json(); } catch { /* sin cuerpo */ }
@@ -64,7 +77,14 @@ export const emailDeUsuario = (v) => {
 
 // "Salir" cierra la sesión SOLO en este navegador. Sin { scope: 'local' }, Supabase la cierra en todos los dispositivos
 // de esa cuenta, y al revendedor le aparecía "Tu sesión venció" cada vez que alguien salía de su cuenta en otro lado (20/11/2026).
-export async function salir() { await sb.auth.signOut({ scope: 'local' }); location.href = 'index.html'; }
+export async function salir() { await cerrarLocal(); location.href = 'index.html'; }
+
+// Cierra la sesión en este navegador aunque el servidor ya la haya dado por cerrada (antes, con una sesión cerrada en
+// otro lado, "Salir" fallaba y la pantalla de ingreso volvía a entrar sola con la sesión vieja: no se podía salir).
+async function cerrarLocal() {
+  try { await sb.auth.signOut({ scope: 'local' }); } catch { /* ya no existe en el servidor */ }
+  try { Object.keys(localStorage).filter((k) => k.startsWith('sb-') && k.endsWith('-auth-token')).forEach((k) => localStorage.removeItem(k)); } catch { /* sin acceso al almacenamiento */ }
+}
 
 // Verifica la sesión y quién es: un revendedor (tiene cuenta en rev_usuarios) o alguien del equipo (admin/dueño).
 // `permitidos`: ['rev', 'admin']. Si no corresponde, redirige. Devuelve { tipo, nombre, cuenta? }.
@@ -72,6 +92,9 @@ export async function guardRev(permitidos = ['rev', 'admin']) {
   if (SUPABASE_ANON_KEY.startsWith('PEGAR')) throw new Error('anon key sin configurar');
   const { data } = await sb.auth.getSession();
   if (!data.session) { location.replace('index.html'); throw new Error('sin sesión'); }
+  // La sesión guardada puede estar cerrada en el servidor: se confirma con Supabase al abrir cada página.
+  const { error: eu } = await sb.auth.getUser();
+  if (eu && (eu.status === 401 || eu.status === 403 || /session/i.test(eu.message))) { await sesionCerrada(); throw new Error('sesión cerrada'); }
   const { data: cu } = await sb.rpc('rev_mi_cuenta');
   let s = null;
   if (cu?.length) s = { tipo: 'rev', nombre: cu[0].nickname || data.session.user.email, cuenta: cu[0] };

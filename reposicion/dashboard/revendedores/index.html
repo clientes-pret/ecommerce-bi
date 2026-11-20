@@ -35,6 +35,7 @@
 import { sb, $, LINK_RECUPERO, qs, emailDeUsuario, esUsuarioSinEmail } from './app.js';
 
 if (qs('sinacceso')) $('#err').textContent = 'Tu usuario todavía no está habilitado como revendedor. Avisale a Pret a Home.';
+if (qs('vencida')) $('#err').textContent = 'Tu sesión se cerró. Volvé a entrar con tu usuario y contraseña.';
 
 // Revendedor → catálogo. Alguien del equipo (admin/dueño) → administración. Cualquier otro usuario → sin acceso.
 async function entrar(uid) {
@@ -70,7 +71,7 @@ if (LINK_RECUPERO.get('error')) {
     : 'El link no funcionó. Pedí uno nuevo con "¿Olvidaste tu contraseña?".';
   history.replaceState(null, '', location.pathname);
 } else if (data.session && LINK_RECUPERO.get('type') === 'recovery') pedirNueva(data.session);
-else if (data.session && !qs('sinacceso')) entrar(data.session.user.id);
+else if (data.session && !qs('sinacceso') && !qs('vencida')) entrar(data.session.user.id);
 
 $('#olvide').onclick = async (e) => {
   e.preventDefault();
