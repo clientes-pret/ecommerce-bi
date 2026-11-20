@@ -505,10 +505,14 @@ async function encolarYa() {
 
 // Avance: tarjeta arriba del catálogo con el último lote (se actualiza sola mientras hay algo pendiente).
 let filasCola = [], timerAvance = null, detalleAbierto = false;
+const loteCerrado = () => { try { return localStorage.getItem('rev_lote_cerrado'); } catch { return null; } };
 async function verAvance(forzar = false) {
   try { const r = await apiPublicar('lotes', {}); filasCola = r.filas || []; ML_EST = Number(r.comision_ml ?? ML_EST); GANANCIA_DEF = Number(r.ganancia_defecto ?? GANANCIA_DEF); RECARGO_DEF = Number(r.recargo_cuotas ?? RECARGO_DEF); } catch { return; } // si la función no responde, no se muestra
   if (!filasCola.length) { $('#avance').hidden = true; return; }
   const lote = filasCola[0].lote, fl = filasCola.filter((f) => f.lote === lote);
+  // "Cerrar" esconde el aviso de ESE lote en este navegador; un lote nuevo vuelve a aparecer (pedido del usuario, 20/11/2026).
+  const enCursoLote = fl.some((f) => ['pendiente', 'procesando'].includes(f.estado));
+  if (!enCursoLote && loteCerrado() === String(lote)) { $('#avance').hidden = true; return; }
   const hechos = fl.filter((f) => !['pendiente', 'procesando'].includes(f.estado)).length;
   const res = fl.flatMap((f) => f.resultados || []);
   const ok = res.filter((r) => r.ok).length, errs = res.filter((r) => r.error).length;
@@ -520,9 +524,10 @@ async function verAvance(forzar = false) {
       <span class="muted small"> · ${new Date(fl[fl.length - 1].creado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
       <div class="prog"><span style="width:${pct}%"></span></div>
       <span class="small">${hechos} de ${fl.length} productos · <b>${ok}</b> ${ok === 1 ? 'publicación creada' : 'publicaciones creadas'}${errs ? ` · <span class="bad-t">${errs} con problema</span>` : ''}${enCurso ? ' · se actualiza solo' : ''}</span></div>
-    <button class="btn sm" id="avDet">${detalleAbierto ? 'Ocultar detalle' : 'Ver detalle'}</button>${pend ? `<button class="btn sm danger" id="avCan">Cancelar lo que falta (${pend})</button>` : ''}</div>
+    <button class="btn sm" id="avDet">${detalleAbierto ? 'Ocultar detalle' : 'Ver detalle'}</button>${pend ? `<button class="btn sm danger" id="avCan">Cancelar lo que falta (${pend})</button>` : ''}${enCurso ? '' : '<button class="btn sm" id="avCerrar" title="Ocultar este aviso">Cerrar ✕</button>'}</div>
     <div id="avLista" ${detalleAbierto ? '' : 'hidden'} style="margin-top:12px;display:${detalleAbierto ? 'flex' : 'none'};flex-direction:column;gap:8px">${fl.slice().reverse().map(filaDetalle).join('')}</div>`;
   $('#avDet').onclick = () => { detalleAbierto = !detalleAbierto; verAvance(); };
+  if ($('#avCerrar')) $('#avCerrar').onclick = () => { try { localStorage.setItem('rev_lote_cerrado', String(lote)); } catch {} $('#avance').hidden = true; };
   if ($('#avCan')) $('#avCan').onclick = async () => {
     if (!confirm('¿Cancelar los productos que todavía no se publicaron? Lo ya publicado queda.')) return;
     try { await apiPublicar('cancelar', { lote }); } catch (e) { alert(e.message); }
