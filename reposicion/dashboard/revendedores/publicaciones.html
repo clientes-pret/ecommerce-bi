@@ -91,7 +91,7 @@ function pintar() {
     const stock = !ok ? '<span class="muted">—</span>'
       : `<b>${p.ofrecido != null ? num.format(p.ofrecido) : '—'}</b>`
         + `<div class="muted small" title="El stock sale del depósito (Ecomm-App) y se vuelve a leer cada 5 minutos">${p.stock_consultado_at ? 'Última revisión: ' + fechaHora(p.stock_consultado_at) : 'Última revisión: sin dato'}</div>`
-        + `<div class="muted small" title="Se manda a Mercado Libre solo cuando el stock cambia">${p.ultimo_envio_at ? 'Último cambio: ' + hace(p.ultimo_envio_at) + ' (' + num.format(p.ultima_cantidad_enviada ?? 0) + ' u.)' : 'Último cambio: todavía no se envía (modo prueba)'}</div>`;
+        + `<div class="muted small" title="Se manda a Mercado Libre solo cuando el stock cambia">${p.ultimo_envio_at ? 'Último cambio: ' + hace(p.ultimo_envio_at) : 'Último cambio: todavía no se envía (modo prueba)'}</div>`;
     return `<tr class="${p.bajo_minimo ? 'bajomin' : ''}" data-id="${p.id}">
     <td data-label="Vínculo">${vin}</td>
     <th scope="row" class="tit" style="font-weight:500"><a href="${linkML(p.ml_item_id)}" target="_blank" rel="noopener"><b>${esc(p.ml_item_id)}</b> ↗</a>${p.ml_variation_id ? ` <span class="muted small">var. ${p.ml_variation_id}</span>` : ''}<div class="muted small">${esc(p.titulo || '')}</div></th>
