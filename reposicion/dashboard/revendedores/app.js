@@ -62,7 +62,9 @@ export const emailDeUsuario = (v) => {
   return esUsuarioSinEmail(t) ? `${t}@${DOMINIO_USUARIOS}` : t;
 };
 
-export async function salir() { await sb.auth.signOut(); location.href = 'index.html'; }
+// "Salir" cierra la sesión SOLO en este navegador. Sin { scope: 'local' }, Supabase la cierra en todos los dispositivos
+// de esa cuenta, y al revendedor le aparecía "Tu sesión venció" cada vez que alguien salía de su cuenta en otro lado (20/11/2026).
+export async function salir() { await sb.auth.signOut({ scope: 'local' }); location.href = 'index.html'; }
 
 // Verifica la sesión y quién es: un revendedor (tiene cuenta en rev_usuarios) o alguien del equipo (admin/dueño).
 // `permitidos`: ['rev', 'admin']. Si no corresponde, redirige. Devuelve { tipo, nombre, cuenta? }.
@@ -77,7 +79,7 @@ export async function guardRev(permitidos = ['rev', 'admin']) {
     const { data: p } = await sb.from('cc_perfiles').select('nombre,rol').eq('id', data.session.user.id).maybeSingle();
     if (p && ['admin', 'dueno'].includes(p.rol)) s = { tipo: 'admin', nombre: p.nombre };
   }
-  if (!s) { await sb.auth.signOut(); location.replace('index.html?sinacceso=1'); throw new Error('sin acceso'); }
+  if (!s) { await sb.auth.signOut({ scope: 'local' }); location.replace('index.html?sinacceso=1'); throw new Error('sin acceso'); }
   if (!permitidos.includes(s.tipo)) { location.replace(s.tipo === 'admin' ? 'dashboard.html' : 'catalogo.html'); throw new Error('rol incorrecto'); }
   return s;
 }
