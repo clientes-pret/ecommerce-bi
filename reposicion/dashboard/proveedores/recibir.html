@@ -9,254 +9,347 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
   <link rel="stylesheet" href="estilo.css?v=12">
+  <style>
+    /* Recepción del depósito: botones grandes, una mano, nada que tipear salvo cantidades grandes. */
+    .it { border-left: 6px solid var(--line-strong); padding: 14px 16px; }
+    .it.ok { border-left-color: var(--ok); } .it.warn { border-left-color: #E07B24; } .it.falta { border-left-color: var(--line-strong); }
+    .it .var { font-size: 17px; font-weight: 600; margin-top: 2px; }
+    .barra { position: sticky; bottom: 0; display: flex; gap: 8px; padding: 14px 0 10px; background: linear-gradient(rgba(245,244,240,0), var(--bg) 22%); }
+    .fila { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: left; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); font: inherit; font-size: 17px; margin-bottom: 8px; min-height: 56px; cursor: pointer; }
+    .fila.suma { border-color: var(--ok); background: var(--ok-bg); }
+    .fila .k { font-weight: 700; min-width: 34px; text-align: center; border-radius: 999px; background: var(--ok); color: #fff; padding: 3px 10px; }
+    .grupo-t { font-weight: 700; margin: 18px 0 8px; font-size: 15px; color: var(--ink-soft); }
+    .aviso { background: var(--warn-bg); border: 1px solid #F3C9A6; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; color: var(--warn); }
+    .lista-ec { width: 100%; border-collapse: collapse; } .lista-ec td { padding: 8px 4px; border-bottom: 1px solid var(--line-soft); vertical-align: top; } .lista-ec td.q { text-align: right; font-weight: 700; font-size: 18px; white-space: nowrap; }
+  </style>
 </head>
 <body>
 <div class="narrow" id="app"></div>
 <script type="module">
-import { sb, SUPABASE_URL, SUPABASE_ANON_KEY, LECTURA_IA, $, $$, esc, guard, salir, fechaHora, chipEstado, pickSku, etiquetaProducto, achicar, aBase64 } from './app.js';
+import { sb, $, esc, guard, salir, fechaHora, achicar } from './app.js';
 
 const perfil = await guard(['deposito', 'admin', 'dueno']);
 const app = $('#app');
-const key = () => Math.random().toString(36).slice(2);
 
-const S = { paso: 'inicio', provs: [], prov: null, busq: '', recId: null, paths: [], previews: [], ocr: null, items: [], nro: '', bultos: '', completo: null, notas: '', leyendo: false, errLectura: '', enviando: false, err: '', recientes: [] };
+// ---------- Estado ----------
+// El conteo se guarda en el celular en cada toque (si se cierra la pantalla o se va la señal, no se pierde).
+const BORR = 'rec_borrador_v1';
+const S = { paso: 'inicio', provs: [], busq: '', prov: null, recId: null, items: [], pend: [], dias: 60, paths: [], subiendo: false, enviando: false, err: '', res: null, recientes: [], cargando: false };
+const leerBorrador = () => { try { return JSON.parse(localStorage.getItem(BORR) || 'null'); } catch { return null; } };
+const guardarBorrador = () => { try { if (S.prov && S.recId) localStorage.setItem(BORR, JSON.stringify({ recId: S.recId, prov: S.prov, items: S.items, paths: S.paths, dias: S.dias })); } catch { /* sin almacenamiento: sigue andando */ } };
+const borrarBorrador = () => { try { localStorage.removeItem(BORR); } catch { /* nada */ } };
 
-const { data: provs } = await sb.from('cc_proveedores').select('id,nombre').eq('activo', true).order('nombre');
-S.provs = provs || [];
-await cargarRecientes();
-render();
+async function rpc(fn, args) { const { data, error } = await sb.rpc(fn, args); if (error) throw error; return data; }
+
+const etiqueta = (p) => [p.color, p.medida].filter(Boolean).join(' · ');
+const totalU = () => S.items.reduce((a, i) => a + (i.cantidad || 0), 0);
+const conCant = () => S.items.filter((i) => i.cantidad > 0);
+const pendMap = () => new Map(S.pend.map((p) => [p.sku, p]));
+const pendDe = (sku) => { const p = pendMap().get(sku); return p ? p.pendiente : null; };
 
 async function cargarRecientes() {
-  const { data } = await sb.from('cc_recepciones_resumen').select('id,proveedor,fecha,nro_remito,estado,unidades_contadas').order('fecha', { ascending: false }).limit(15);
-  S.recientes = data || [];
+  try { S.recientes = (await rpc('rec_ultimos', { p_limite: 15 })) || []; } catch (e) { S.recientes = []; S.err = 'No pude traer las últimas cargas: ' + (e.message || 'error'); }
+}
+async function cargarPend() {
+  S.pend = (await rpc('rec_pendientes', { p_proveedor: S.prov, p_dias: S.dias })) || [];
 }
 
-function empezar() {
-  Object.assign(S, { prov: null, recId: crypto.randomUUID(), paths: [], previews: [], ocr: null, items: [], nro: '', bultos: '', completo: null, notas: '', err: '', errLectura: '', busq: '', paso: 'proveedor' });
-  render();
-}
-
-const faltan = () => S.items.filter((i) => i.contada == null || (!i.sku && !i.sinSku)).length;
-const diferencias = () => S.items.filter((i) => i.cantRemito != null && i.contada != null && i.cantRemito !== i.contada);
-
+// ---------- Pantalla base ----------
 function cabecera() {
   return `<div class="row between" style="margin-bottom:8px"><div><b>Hola ${esc(perfil.nombre)}</b><div class="muted small">Recepción de mercadería</div></div>
     <div class="row">${perfil.rol !== 'deposito' ? '<a class="btn sm" href="admin.html">Panel</a>' : ''}<button class="btn sm" id="salir">Salir</button></div></div>`;
 }
 function barra() {
-  const n = { proveedor: 1, remito: 2, items: 3, confirmar: 4 }[S.paso];
-  return n ? `<div class="steps">${[1, 2, 3, 4].map((k) => `<i class="${k <= n ? 'on' : ''}"></i>`).join('')}</div>` : '';
+  const n = { proveedor: 1, contar: 2, confirmar: 3 }[S.paso];
+  return n ? `<div class="steps">${[1, 2, 3].map((k) => `<i class="${k <= n ? 'on' : ''}"></i>`).join('')}</div>` : '';
 }
-
 function render() {
-  const vistas = { inicio: vInicio, proveedor: vProveedor, remito: vRemito, items: vItems, confirmar: vConfirmar, listo: vListo };
+  const vistas = { inicio: vInicio, proveedor: vProveedor, contar: vContar, confirmar: vConfirmar, listo: vListo, detalle: vListo };
   app.innerHTML = cabecera() + barra() + vistas[S.paso]();
   $('#salir').onclick = salir;
-  ({ inicio: bInicio, proveedor: bProveedor, remito: bRemito, items: bItems, confirmar: bConfirmar, listo: bListo })[S.paso]();
+  ({ inicio: bInicio, proveedor: bProveedor, contar: bContar, confirmar: bConfirmar, listo: bListo, detalle: bListo })[S.paso]();
 }
 
 // ---------- Inicio ----------
 function vInicio() {
-  return `<button class="btn primary big" id="nueva">＋ Nueva recepción</button><h2>Últimas cargas</h2>` +
-    (S.recientes.length ? S.recientes.map((r) => `<div class="card"><div class="row between"><b>${esc(r.proveedor)}</b>${chipEstado(r.estado)}</div>
-      <div class="muted small">${fechaHora(r.fecha)} · Remito ${esc(r.nro_remito || 's/n')} · ${r.unidades_contadas} u.</div></div>`).join('') : '<p class="muted">Todavía no cargaste nada.</p>');
+  const b = leerBorrador();
+  const sinTerminar = b && b.prov && (b.items || []).length
+    ? `<div class="card" style="border-color:var(--brand)"><b>Recepción sin terminar</b><div class="muted small">${esc(b.prov)} · ${b.items.length} productos</div>
+        <div class="row" style="margin-top:10px"><button class="btn primary grow" id="seguir">Seguir contando</button><button class="btn" id="descartar">Descartar</button></div></div>` : '';
+  return `${S.err ? `<p class="err">${esc(S.err)}</p>` : ''}${sinTerminar}<button class="btn primary big" id="nueva">＋ Nueva recepción</button><h2>Últimas cargas</h2>` +
+    (S.recientes.length ? S.recientes.map((r) => `<button class="fila" data-id="${r.id}"><span><b>${esc(r.proveedor)}</b><br><span class="muted small">${fechaHora(r.creado_at)} · ${r.productos} productos · ${r.unidades} u.</span></span>
+      ${r.estado === 'anulado' ? '<span class="chip">Anulada</span>' : r.avisos > 0 ? '<span class="chip warn">Revisar</span>' : '<span class="chip ok">OK</span>'}</button>`).join('') : '<p class="muted">Todavía no cargaste nada.</p>');
 }
-function bInicio() { $('#nueva').onclick = empezar; }
+function bInicio() {
+  $('#nueva').onclick = () => {
+    const b = leerBorrador();
+    if (b && (b.items || []).length && !confirm('Hay una recepción sin terminar. Si empezás una nueva, esa se descarta. ¿Seguir?')) return;
+    empezar();
+  };
+  if ($('#seguir')) {
+    $('#seguir').onclick = async () => {
+      const b = leerBorrador();
+      Object.assign(S, { recId: b.recId, prov: b.prov, items: b.items || [], paths: b.paths || [], dias: b.dias || 60, err: '' });
+      try { await cargarPend(); } catch (e) { S.pend = []; }
+      S.paso = 'contar'; render();
+    };
+    $('#descartar').onclick = () => { if (confirm('¿Descartar lo que contaste?')) { borrarBorrador(); render(); } };
+  }
+  app.querySelectorAll('[data-id]').forEach((b) => (b.onclick = () => abrirDetalle(b.dataset.id)));
+}
+async function empezar() {
+  borrarBorrador();
+  Object.assign(S, { recId: crypto.randomUUID(), prov: null, items: [], pend: [], dias: 60, paths: [], busq: '', err: '', res: null, paso: 'proveedor' });
+  S.provs = []; render();
+  try { S.provs = (await rpc('rec_proveedores', { p_dias: 60 })) || []; } catch (e) { S.err = 'No pude traer los proveedores: ' + (e.message || 'error'); }
+  render();
+}
 
-// ---------- Proveedor ----------
+// ---------- 1 · Proveedor ----------
 function listaProv() {
-  const f = S.provs.filter((p) => p.nombre.toLowerCase().includes(S.busq.toLowerCase()));
-  return f.map((p) => `<button class="pick" data-id="${p.id}">${esc(p.nombre)}</button>`).join('') || '<p class="muted">No hay proveedores con ese nombre.</p>';
+  const q = S.busq.toLowerCase();
+  const f = S.provs.filter((p) => p.proveedor.toLowerCase().includes(q));
+  const con = f.filter((p) => p.unidades > 0), sin = f.filter((p) => !(p.unidades > 0));
+  const btn = (p) => `<button class="pick" data-p="${esc(p.proveedor)}"><b>${esc(p.proveedor)}</b>${p.unidades > 0 ? `<br><span class="muted small">${p.ocs} pedido${p.ocs === 1 ? '' : 's'} abierto${p.ocs === 1 ? '' : 's'} · ${p.unidades} u. por recibir</span>` : ''}</button>`;
+  return (con.length ? `<div class="grupo-t">Con pedidos abiertos</div>${con.map(btn).join('')}` : '') +
+    (sin.length ? `<div class="grupo-t">Sin pedidos abiertos</div>${sin.map(btn).join('')}` : '') ||
+    '<p class="muted">No hay proveedores con ese nombre.</p>';
 }
 function vProveedor() {
-  return `<h1>¿De qué proveedor es?</h1><input id="busq" placeholder="Buscar proveedor…" value="${esc(S.busq)}" style="margin-bottom:12px"><div id="lista">${listaProv()}</div><button class="btn" id="cancelar">Cancelar</button>`;
+  return `<h1>¿De quién es?</h1>${S.err ? `<p class="err">${esc(S.err)}</p>` : ''}<input id="busq" placeholder="Buscar proveedor…" value="${esc(S.busq)}" style="margin-bottom:12px"><div id="lista">${S.provs.length ? listaProv() : '<p class="muted"><span class="spin"></span> Cargando…</p>'}</div><button class="btn" id="cancelar" style="margin-top:8px">Cancelar</button>`;
 }
 function bProveedor() {
   $('#busq').oninput = (e) => { S.busq = e.target.value; $('#lista').innerHTML = listaProv(); };
-  $('#lista').onclick = (e) => { const b = e.target.closest('[data-id]'); if (!b) return; S.prov = S.provs.find((p) => p.id == b.dataset.id); S.paso = 'remito'; render(); };
+  $('#lista').onclick = async (e) => {
+    const b = e.target.closest('[data-p]'); if (!b) return;
+    S.prov = b.dataset.p; S.err = ''; b.disabled = true;
+    try { await cargarPend(); } catch (er) { S.pend = []; S.err = 'No pude traer lo pendiente de este proveedor: ' + (er.message || 'error'); }
+    S.paso = 'contar'; guardarBorrador(); render();
+  };
   $('#cancelar').onclick = () => { S.paso = 'inicio'; render(); };
 }
 
-// ---------- Remito (foto + lectura IA) ----------
-function vRemito() {
-  return `<h1>${esc(S.prov.nombre)}</h1>
-    <p class="muted">${LECTURA_IA ? 'Sacale foto al remito (todas las hojas). La IA lee los datos y vos los confirmás.' : 'Sacale foto al remito (todas las hojas) para que administración lo vea. Después cargás lo que contaste.'}</p>
-    <label class="btn primary big" style="cursor:pointer">📷 ${S.paths.length ? 'Agregar otra hoja' : 'Sacar foto al remito'}
-      <input type="file" id="foto" accept="image/*" capture="environment" multiple hidden></label>
-    <div class="thumbs" style="margin:12px 0">${S.previews.map((p) => `<img src="${p}" alt="">`).join('')}</div>
-    <div id="estado">${estadoLectura()}</div>
-    <div class="row" style="margin-top:16px"><button class="btn" id="atras">Atrás</button>
-      <button class="btn primary grow" id="sig" ${S.leyendo ? 'disabled' : ''}>${S.ocr ? 'Revisar ítems' : S.paths.length ? (LECTURA_IA ? 'Seguir sin lectura' : 'Cargar ítems') : 'Cargar a mano'}</button></div>`;
+// ---------- 2 · Contar ----------
+function chipItem(i) {
+  const pd = pendDe(i.sku), n = i.cantidad || 0;
+  if (pd == null) return '<span class="chip warn">No estaba pedido</span>';
+  if (n === pd) return '<span class="chip ok">Completo</span>';
+  if (n < pd) return `<span class="chip">Faltan ${pd - n}</span>`;
+  return `<span class="chip warn">De más +${n - pd}</span>`;
 }
-function estadoLectura() {
-  if (S.leyendo) return '<p><span class="spin"></span> &nbsp;Subiendo y leyendo el remito…</p>';
-  if (S.errLectura) return `<p class="err">${esc(S.errLectura)}</p>`;
-  if (S.ocr) return `<p class="chip ok">Leí ${S.items.length} líneas</p>`;
-  if (!LECTURA_IA && S.paths.length) return `<p class="chip ok">Foto guardada ✓ (${S.paths.length})</p>`;
-  return '';
+function claseItem(i) {
+  const pd = pendDe(i.sku), n = i.cantidad || 0;
+  return pd == null || n > pd ? 'warn' : n === pd ? 'ok' : 'falta';
 }
-function bRemito() {
-  $('#atras').onclick = () => { S.paso = 'proveedor'; render(); };
-  $('#sig').onclick = () => { S.paso = 'items'; render(); };
-  $('#foto').onchange = async (e) => { const files = [...e.target.files]; e.target.value = ''; await subirFotos(files); };
-}
-async function subirFotos(files) {
-  if (!files.length) return;
-  S.errLectura = ''; S.leyendo = true; render();
-  try {
-    const ses = (await sb.auth.getSession()).data.session;
-    const blobs = await Promise.all(files.map((f) => achicar(f)));
-    for (let i = 0; i < blobs.length; i++) {
-      const path = `${ses.user.id}/${S.recId}/${S.paths.length + 1}.jpg`;
-      const { error } = await sb.storage.from('remitos').upload(path, blobs[i], { contentType: 'image/jpeg', upsert: true });
-      if (error) throw new Error('No pude subir la foto: ' + error.message);
-      S.paths.push(path); S.previews.push(URL.createObjectURL(blobs[i]));
-    }
-    if (!LECTURA_IA) return; // sin IA: la foto queda guardada y los ítems se cargan a mano
-    const images = await Promise.all(blobs.map(aBase64));
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/leer-remito`, {
-      method: 'POST', headers: { 'content-type': 'application/json', apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${ses.access_token}` },
-      body: JSON.stringify({ images, proveedor: S.prov.nombre }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || 'No pude leer el remito');
-    S.ocr = j;
-    if (j.nro_remito) S.nro = j.nro_remito;
-    if (j.bultos) S.bultos = String(j.bultos);
-    await armarItems(j.items || []);
-  } catch (e) {
-    S.errLectura = (e.message || 'Error') + ' — podés cargar los ítems a mano.';
-  } finally { S.leyendo = false; render(); }
-}
-// Resuelve códigos del proveedor contra alias aprendidos o SKU propios exactos
-async function armarItems(lineas) {
-  const codigos = lineas.map((l) => l.codigo).filter(Boolean);
-  const mapa = {};
-  if (codigos.length) {
-    const { data: al } = await sb.from('cc_alias_sku').select('codigo_proveedor,sku').eq('proveedor_id', S.prov.id).in('codigo_proveedor', codigos);
-    (al || []).forEach((a) => (mapa[a.codigo_proveedor] = a.sku));
-    const { data: ex } = await sb.from('cc_productos').select('sku').in('sku', codigos);
-    (ex || []).forEach((p) => (mapa[p.sku] = p.sku));
-  }
-  const skus = [...new Set(Object.values(mapa))], info = {};
-  if (skus.length) {
-    const { data } = await sb.from('cc_productos').select('sku,producto,color,medida').in('sku', skus);
-    (data || []).forEach((p) => (info[p.sku] = etiquetaProducto(p)));
-  }
-  S.items = lineas.map((l) => {
-    const sku = l.codigo ? mapa[l.codigo] || null : null;
-    return { key: key(), codigo: l.codigo || null, descripcion: l.descripcion || null, cantRemito: l.cantidad != null ? Math.round(l.cantidad) : null, sku, skuLabel: sku ? info[sku] || '' : '', contada: null, sinSku: false };
-  });
-}
-
-// ---------- Ítems ----------
 function cardItem(i) {
-  const remito = (i.codigo || i.descripcion) ? `<div class="small muted" style="margin-bottom:6px">Remito: ${esc([i.codigo, i.descripcion].filter(Boolean).join(' · '))}${i.cantRemito != null ? ` — <b>${i.cantRemito} u.</b>` : ''}</div>` : '';
-  const sku = i.sku ? `<button class="pick" style="margin-bottom:8px" data-act="sku"><b>${esc(i.sku)}</b><br><span class="muted small">${esc(i.skuLabel)}</span></button>`
-    : i.sinSku ? '<p class="chip warn">Sin SKU (lo resuelve administración)</p>'
-    : `<div class="row" style="margin-bottom:8px"><button class="btn grow" data-act="sku">🔍 Elegir SKU</button><button class="btn sm" data-act="nosku">No lo encuentro</button></div>`;
-  return `<div class="card" data-key="${i.key}">${remito}${sku}
-    <div class="row wrapRow"><div class="stepper"><button data-act="menos">−</button><input class="qty" inputmode="numeric" placeholder="0" value="${i.contada ?? ''}"><button data-act="mas">＋</button></div>
-    ${i.cantRemito != null && i.contada !== i.cantRemito ? `<button class="btn sm" data-act="igual">= ${i.cantRemito}</button>` : ''}
-    <button class="btn sm danger" data-act="quitar">Quitar</button></div><div class="dif">${chipDif(i)}</div></div>`;
+  const pd = pendDe(i.sku);
+  return `<div class="card it ${claseItem(i)}" data-sku="${esc(i.sku)}"><div class="row between" style="align-items:flex-start"><div>
+      <div class="small muted">${esc(i.producto)}</div><div class="var">${esc(etiqueta(i) || i.sku)}</div><div class="small muted">${esc(i.sku)}</div></div>
+      <div class="chipbox">${chipItem(i)}</div></div>
+    <div class="row wrapRow" style="margin-top:12px"><div class="stepper"><button data-act="menos" aria-label="Menos">−</button><input class="qty" inputmode="numeric" value="${i.cantidad}" aria-label="Cantidad"><button data-act="mas" aria-label="Más">＋</button></div>
+      <button class="btn sm danger" data-act="quitar">Quitar</button>${pd != null ? `<span class="small muted">pendiente: ${pd}</span>` : ''}</div></div>`;
 }
-const chipDif = (i) => (i.cantRemito != null && i.contada != null && i.contada !== i.cantRemito ? `<p class="chip warn" style="margin-top:8px">Difiere del remito (${i.cantRemito})</p>` : '');
-function vItems() {
-  return `<h1>Lo que contaste</h1><p class="muted">Para cada línea: confirmá el SKU y poné la cantidad que realmente llegó.</p>
-    <div id="items">${S.items.map(cardItem).join('') || '<p class="muted">Todavía no cargaste ningún ítem. Tocá “Agregar ítem” y buscá el SKU por nombre o código.</p>'}</div>
-    <button class="btn big" id="agregar">＋ Agregar ítem</button>
-    <div class="row" style="margin-top:16px"><button class="btn" id="atras">Atrás</button><button class="btn primary grow" id="sig"></button></div>`;
+function vContar() {
+  return `<h1>${esc(S.prov)}</h1>
+    <p class="muted">Tocá <b>Agregar producto</b>, elegí lo que llegó y después contá con ＋ y −.</p>
+    ${S.err ? `<p class="err">${esc(S.err)}</p>` : ''}
+    <div class="row" style="margin-bottom:12px"><label class="btn grow" style="cursor:pointer;margin:0">📷 ${S.paths.length ? `Foto del remito (${S.paths.length}) · agregar otra` : 'Foto del remito (opcional)'}<input type="file" id="foto" accept="image/*" capture="environment" multiple hidden></label>${S.subiendo ? '<span class="spin"></span>' : ''}</div>
+    <div id="items">${S.items.map(cardItem).join('')}</div>
+    <button class="btn big" id="agregar">＋ Agregar producto</button>
+    <div class="barra"><button class="btn" id="atras">Atrás</button><button class="btn primary grow" id="listo"></button></div>`;
 }
-function pie() {
-  const f = faltan(), b = $('#sig');
-  b.disabled = S.items.length === 0 || f > 0;
-  b.textContent = f > 0 ? `Faltan ${f} por completar` : 'Siguiente';
+function pintarPie() {
+  const b = $('#listo'); if (!b) return;
+  const n = conCant().length;
+  b.disabled = n === 0;
+  b.textContent = n ? `Listo · ${n} producto${n === 1 ? '' : 's'} · ${totalU()} u.` : 'Agregá lo que llegó';
 }
-function bItems() {
-  pie();
-  const item = (el) => S.items.find((i) => i.key === el.closest('[data-key]').dataset.key);
-  $('#atras').onclick = () => { S.paso = 'remito'; render(); };
-  $('#sig').onclick = () => { S.paso = 'confirmar'; render(); };
-  $('#agregar').onclick = () => { const i = { key: key(), codigo: null, descripcion: null, cantRemito: null, sku: null, skuLabel: '', contada: null, sinSku: false }; S.items.push(i); render(); elegirSku(i); };
+function pintarItems() { $('#items').innerHTML = S.items.map(cardItem).join(''); pintarPie(); }
+function bContar() {
+  pintarPie();
+  const item = (el) => S.items.find((i) => i.sku === el.closest('[data-sku]').dataset.sku);
+  $('#atras').onclick = () => {
+    if (S.items.length && !confirm('Si volvés para cambiar de proveedor, se descarta lo que contaste. ¿Seguir?')) return;
+    borrarBorrador();
+    Object.assign(S, { recId: crypto.randomUUID(), prov: null, items: [], pend: [], dias: 60, paths: [], err: '', paso: 'proveedor' });
+    empezarSinBorrar();
+  };
+  $('#agregar').onclick = abrirSheet;
+  $('#listo').onclick = () => { S.paso = 'confirmar'; render(); };
+  $('#foto').onchange = async (e) => { const files = [...e.target.files]; e.target.value = ''; await subirFotos(files); };
   const cont = $('#items');
   cont.addEventListener('input', (e) => {
     if (!e.target.classList.contains('qty')) return;
     const i = item(e.target), v = e.target.value.replace(/\D/g, '');
-    i.contada = v === '' ? null : parseInt(v);
-    e.target.closest('.card').querySelector('.dif').innerHTML = chipDif(i); pie();
+    i.cantidad = v === '' ? 0 : parseInt(v, 10);
+    const card = e.target.closest('.it'); card.className = `card it ${claseItem(i)}`; card.querySelector('.chipbox').innerHTML = chipItem(i);
+    guardarBorrador(); pintarPie();
   });
   cont.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const i = item(b), a = b.dataset.act;
-    if (a === 'menos') i.contada = Math.max(0, (i.contada ?? 0) - 1);
-    else if (a === 'mas') i.contada = (i.contada ?? 0) + 1;
-    else if (a === 'igual') i.contada = i.cantRemito;
+    if (a === 'menos') i.cantidad = Math.max(0, (i.cantidad || 0) - 1);
+    else if (a === 'mas') i.cantidad = (i.cantidad || 0) + 1;
     else if (a === 'quitar') S.items = S.items.filter((x) => x !== i);
-    else if (a === 'nosku') i.sinSku = true;
-    else if (a === 'sku') return elegirSku(i);
-    render();
+    guardarBorrador(); pintarItems();
   });
 }
-function elegirSku(i) {
-  pickSku({ inicial: i.codigo || '', onPick: (p) => { i.sku = p.sku; i.skuLabel = etiquetaProducto(p); i.sinSku = false; render(); } });
+// Volver a la lista de proveedores sin perder el conteo (el borrador queda en el celular).
+async function empezarSinBorrar() {
+  S.provs = []; S.busq = ''; render();
+  try { S.provs = (await rpc('rec_proveedores', { p_dias: 60 })) || []; } catch (e) { S.err = 'No pude traer los proveedores: ' + (e.message || 'error'); }
+  render();
 }
-
-// ---------- Confirmar ----------
-function vConfirmar() {
-  const dif = diferencias();
-  return `<h1>Confirmar</h1>
-    <div class="card"><b>${esc(S.prov.nombre)}</b><div class="muted small">${S.items.length} líneas · ${S.items.reduce((a, i) => a + (i.contada || 0), 0)} unidades</div>
-      <label>Número de remito</label><input id="nro" value="${esc(S.nro)}" placeholder="0003-00012345">
-      <label>Bultos</label><input id="bultos" inputmode="numeric" value="${esc(S.bultos)}"></div>
-    ${dif.length ? `<div class="card" style="background:var(--warn-bg)"><b>Diferencias con el remito</b>${dif.map((d) => `<div class="small">${esc(d.sku || d.descripcion)}: remito ${d.cantRemito}, contaste ${d.contada}</div>`).join('')}</div>` : ''}
-    <div class="card"><b>¿Recibiste todo lo que dice el remito?</b>
-      <div class="row" style="margin-top:8px"><button class="btn grow ${S.completo === true ? 'primary' : ''}" id="si">Sí, completo</button><button class="btn grow ${S.completo === false ? 'primary' : ''}" id="no">No, falta algo</button></div>
-      <div id="aclar" ${S.completo === false || dif.length ? '' : 'hidden'}><label>Aclaración</label><textarea id="notas" rows="3" placeholder="Qué faltó, qué llegó roto, etc.">${esc(S.notas)}</textarea></div></div>
-    <p class="err">${esc(S.err)}</p>
-    <div class="row"><button class="btn" id="atras">Atrás</button><button class="btn primary grow" id="enviar"></button></div>`;
-}
-function bConfirmar() {
-  const pieEnv = () => {
-    const b = $('#enviar');
-    b.disabled = S.completo == null || S.enviando || (S.completo === false && !S.notas.trim());
-    b.textContent = S.enviando ? 'Enviando…' : 'Enviar a administración';
-  };
-  pieEnv();
-  $('#nro').oninput = (e) => (S.nro = e.target.value);
-  $('#bultos').oninput = (e) => { e.target.value = e.target.value.replace(/\D/g, ''); S.bultos = e.target.value; };
-  const nt = $('#notas'); if (nt) nt.oninput = (e) => { S.notas = e.target.value; pieEnv(); };
-  $('#si').onclick = () => { S.completo = true; render(); };
-  $('#no').onclick = () => { S.completo = false; render(); };
-  $('#atras').onclick = () => { S.paso = 'items'; render(); };
-  $('#enviar').onclick = enviar;
-}
-async function enviar() {
-  S.enviando = true; S.err = ''; render();
+async function subirFotos(files) {
+  if (!files.length) return;
+  S.subiendo = true; S.err = ''; render();
   try {
     const uid = (await sb.auth.getSession()).data.session.user.id;
-    const { error: e1 } = await sb.from('cc_recepciones').upsert({
-      id: S.recId, proveedor_id: S.prov.id, nro_remito: S.nro.trim() || null, bultos: S.bultos ? parseInt(S.bultos) : null, recibido_completo: S.completo,
-      notas: S.notas.trim() || null, estado: 'pendiente_control', remito_paths: S.paths, ocr_estado: S.ocr ? 'ok' : S.paths.length ? 'error' : 'sin_leer', ocr_json: S.ocr, cargado_por: uid,
-    });
-    if (e1) throw e1;
-    await sb.from('cc_recepcion_items').delete().eq('recepcion_id', S.recId);
-    const { error: e2 } = await sb.from('cc_recepcion_items').insert(S.items.map((i) => ({
-      recepcion_id: S.recId, sku: i.sku, descripcion: i.sku ? null : i.descripcion, codigo_proveedor: i.codigo, cant_remito: i.cantRemito, cant_contada: i.contada ?? 0,
-    })));
-    if (e2) throw e2;
-    const alias = S.items.filter((i) => i.sku && i.codigo && i.codigo !== i.sku).map((i) => ({ proveedor_id: S.prov.id, codigo_proveedor: i.codigo, sku: i.sku }));
-    if (alias.length) await sb.from('cc_alias_sku').upsert(alias);
-    await cargarRecientes(); S.paso = 'listo';
-  } catch (e) { S.err = 'No se pudo guardar: ' + (e.message || 'error') + '. Probá de nuevo.'; }
+    for (const f of files) {
+      const blob = await achicar(f);
+      const path = `${uid}/${S.recId}/${S.paths.length + 1}.jpg`;
+      const { error } = await sb.storage.from('remitos').upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+      if (error) throw error;
+      S.paths.push(path);
+    }
+    guardarBorrador();
+  } catch (e) { S.err = 'No pude subir la foto: ' + (e.message || 'error'); }
+  S.subiendo = false; render();
+}
+
+// ---------- Hoja "Agregar producto" ----------
+// Primero lo que está pedido a este proveedor (agrupado por producto); si no está ahí, se busca en todo el catálogo.
+function abrirSheet() {
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = '<div class="row" style="margin-bottom:12px"><input id="q" placeholder="Buscar producto o color…" autocomplete="off"><button class="btn primary" id="hecho"></button></div><div id="res"></div>';
+  document.body.appendChild(sheet);
+  const q = $('#q', sheet), res = $('#res', sheet);
+  let reg = [], cat = null, catQ = '';
+  const tokens = () => q.value.toLowerCase().split(/\s+/).filter(Boolean);
+  const txt = (p) => `${p.sku} ${p.producto} ${p.color || ''} ${p.medida || ''}`.toLowerCase();
+  const cantDe = (sku) => S.items.find((i) => i.sku === sku)?.cantidad || 0;
+  // conProducto: en los resultados del catálogo no hay encabezado por producto, así que se muestra el nombre en cada fila.
+  const fila = (p, pend, conProducto = false) => {
+    reg.push(p); const k = cantDe(p.sku);
+    return `<button class="fila ${k ? 'suma' : ''}" data-i="${reg.length - 1}"><span>${conProducto ? `<span class="muted small">${esc(p.producto)}</span><br>` : ''}${esc(etiqueta(p) || p.sku)}${pend != null ? `<br><span class="muted small">pendiente ${pend}</span>` : `<br><span class="muted small">${esc(p.sku)}</span>`}</span>${k ? `<span class="k">${k}</span>` : ''}</button>`;
+  };
+  const sinPedido = () => { const tk = tokens(); return tk.length > 0 && !S.pend.some((p) => tk.every((t) => txt(p).includes(t))); };
+  async function buscarCat() {
+    const val = q.value;
+    if (!val.trim()) return;
+    try { cat = (await rpc('rec_buscar', { p_q: val, p_proveedor: S.prov })) || []; } catch { cat = []; }
+    catQ = val; pintar();
+  }
+  const pintar = () => {
+    const top = sheet.scrollTop, tk = tokens(); reg = [];
+    const f = S.pend.filter((p) => tk.every((t) => txt(p).includes(t)));
+    let html = '', ult = null;
+    for (const p of f) {
+      if (p.producto !== ult) { html += `<div class="grupo-t">${esc(p.producto)}</div>`; ult = p.producto; }
+      html += fila(p, p.pendiente);
+    }
+    if (!f.length) html += S.pend.length ? '<p class="muted">Nada pedido coincide con esa búsqueda.</p>' : '<p class="muted">Este proveedor no tiene pedidos abiertos. Buscá el producto en el catálogo.</p>';
+    if (tk.length) {
+      html += `<div class="grupo-t">¿No estaba pedido?</div>`;
+      if (cat && catQ === q.value) html += cat.length ? cat.map((p) => fila(p, pendDe(p.sku), true)).join('') : '<p class="muted">No encontré nada en el catálogo.</p>';
+      else html += '<button class="btn big" id="buscarCat">🔍 Buscar en todo el catálogo</button>';
+    }
+    if (S.dias < 3650) html += '<p style="margin-top:18px"><button class="btn sm" id="viejos">Ver pedidos de más de 60 días</button></p>';
+    res.innerHTML = html; sheet.scrollTop = top;
+    const n = conCant().length; $('#hecho', sheet).textContent = n ? `Listo (${n})` : 'Cerrar';
+  };
+  let tcat;
+  // Si nada de lo pedido coincide, se busca solo en el catálogo (sin tocar otro botón).
+  q.oninput = () => { pintar(); clearTimeout(tcat); if (sinPedido()) tcat = setTimeout(buscarCat, 350); };
+  $('#hecho', sheet).onclick = () => { sheet.remove(); pintarItems(); };
+  res.onclick = async (e) => {
+    const f = e.target.closest('[data-i]');
+    if (f) {
+      const p = reg[+f.dataset.i], ex = S.items.find((i) => i.sku === p.sku);
+      if (ex) ex.cantidad = (ex.cantidad || 0) + 1; else S.items.push({ sku: p.sku, producto: p.producto, color: p.color || null, medida: p.medida || null, cantidad: 1 });
+      guardarBorrador(); pintar(); return;
+    }
+    if (e.target.closest('#buscarCat')) { e.target.closest('#buscarCat').disabled = true; await buscarCat(); return; }
+    if (e.target.closest('#viejos')) {
+      S.dias = 3650; try { await cargarPend(); } catch { /* queda lo que había */ }
+      guardarBorrador(); pintar();
+    }
+  };
+  pintar(); q.focus();
+}
+
+// ---------- 3 · Confirmar ----------
+function avisosLocales() {
+  return conCant().map((i) => ({ i, pd: pendDe(i.sku) })).filter(({ i, pd }) => pd == null || i.cantidad > pd);
+}
+function vConfirmar() {
+  const av = avisosLocales();
+  return `<h1>Confirmar</h1><p class="muted">${esc(S.prov)} · ${conCant().length} productos · ${totalU()} unidades</p>
+    ${av.length ? `<div class="aviso"><b>Revisá esto antes de guardar</b>${av.map(({ i, pd }) => `<div class="small" style="margin-top:6px">${esc(etiqueta(i) || i.sku)} <span class="muted">(${esc(i.producto)})</span>: ${pd == null ? 'no estaba pedido' : `pedidos ${pd}, contaste ${i.cantidad}`}</div>`).join('')}</div>` : ''}
+    <div class="card">${conCant().map((i) => `<div class="row between" style="padding:6px 0;border-bottom:1px solid var(--line-soft)"><span>${esc(etiqueta(i) || i.sku)}<span class="muted small"> · ${esc(i.producto)}</span></span><b>${i.cantidad}</b></div>`).join('')}</div>
+    <p class="err">${esc(S.err)}</p>
+    <div class="barra"><button class="btn" id="atras">Volver a contar</button><button class="btn primary grow" id="guardar" ${S.enviando ? 'disabled' : ''}>${S.enviando ? 'Guardando…' : 'Guardar recepción'}</button></div>`;
+}
+function bConfirmar() {
+  $('#atras').onclick = () => { S.err = ''; S.paso = 'contar'; render(); };
+  $('#guardar').onclick = guardar;
+}
+async function guardar() {
+  S.enviando = true; S.err = ''; render();
+  try {
+    const items = conCant().map((i) => ({ sku: i.sku, cantidad: i.cantidad }));
+    S.res = await rpc('rec_confirmar', { p_id: S.recId, p_proveedor: S.prov, p_items: items, p_remito_paths: S.paths, p_notas: null });
+    borrarBorrador(); await cargarRecientes(); S.paso = 'listo';
+  } catch (e) { S.err = 'No se pudo guardar: ' + (e.message || 'error') + '. Lo que contaste sigue acá, probá de nuevo.'; }
   S.enviando = false; render();
 }
 
-// ---------- Listo ----------
+// ---------- Listo / detalle ----------
+const TIPO = {
+  de_mas: (x) => `Llegó de más: se esperaban ${x.pendiente_antes}, contaste ${x.cantidad}. Sobran ${x.sobrante}.`,
+  no_pedido: () => 'No estaba pedido en ninguna orden.',
+  en_bultos: () => 'Está pedido en bultos: esas unidades no se descontaron de la orden.',
+};
 function vListo() {
-  return `<div style="text-align:center;padding-top:32px"><div style="font-size:4rem">✅</div><h1>Enviado</h1><p class="muted">Administración ya lo puede ver con el remito y las cantidades.</p>
-    <button class="btn primary big" id="otra">Cargar otra recepción</button><button class="btn big" style="margin-top:8px" id="inicio">Volver al inicio</button></div>`;
+  const d = S.res; if (!d) return '<p class="muted">No encontré esa recepción.</p>';
+  const items = d.items || [], av = items.filter((x) => TIPO[x.tipo]);
+  const faltan = items.filter((x) => x.tipo === 'falta');
+  return `<div style="text-align:center;padding-top:8px"><div style="font-size:3rem">${d.estado === 'anulado' ? '🚫' : '✅'}</div><h1>${d.estado === 'anulado' ? 'Recepción anulada' : S.paso === 'listo' ? 'Guardado' : 'Recepción'}</h1>
+    <p class="muted">${esc(d.proveedor)} · ${fechaHora(d.creado_at)}</p></div>
+    ${av.length ? `<div class="aviso"><b>Avisos</b>${av.map((x) => `<div class="small" style="margin-top:6px"><b>${esc(etiqueta(x) || x.sku)}</b> <span>(${esc(x.producto)})</span><br>${TIPO[x.tipo](x)}</div>`).join('')}</div>` : ''}
+    ${faltan.length ? `<p class="small muted">Faltan por llegar: ${faltan.map((x) => `${esc(etiqueta(x) || x.sku)} (${x.pendiente_antes - x.cantidad})`).join(', ')}.</p>` : ''}
+    <h2>Lo que llegó</h2><div class="card"><table class="lista-ec"><tbody>${items.map((x) => `<tr><td><b>${esc(x.sku)}</b><div class="small muted">${esc(x.producto)}${etiqueta(x) ? ' · ' + esc(etiqueta(x)) : ''}</div></td><td class="q">${x.cantidad}</td></tr>`).join('')}</tbody></table></div>
+    <button class="btn big" id="copiar">📋 Copiar lista para Ecomm-App</button>
+    ${d.estado === 'confirmado' ? '<button class="btn danger" id="anular" style="margin-top:12px;width:100%">Anular esta recepción</button>' : ''}
+    <p class="err">${esc(S.err)}</p>
+    <div class="row" style="margin-top:12px"><button class="btn grow" id="inicio">Inicio</button><button class="btn primary grow" id="otra">Nueva recepción</button></div>`;
 }
-function bListo() { $('#otra').onclick = empezar; $('#inicio').onclick = () => { S.paso = 'inicio'; render(); }; }
+function bListo() {
+  if (!S.res) { $('#inicio').onclick = volverInicio; return; }
+  $('#inicio').onclick = volverInicio;
+  $('#otra').onclick = empezar;
+  $('#copiar').onclick = async (e) => {
+    const t = (S.res.items || []).map((x) => `${x.sku}\t${x.cantidad}`).join('\n');
+    try { await navigator.clipboard.writeText(t); }
+    catch { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    e.target.textContent = '✓ Copiado';
+  };
+  if ($('#anular')) $('#anular').onclick = async () => {
+    if (!confirm('¿Anular esta recepción? Se devuelve lo que se había descontado de las órdenes de compra.')) return;
+    try { await rpc('rec_anular', { p_id: S.res.id }); await cargarRecientes(); S.err = ''; volverInicio(); }
+    catch (e) { S.err = 'No se pudo anular: ' + (e.message || 'error'); render(); }
+  };
+}
+async function volverInicio() { S.paso = 'inicio'; S.err = ''; await cargarRecientes(); render(); }
+async function abrirDetalle(id) {
+  try { S.res = await rpc('rec_detalle', { p_id: id }); S.paso = 'detalle'; S.err = ''; }
+  catch (e) { S.err = 'No pude abrir esa recepción: ' + (e.message || 'error'); S.paso = 'inicio'; }
+  render();
+}
+
+await cargarRecientes();
+render();
 </script>
 </body>
 </html>
