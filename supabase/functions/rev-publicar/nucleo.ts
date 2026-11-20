@@ -11,7 +11,7 @@ import { COLUMNAS_REVENDEDOR, ML_API, mlGet, type Revendedor, tokenValido, USER_
 import { sinFotosDeMarca } from "../_shared/fotos_marca.ts";
 import {
   claveCondicion, claveResultado, COMISION_ML_ESTIMADA, colorDe, condicionDeItem, minutosDePausa, RITMO, erroresML, esMarcaPropia, estadoFinal, type ItemML, limpiarDescripcion, marcaDe,
-  MAX_RECARGO_CUOTAS, type OpcionesMasivas, payloadCatalogo, payloadTradicional, precioPorRegla, precioPorTipo, RECARGO_CUOTAS_ESTIMADO, skuDe, type TipoVenta,
+  type Atributo, MAX_RECARGO_CUOTAS, medidasPaquete, type OpcionesMasivas, payloadCatalogo, payloadTradicional, precioPorRegla, precioPorTipo, RECARGO_CUOTAS_ESTIMADO, skuDe, type TipoVenta,
   type VariacionML,
 } from "./logic.ts";
 
@@ -262,16 +262,23 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
         if (!p.tradicional) for (const tv of pendientes) await anotar({ sku: s, tipo: "catalogo", tipo_venta: tv, ok: false, error: "Este color no tiene ficha de catálogo para sumarse." });
         continue;
       }
-      const ci = await mlGet<{ category_id: string }>(tokPret, `/items/${f.ml_item_id}?attributes=category_id`);
+      const ci = await mlGet<{ category_id: string; attributes?: Atributo[] }>(tokPret, `/items/${f.ml_item_id}?attributes=category_id,attributes`);
       if (!ci.body?.category_id) {
         for (const tv of pendientes) await anotar({ sku: s, tipo: "catalogo", tipo_venta: tv, ok: false, error: "No pude leer la ficha de catálogo; probá de nuevo." });
         continue;
+      }
+      // Medidas del paquete: las de la publicación de catálogo de Pret o, si no las tiene, las de su tradicional.
+      let medidas = medidasPaquete(ci.body.attributes);
+      const trad = filas.find((x) => x.sku === s && x.tipo === "tradicional");
+      if (!medidas.length && trad) {
+        const t = await mlGet<{ attributes?: Atributo[] }>(tokPret, `/items/${trad.ml_item_id}?attributes=attributes`);
+        medidas = medidasPaquete(t.body?.attributes);
       }
       for (const tv of pendientes) {
         const precio = precioDe(s, tv);
         await crear(s, "catalogo", tv, precio == null ? null : payloadCatalogo({
           categoryId: ci.body.category_id, catalogProductId: f.catalog_product_id!, sku: s, precio,
-          cantidad: p.cantidades.get(s)!, tipoVenta: tv,
+          cantidad: p.cantidades.get(s)!, tipoVenta: tv, medidas,
         }), null);
       }
     }

@@ -43,6 +43,14 @@ export const NO_COPIAR = new Set([
   "PRODUCT_FEATURES", "SHIPMENT_PACKING", "IS_TOM_BRAND", "FILTRABLE_COLOR",
 ]);
 export const MAX_FOTOS = 10;
+
+/** Medidas del paquete (alto, ancho, largo, peso) de una publicación de Pret. ML las exige en varias categorías, también
+ *  para sumarse a una ficha de catálogo. Devuelve [] si no están las cuatro. */
+export function medidasPaquete(attrs: Atributo[] | undefined): Atributo[] {
+  const m = (attrs ?? []).filter((a) => /^SELLER_PACKAGE_(HEIGHT|WIDTH|LENGTH|WEIGHT)$/.test(a.id) && a.value_name)
+    .map((a) => ({ id: a.id, value_name: a.value_name }));
+  return m.length === 4 ? m : [];
+}
 const SIN_GTIN = "El producto no tiene código registrado";
 
 const norm = (s: string | null | undefined) => String(s ?? "").trim().toLowerCase();
@@ -162,7 +170,7 @@ export function payloadTradicional(it: ItemML, o: OpcionesTradicional): Record<s
 }
 
 /** Publicación de catálogo: se suma a la ficha de ML (catalog_product_id) con su SKU. La ficha pone título, fotos y marca. */
-export function payloadCatalogo(o: { categoryId: string; catalogProductId: string; sku: string; precio: number; cantidad: number; tipoVenta: TipoVenta }) {
+export function payloadCatalogo(o: { categoryId: string; catalogProductId: string; sku: string; precio: number; cantidad: number; tipoVenta: TipoVenta; medidas?: Atributo[] }) {
   return {
     category_id: o.categoryId,
     catalog_product_id: o.catalogProductId,
@@ -173,7 +181,7 @@ export function payloadCatalogo(o: { categoryId: string; catalogProductId: strin
     buying_mode: "buy_it_now",
     condition: "new",
     listing_type_id: o.tipoVenta,
-    attributes: [{ id: "SELLER_SKU", value_name: o.sku }],
+    attributes: [{ id: "SELLER_SKU", value_name: o.sku }, ...(o.medidas ?? [])],
     shipping: { mode: "me2", local_pick_up: false, free_shipping: false },
   };
 }

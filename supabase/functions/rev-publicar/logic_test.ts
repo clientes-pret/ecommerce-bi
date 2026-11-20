@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { leerRecargo, precioConCuotas, precioPorTipo } from "./logic.ts";
+import { leerRecargo, medidasPaquete, precioConCuotas, precioPorTipo } from "./logic.ts";
 import {
   colorDe, erroresML, esMarcaPropia, type ItemML, leerPedido, limpiarDescripcion, marcaValida, payloadCatalogo,
   payloadTradicional, reemplazarMarca, skuDe,
@@ -240,4 +240,15 @@ Deno.test("recargo por cuotas: Premium deja la misma ganancia en pesos que Clás
   assertEquals(leerRecargo("13"), 13);
   assertEquals(leerRecargo(-1), null);
   assertEquals(leerRecargo(99), null);
+});
+
+Deno.test("medidas del paquete: solo si están las cuatro, y van en la publicación de catálogo", () => {
+  const cuatro = [
+    { id: "SELLER_PACKAGE_HEIGHT", value_name: "28 cm" }, { id: "SELLER_PACKAGE_WIDTH", value_name: "23 cm" },
+    { id: "SELLER_PACKAGE_LENGTH", value_name: "3 cm" }, { id: "SELLER_PACKAGE_WEIGHT", value_name: "240 g" }, { id: "COLOR", value_name: "Gris" },
+  ];
+  assertEquals(medidasPaquete(cuatro).length, 4);
+  assertEquals(medidasPaquete(cuatro.slice(1)), []);
+  const p = payloadCatalogo({ categoryId: "MLA1", catalogProductId: "MLA9", sku: "X", precio: 100, cantidad: 1, tipoVenta: "gold_special", medidas: medidasPaquete(cuatro) });
+  assertEquals((p.attributes as { id: string }[]).map((a) => a.id).sort(), ["SELLER_PACKAGE_HEIGHT", "SELLER_PACKAGE_LENGTH", "SELLER_PACKAGE_WEIGHT", "SELLER_PACKAGE_WIDTH", "SELLER_SKU"]);
 });
