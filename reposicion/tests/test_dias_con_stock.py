@@ -100,6 +100,33 @@ def test_sin_ventas_recientes_manda_el_promedio_y_tope_por_antiguedad():
     assert core.vel_reciente(6, "A", "deposito", 3) == 2.0  # producto de 3 días: divisor 3, no 7
 
 
+def test_muestra_minima_poca_data_no_se_extrapola():
+    # Caso 243090VIDRIO: 3 ventas, 4 días con stock → divisor 14 (no 4): 0,21/día, no 0,75.
+    core.set_stock_days(core.contar_dias_con_stock(_filas("A", 4)))
+    assert core.dias_efectivos("A", "deposito", 60) == 4
+    assert core.dias_para_promedio("A", "deposito", 60, 3) == 14
+    assert round(3 / core.dias_para_promedio("A", "deposito", 60, 3), 2) == 0.21
+    core.set_stock_days({})
+
+
+def test_muestra_minima_no_toca_ventas_altas_ni_datos_suficientes():
+    core.set_stock_days(core.contar_dias_con_stock(_filas("A", 4)))
+    assert core.dias_para_promedio("A", "deposito", 60, 97) == 4    # lanzamiento fuerte: evidencia real
+    assert core.dias_para_promedio("A", "deposito", 60, 10) == 4    # justo en el umbral: no se toca
+    assert core.dias_para_promedio("A", "deposito", 60, 9) == 14
+    assert core.dias_para_promedio("A", "deposito", 60, 0) == 4     # sin ventas: sin efecto (vel = 0)
+    core.set_stock_days(core.contar_dias_con_stock(_filas("B", 20)))
+    assert core.dias_para_promedio("B", "deposito", 60, 3) == 20    # ya tiene >= 14 días con stock
+    core.set_stock_days({})
+
+
+def test_muestra_minima_acotada_por_antiguedad_del_producto():
+    core.set_stock_days(core.contar_dias_con_stock(_filas("A", 4)))
+    assert core.dias_para_promedio("A", "deposito", 6, 3) == 6      # producto de 6 días: tope 6, no 14
+    assert core.dias_para_promedio("A", "deposito", 0, 3) == 0
+    core.set_stock_days({})
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
