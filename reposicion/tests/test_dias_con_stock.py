@@ -68,9 +68,19 @@ def test_pico_reciente_gana_al_promedio():
     promedio = 60 / core.dias_efectivos("A", "deposito", 60)
     reciente = core.vel_reciente(42, "A", "deposito", 60)
     assert round(promedio, 2) == 1.0 and round(reciente, 2) == 6.0
-    assert max(promedio, reciente) == 6.0
+    # Un pico reciente sube la velocidad enseguida, pero solo con el peso RECENT_WEIGHT (0,25)
+    # del exceso: 1 + 0,25 × (6 − 1) = 2,25 (antes max() = 6, sobreestimaba 32 % en backtest).
+    assert core.combinar_velocidad(promedio, reciente) == 1.0 + core.RECENT_WEIGHT * 5.0
+    assert round(core.combinar_velocidad(promedio, reciente), 2) == 2.25
     core.set_stock_days({})
     core.configure(days=60, coverage_days=60)
+
+
+def test_baja_reciente_no_baja_la_velocidad():
+    # Criterio del usuario (2026-11-05): una baja reciente no baja la velocidad de golpe.
+    assert core.combinar_velocidad(5.0, 1.0) == 5.0
+    assert core.combinar_velocidad(3.0, 0) == 3.0   # sin ventas recientes manda el promedio
+    assert core.combinar_velocidad(0, 0) == 0
 
 
 def test_ritmo_reciente_no_castiga_dias_sin_stock():

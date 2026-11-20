@@ -70,6 +70,20 @@ STOCK_DAYS = {}
 # baja reciente no baja la velocidad de golpe).
 RECENT_DAYS = 7
 
+# Cuánto del exceso del ritmo reciente sobre el promedio se suma a la velocidad.
+# Antes era max(promedio, reciente) (= peso 1.0): backtest 2026-11-19 con 2.066
+# observaciones (ventana 60 d, predicción a 14 d) mostró que sobreestimaba 32 % en
+# agregado (error por SKU 0,71). Con peso 0,25 el sesgo baja a 1,03 y el error a 0,56.
+# Se mantiene el criterio del usuario (2026-11-05): un pico reciente sube la velocidad
+# enseguida y una baja reciente NO la baja (el exceso nunca es negativo).
+RECENT_WEIGHT = 0.25
+
+
+def combinar_velocidad(promedio, reciente):
+    """Velocidad diaria = promedio (ventas / días con stock) + RECENT_WEIGHT del
+    exceso del ritmo de los últimos RECENT_DAYS días sobre ese promedio."""
+    return promedio + RECENT_WEIGHT * max(0, reciente - promedio)
+
 
 def set_stock_days(dias_por_sku):
     global STOCK_DAYS
@@ -877,7 +891,7 @@ def build_rows(results):
         vel_full_prom    = ventas_full / active_days if active_days > 0 else 0
         # Velocidad = el mayor entre el promedio (días con stock) y el ritmo de los últimos 7 días.
         vel_full_rec     = vel_reciente((recientes_dict or {}).get(sku, 0), sku, f"full_{prefix.lower()}", dias_vida)
-        vel_full_diaria  = round(max(vel_full_prom, vel_full_rec), 4)
+        vel_full_diaria  = round(combinar_velocidad(vel_full_prom, vel_full_rec), 4)
         vel_full_semanal = round(vel_full_diaria * 7, 2)
 
         if vel_full_diaria > 0:
@@ -1080,10 +1094,10 @@ def build_rows(results):
             # Velocidad = el MAYOR entre el promedio (días con stock) y el ritmo de los últimos 7 días.
             vel_dep_prom = ventas_deposito / dias_dep if dias_dep > 0 else 0
             vel_dep_rec  = vel_reciente(rec_deposito, sku, "deposito", prod_days_active)
-            vel_dep_diaria  = round(max(vel_dep_prom, vel_dep_rec), 4)
+            vel_dep_diaria  = round(combinar_velocidad(vel_dep_prom, vel_dep_rec), 4)
             vel_full_prom = sold_full / dias_full if dias_full > 0 else 0
             vel_full_rec  = vel_reciente(rec_full, sku, "full", prod_days_active)
-            vel_diaria  = round(vel_dep_diaria + max(vel_full_prom, vel_full_rec), 4)
+            vel_diaria  = round(vel_dep_diaria + combinar_velocidad(vel_full_prom, vel_full_rec), 4)
             vel_semanal = round(vel_diaria * 7, 2)
             vel_dep_semanal = round(vel_dep_diaria * 7, 2)
 
@@ -1231,10 +1245,10 @@ def build_rows(results):
             # Velocidad = el MAYOR entre el promedio (días con stock) y el ritmo de los últimos 7 días.
             vel_dep_prom = ventas_deposito / dias_dep if dias_dep > 0 else 0
             vel_dep_rec  = vel_reciente(rec_deposito, sku, "deposito", prod_days_active)
-            vel_dep_diaria  = round(max(vel_dep_prom, vel_dep_rec), 4)
+            vel_dep_diaria  = round(combinar_velocidad(vel_dep_prom, vel_dep_rec), 4)
             vel_full_prom = sold_full / dias_full if dias_full > 0 else 0
             vel_full_rec  = vel_reciente(rec_full, sku, "full", prod_days_active)
-            vel_diaria  = round(vel_dep_diaria + max(vel_full_prom, vel_full_rec), 4)
+            vel_diaria  = round(vel_dep_diaria + combinar_velocidad(vel_full_prom, vel_full_rec), 4)
             vel_semanal = round(vel_diaria * 7, 2)
             vel_dep_semanal = round(vel_dep_diaria * 7, 2)
 
