@@ -77,7 +77,8 @@ Deno.test("tradicional tal cual: marca y GTIN originales, color, SKU, sin atribu
   assertEquals(a.get("GTIN"), "8435561327181");
   assertEquals(a.get("COLOR"), "Gris claro");
   assertEquals(a.get("SELLER_SKU"), "SKU-GC");
-  assert(!a.has("SELLER_PACKAGE_WEIGHT") && !a.has("VACIO") && !a.has("EMPTY_GTIN_REASON"));
+  assert(!a.has("VACIO") && !a.has("EMPTY_GTIN_REASON"));
+  assert(a.get("SELLER_PACKAGE_WEIGHT") === "1 kg"); // las medidas del paquete se copian (ML las exige en algunas categorías)
   assertEquals(p.family_name, "Juego Cortinas Blackout Pret 2,10x1,40 M");
   assertEquals(p.price, 1234.57);
   assertEquals(p.available_quantity, 7);

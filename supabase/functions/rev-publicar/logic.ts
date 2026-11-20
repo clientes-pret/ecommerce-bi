@@ -36,10 +36,11 @@ export interface ItemML {
 }
 
 // Atributos que NO se copian: son de la cuenta de Pret, los calcula ML, o ML los rechaza ("not modifiable").
+// Las medidas del paquete (SELLER_PACKAGE_HEIGHT/WIDTH/LENGTH/WEIGHT) SÍ se copian: en varias categorías ML las exige
+// para publicar ("are all required", 20/11/2026, fundas de almohada) y el producto es el mismo que despacha Pret.
 export const NO_COPIAR = new Set([
   "GIFTABLE", "IMPORT_DUTY", "VALUE_ADDED_TAX", "ITEM_CONDITION", "SELLER_SKU", "GTIN", "EMPTY_GTIN_REASON", "MAIN_COLOR",
-  "PRODUCT_FEATURES", "SHIPMENT_PACKING", "SELLER_PACKAGE_HEIGHT", "SELLER_PACKAGE_LENGTH", "SELLER_PACKAGE_WEIGHT",
-  "SELLER_PACKAGE_WIDTH", "IS_TOM_BRAND", "FILTRABLE_COLOR",
+  "PRODUCT_FEATURES", "SHIPMENT_PACKING", "IS_TOM_BRAND", "FILTRABLE_COLOR",
 ]);
 export const MAX_FOTOS = 10;
 const SIN_GTIN = "El producto no tiene código registrado";
