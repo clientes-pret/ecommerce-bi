@@ -18,3 +18,5 @@ jobs:
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
           ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}
+          TN_PRET_TOKEN: ${{ secrets.TN_PRET_TOKEN }}
+          TN_LAVAN_TOKEN: ${{ secrets.TN_LAVAN_TOKEN }}

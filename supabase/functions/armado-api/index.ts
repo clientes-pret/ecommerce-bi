@@ -59,6 +59,12 @@ type CredML = {
 const CRED: { tn: Record<Tienda, CredTN>; ml: Record<Tienda, CredML> } = JSON.parse(
   Deno.env.get("ARMADO_CREDENCIALES") ?? "{}",
 );
+// Tokens de Tiendanube: los secrets TN_PRET_TOKEN / TN_LAVAN_TOKEN, si existen, ganan sobre ARMADO_CREDENCIALES
+// (así se rotan sin rehacer ese JSON, que no se puede leer de vuelta; 20/11/2026).
+for (const t of ["pret", "lavan"] as Tienda[]) {
+  const tok = Deno.env.get(`TN_${t.toUpperCase()}_TOKEN`) ?? "";
+  if (tok && CRED.tn?.[t]) CRED.tn[t].access_token = tok;
+}
 // La app de ML de Pret es la misma que usan los revendedores: su clave secreta vive en ML_REV_CLIENT_SECRET y gana sobre
 // la copia de ARMADO_CREDENCIALES, así al rotarla se cambia en un solo lugar (20/11/2026).
 {

@@ -25,6 +25,12 @@ const supabase = createClient(
 );
 const TOKEN = Deno.env.get("VENTAS_WEBHOOK_TOKEN") ?? "";
 const CRED: Json = JSON.parse(Deno.env.get("ARMADO_CREDENCIALES") ?? "{}");
+// Tokens de Tiendanube: los secrets TN_PRET_TOKEN / TN_LAVAN_TOKEN, si existen, ganan sobre ARMADO_CREDENCIALES
+// (así se rotan sin rehacer ese JSON, que no se puede leer de vuelta; 20/11/2026).
+for (const t of ["pret", "lavan"]) {
+  const tok = Deno.env.get(`TN_${t.toUpperCase()}_TOKEN`) ?? "";
+  if (tok && CRED.tn?.[t]) CRED.tn[t].access_token = tok;
+}
 const CANAL_POR_STORE = canalesPorStoreId(CRED);
 
 function respuesta(status: number, body: Json) {

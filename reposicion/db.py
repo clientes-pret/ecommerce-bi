@@ -22,6 +22,8 @@ ROOT = Path(__file__).parent.parent
 # si la variable de entorno existe y no está vacía, pisa ese campo. Rotación de credenciales del 20/11/2026.
 _OVERRIDES = {
     "ML_PRET_CLIENT_SECRET": ("ml_pret", "client_secret"),
+    "TN_PRET_TOKEN": ("tn_pret", "access_token"),
+    "TN_LAVAN_TOKEN": ("tn_lavan", "access_token"),
 }
 
 
