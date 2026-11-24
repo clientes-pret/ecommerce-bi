@@ -1,7 +1,9 @@
 name: Revendedores — publicaciones de Pret en ML
 
 # Actualiza rev_pret_publicaciones (las publicaciones activas de Pret a Home que el portal de revendedores ofrece para
-# copiar o sumarse al catálogo). Solo LEE Mercado Libre. GitHub suele arrancar estos crons con horas de retraso.
+# copiar o sumarse al catálogo) y rev_catalogo_info (título, fotos, descripción y costo de cada SKU de Tiendanube, que
+# usa la función rev-catalogo para sumar SKU nuevos de Ecomm-App al catálogo). Solo LEE Mercado Libre y Tiendanube.
+# GitHub suele arrancar estos crons con horas de retraso.
 on:
   schedule:
     - cron: "0 */6 * * *"  # cada 6 horas
@@ -25,3 +27,10 @@ jobs:
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
           ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}
+      - name: Contenido de Tiendanube para el catálogo de revendedores
+        if: ${{ !cancelled() }}
+        run: python3 -m reposicion.rev_contenido_sync --aplicar
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          TN_PRET_TOKEN: ${{ secrets.TN_PRET_TOKEN }}
+          TN_LAVAN_TOKEN: ${{ secrets.TN_LAVAN_TOKEN }}

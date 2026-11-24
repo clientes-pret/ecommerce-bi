@@ -20,7 +20,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { COLUMNAS_REVENDEDOR, dormir, ponerStockML, type Revendedor, tokenValido } from "../_shared/rev_ml.ts";
-import { colchonPara, enLotes, publicacionesAActualizar, stockOfrecido } from "./logic.ts";
+import { aceptaStock, colchonPara, enLotes, publicacionesAActualizar, stockOfrecido } from "./logic.ts";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const ECOMM_TOKEN = Deno.env.get("ECOMMAPP_TOKEN") ?? "";
@@ -159,8 +159,9 @@ async function sincronizar(): Promise<Json> {
     ml_variation_id: number | null;
     sku: string | null;
     ultima_cantidad_enviada: number | null;
-  }>("rev_publicaciones", "id,revendedor_id,ml_item_id,ml_variation_id,sku,ultima_cantidad_enviada", "id"))
-    .filter((p) => activos.has(p.revendedor_id) && p.sku)
+    estado_ml: string | null;
+  }>("rev_publicaciones", "id,revendedor_id,ml_item_id,ml_variation_id,sku,ultima_cantidad_enviada,estado_ml", "id"))
+    .filter((p) => activos.has(p.revendedor_id) && p.sku && aceptaStock(p.estado_ml))
     .map((p) => ({ ...p, sku: p.sku as string }));
 
   // Lo ofrecido a cada revendedor: el general (rev_stock_ofrecido) o, si tiene su propio colchón, con el suyo.

@@ -172,3 +172,9 @@ Deno.test("colchón por revendedor: gana el del producto, después el del revend
   assertEquals(colchonPara(null, 0, 3), 0);
   assertEquals(stockOfrecido(50, colchonPara(null, 10, 3)), 40);
 });
+
+import { aceptaStock } from "./logic.ts";
+Deno.test("aceptaStock: en revisión, cerrada o inactiva no; activa, pausada o sin dato sí", () => {
+  assertEquals(["under_review", "closed", "inactive"].map(aceptaStock), [false, false, false]);
+  assertEquals(["active", "paused", null, undefined].map(aceptaStock), [true, true, true, true]);
+});

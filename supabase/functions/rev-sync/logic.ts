@@ -104,6 +104,12 @@ export function publicacionesAActualizar<T extends Publicacion>(ofrecidos: Map<s
   return out;
 }
 
+/** ML no deja cambiar la cantidad de una publicación en revisión (`under_review`) ni cerrada: responde 400 y la función
+ *  la reintentaba cada 5 min (medido 24/11/2026: 46 de 47 envíos). Se saltea hasta que la vinculación (cada hora) vea
+ *  otro estado; como `ultima_cantidad_enviada` no cambia, en cuanto se active se le manda. */
+export const ESTADOS_SIN_STOCK = new Set(["under_review", "closed", "inactive"]);
+export const aceptaStock = (estado: string | null | undefined) => !ESTADOS_SIN_STOCK.has(String(estado ?? ""));
+
 export function enLotes<T>(lista: T[], tamano: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < lista.length; i += tamano) out.push(lista.slice(i, i + tamano));

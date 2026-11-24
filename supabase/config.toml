@@ -36,6 +36,10 @@ verify_jwt = false
 [functions.rev-conciliar]
 verify_jwt = false
 
+# Actualización diaria del catálogo de revendedores con los SKU de Ecomm-App: mismo esquema de disparo y token.
+[functions.rev-catalogo]
+verify_jwt = false
+
 # "Publicar en mi cuenta" del portal de revendedores: la llama el navegador con la sesión del revendedor; la función
 # valida esa sesión ella misma (supabase.auth.getUser) y busca a qué revendedor pertenece.
 [functions.rev-publicar]
