@@ -23,7 +23,7 @@ const id = Number(qs('id'));
 if (!id) { location.replace('publicaciones.html'); throw new Error('sin producto'); }
 
 const hoy = hoyAR();
-let fila, prod, dias, tareas, cfg, rango = 30, pestana = location.hash === '#tareas' ? 'tareas' : 'metricas';
+let fila, prod, dias, tareas, cfg, fuentes, rango = 30, pestana = location.hash === '#tareas' ? 'tareas' : 'metricas';
 async function cargar() {
   const r = await Promise.all([
     sb.rpc('mkt_tablero', { p_product: id }),
@@ -36,10 +36,34 @@ async function cargar() {
   if (err) throw err;
   [fila, prod, dias, tareas, cfg] = [r[0].data?.[0], r[1].data, r[2].data, r[3].data, r[4]];
   if (!fila || !prod) throw new Error('No encontré ese producto.');
+  // Visitas y compras desde anuncios (null si todavía no está la migración de anuncios: esa parte no aparece).
+  const fu = await sb.from('mkt_producto_fuente_dia').select('*').eq('product_id', id).gte('fecha', sumarDias(hoy, -89)).order('fecha');
+  fuentes = fu.error ? null : fu.data;
 }
 try { await cargar(); } catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Producto</h1></div></div>` + sinDatos(e); throw e; }
 
 const kpi = (l, v, sub = '') => `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor">${v}</div>${sub ? `<div class="cc-sub">${sub}</div>` : ''}</div>`;
+
+// Suma de la fuente 'meta' o 'google' en los últimos 7 días completos (hasta ayer).
+function totalAds(fuente) {
+  const desde = sumarDias(hoy, -7), hasta = sumarDias(hoy, -1);
+  return (fuentes || []).filter((x) => x.fuente === fuente && x.fecha >= desde && x.fecha <= hasta)
+    .reduce((a, x) => ({ v: a.v + x.visitas, c: a.c + x.compras }), { v: 0, c: 0 });
+}
+function adsVisitas(fechas) {
+  if (!fuentes) return '';
+  if (!fuentes.length) return '<div class="mk-cc"><div class="mk-cch"><span class="t">Visitas desde anuncios</span></div><p class="muted small" style="margin:6px 0 10px">Este producto no recibió visitas desde anuncios de Meta ni de Google Ads en los últimos 90 días.</p></div>';
+  const por = new Map(fuentes.map((x) => [x.fecha + x.fuente, x]));
+  const serie = (f) => fechas.map((d) => por.get(d + f)?.visitas ?? 0);
+  const meta = serie('meta'), goo = serie('google');
+  return panelGrafico('Visitas desde anuncios', n0(sumar(meta) + sumar(goo)), '<span style="color:#2B8CD9">━ Meta</span> &nbsp;<span style="color:#E0A100">━ Google Ads</span> &nbsp;por día',
+    chart([{ d: meta, c: '#2B8CD9' }, { d: goo, c: '#E0A100' }], fechas, { t: 'Visitas desde anuncios', f: n0 }));
+}
+function kpiAds() {
+  if (!fuentes) return '';
+  const m = totalAds('meta'), g = totalAds('google');
+  return kpi('Visitas desde anuncios · 7 días', n0(m.v + g.v), `Meta ${n0(m.v)} / ${n0(m.c)} · Google ${n0(g.v)} / ${n0(g.c)}<br>visitas / compras`);
+}
 
 function graficos() {
   const fechas = rangoDias(hoy, rango), por = new Map(dias.map((d) => [d.fecha, d]));
@@ -52,6 +76,7 @@ function graficos() {
   const sinPrecio = final.every((v) => v == null);
   return `
     ${panelGrafico('Visitas', vis.every((v) => v == null) ? '—' : n0(sumar(vis)), 'total del período', chart([{ d: vis, c: '#7C98E0' }], fechas, { bars: true, t: 'Visitas por día', f: n0 }))}
+    ${adsVisitas(fechas)}
     ${panelGrafico('Ventas', n0(sumar(uni.map((v) => v ?? 0))), 'unidades por día', chart([{ d: uni, c: '#1F6F43' }], fechas, { bars: true, t: 'Unidades por día', f: n0 }))}
     ${panelGrafico('Precio', peso(ult(final)), '<span style="color:#9a9890">━ Lista</span> &nbsp;<span style="color:#2449B8">━ Final</span> &nbsp;● cambio de precio', chart([{ d: lista, c: '#B4B2A9' }, { d: final, c: '#2449B8' }], fechas, { step: true, t: 'Precio de lista y final', f: (v) => '$' + Math.round(v / 1000) + ' k', marks }))}
     ${panelGrafico('Margen', margen.every((v) => v == null) ? '—' : pct(ult(margen), 0), '<span style="color:#B42318">┄ 0 %</span> (por debajo se pierde plata)', chart([{ d: margen, c: '#1F6F43' }], fechas, { step: true, t: 'Margen', refs: [{ v: 0, c: '#B42318', t: '0 %' }], f: (v) => Math.round(v) + ' %' }))}
@@ -113,6 +138,7 @@ function pintar() {
     ${kpi('Conversión · 7 días', pct(f.conv_7d, 2), `24 h: ${pct(f.conv_24h, 2)}`)}
     ${kpi('Stock', n0(f.stock), f.stock != null && f.stock < (cfg.stock_bajo ?? 40) ? '<span class="chip warn">Stock bajo</span>' : 'unidades')}
     ${kpi('Precio final', peso(f.precio_final), f.precio_lista > f.precio_final ? `lista <s>${peso(f.precio_lista)}</s>` : 'sin descuento')}
+    ${kpiAds()}
     ${kpi('Ganancia · margen · ROI', f.margen == null ? '<span class="chip">Sin costo</span>' : `${chipMargen(f, cfg)}`, f.margen == null ? 'falta cargar el costo en Tienda Nube' : `${peso(f.ganancia)} por unidad · ROI ${pct(f.roi, 0)}`)}
   </div>
   ${f.en_home ? `<div class="card"><h2 style="margin:0 0 4px">🏠 En la homepage</h2><p class="muted" style="margin:0">Está en la homepage de la tienda desde el ${esc(ddmm(f.home_desde))}.</p></div>` : ''}

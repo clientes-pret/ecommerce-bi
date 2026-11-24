@@ -16,7 +16,7 @@
 // semáforo, categoría, marca, stock, homepage, alerta, texto) y se ordena por cualquier columna. "En homepage" es un filtro
 // aparte del semáforo. Fase 1: solo lectura; la selección masiva y las estrategias llegan en la fase de precios.
 import { $, $$, esc, guard, navMarketing, qs } from '../proveedores/app.js';
-import { SEM, dotSem, chipSem, chipHome, chipMargen, linkTienda, n0, pct, peso, hace, cargarConfig, cargarTablero, sinDatos, tono } from './mkt-lib.js';
+import { SEM, dotSem, chipSem, chipHome, chipMargen, linkTienda, n0, pct, peso, hace, cargarConfig, cargarTablero, sinDatos, tono, cargarAdsProducto } from './mkt-lib.js';
 
 const perfil = await guard(['admin', 'dueno', 'marketing']);
 navMarketing(perfil, 'publicaciones');
@@ -25,8 +25,15 @@ let rows, cfg;
 try { [rows, cfg] = await Promise.all([cargarTablero(), cargarConfig()]); }
 catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Publicaciones</h1></div></div>` + sinDatos(e); throw e; }
 
+// Visitas y compras que llegan desde anuncios (null si todavía no está la migración de anuncios: la vista "Anuncios" no aparece).
+const ads = await cargarAdsProducto(7);
+for (const r of rows) {
+  const a = ads?.get(r.product_id);
+  r.vm = a?.vm ?? 0; r.cm = a?.cm ?? 0; r.vg = a?.vg ?? 0; r.cg = a?.cg ?? 0; r.va = r.vm + r.vg; r.ca = r.cm + r.cg;
+}
+
 const POR_PAGINA = 50;
-const st = { tab: 'gen', c: qs('c') || '', cat: '', mk: '', stock: '', home: qs('home') === '1', al: '', q: '', k: 'v7', dir: -1, pag: 0 };
+const st = { tab: 'gen', c: qs('c') || '', cat: '', mk: '', stock: '', home: qs('home') === '1', conAds: false, al: '', q: '', k: 'v7', dir: -1, pag: 0 };
 const ALERTAS = {
   sincosto: ['Sin costo', (r) => !(r.costo > 0)],
   perdida: ['Ganancia negativa', (r) => r.ganancia != null && r.ganancia < 0],
@@ -36,8 +43,10 @@ const ALERTAS = {
 // Cómo se ordena cada columna (null siempre al final).
 const COLS = {
   nombre: (r) => r.nombre.toLowerCase(), v24: (r) => r.visitas_24h, v7: (r) => r.visitas_7d, conv: (r) => r.conv_7d, stock: (r) => r.stock,
+  vm: (r) => r.vm, cm: (r) => r.cm, vg: (r) => r.vg, cg: (r) => r.cg, va: (r) => r.va, pva: (r) => (r.visitas_7d > 0 ? r.va / r.visitas_7d : null),
   margen: (r) => r.margen, precio: (r) => r.precio_final, costo: (r) => r.costo, ganancia: (r) => r.ganancia, roi: (r) => r.roi,
 };
+if (ads) ALERTAS.adssin = ['Anuncios sin compras', (r) => r.va >= 100 && r.ca === 0];
 const ultima = rows.reduce((m, r) => (r.actualizado_at > m ? r.actualizado_at : m), '');
 const unicos = (k) => [...new Set(rows.map((r) => r[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
 const opciones = (lista, sel, todas) => `<option value="">${todas}</option>` + lista.map((x) => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('');
@@ -45,7 +54,7 @@ const opciones = (lista, sel, todas) => `<option value="">${todas}</option>` + l
 function filtradas() {
   const q = st.q.trim().toLowerCase();
   return rows.filter((r) => (!st.c || r.semaforo === st.c) && (!st.cat || r.categoria === st.cat) && (!st.mk || r.marca === st.mk)
-    && (!st.home || r.en_home) && (!st.al || ALERTAS[st.al][1](r))
+    && (!st.home || r.en_home) && (!st.conAds || r.va > 0) && (!st.al || ALERTAS[st.al][1](r))
     && (!st.stock || (st.stock === 'sin' ? r.stock === 0 : r.stock != null && r.stock < (cfg.stock_bajo ?? 40)))
     && (!q || r.nombre.toLowerCase().includes(q) || (r.handle || '').includes(q)));
 }
@@ -65,6 +74,11 @@ function fila(r) {
   const prod = `<td><div class="mk-producto">${r.imagen ? `<img src="${esc(r.imagen)}" alt="" loading="lazy">` : ''}<div style="min-width:0">
     <a class="prov" href="producto.html?id=${r.product_id}">${esc(r.nombre)}</a> ${linkTienda(r.handle)}
     <div style="margin-top:3px">${chipSem(r.semaforo)}${chipHome(r)}${r.tareas_en_curso ? `<span class="chip neutro" title="Tareas en curso">✎ ${r.tareas_en_curso}</span>` : ''}</div></div></div></td>`;
+  if (st.tab === 'ads') {
+    const pva = r.visitas_7d > 0 ? (r.va / r.visitas_7d) * 100 : null;
+    const sin = r.va >= 100 && r.ca === 0 ? '<div><span class="chip warn" title="Recibe visitas de anuncios pero nadie compró">Sin compras</span></div>' : '';
+    return `<tr class="click" data-id="${r.product_id}">${prod}<td class="r">${n0(r.vm)} / ${n0(r.cm)}</td><td class="r">${n0(r.vg)} / ${n0(r.cg)}</td><td class="r">${n0(r.va)}${sin}</td><td class="r">${pva == null ? '—' : pct(pva, 0)}</td></tr>`;
+  }
   if (st.tab === 'rent') {
     return `<tr class="click" data-id="${r.product_id}">${prod}<td class="r">${peso(r.precio_final)}${r.precio_lista > r.precio_final ? `<div class="muted small"><s>${peso(r.precio_lista)}</s></div>` : ''}</td>
       <td class="r">${r.costo > 0 ? peso(r.costo) : '—'}</td><td class="r ${tono(r, cfg) === 'bad' ? 'bad-t' : ''}">${peso(r.ganancia)}</td><td class="r">${chipMargen(r, cfg)}</td><td class="r">${pct(r.roi, 0)}</td></tr>`;
@@ -77,7 +91,9 @@ function pintarTabla() {
   const l = ordenadas(filtradas()), paginas = Math.max(1, Math.ceil(l.length / POR_PAGINA));
   st.pag = Math.min(st.pag, paginas - 1);
   $('#cuenta').textContent = `${n0(l.length)} de ${n0(rows.length)} publicaciones`;
-  $('#thead').innerHTML = `<tr>${th('nombre', 'Producto', false)}${st.tab === 'rent'
+  $('#thead').innerHTML = `<tr>${th('nombre', 'Producto', false)}${st.tab === 'ads'
+    ? th('vm', 'Meta<div class="muted small" style="font-weight:400">visitas / compras</div>') + th('vg', 'Google Ads<div class="muted small" style="font-weight:400">visitas / compras</div>') + th('va', 'Desde anuncios<div class="muted small" style="font-weight:400">visitas, 7 días</div>') + th('pva', '% de las visitas')
+    : st.tab === 'rent'
     ? th('precio', 'Precio final') + th('costo', 'Costo con IVA') + th('ganancia', 'Ganancia') + th('margen', 'Margen') + th('roi', 'ROI')
     : th('v24', 'Últimas 24 h<div class="muted small" style="font-weight:400">visitas / unidades</div>') + th('v7', '7 días<div class="muted small" style="font-weight:400">visitas / unidades</div>') + th('conv', 'Conv. 7 d') + th('stock', 'Stock') + th('margen', 'Margen')}</tr>`;
   $('#tbody').innerHTML = l.slice(st.pag * POR_PAGINA, (st.pag + 1) * POR_PAGINA).map(fila).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Ningún producto cumple estos filtros.</td></tr>';
@@ -100,10 +116,11 @@ function pintar() {
       <div><label for="fst">Stock</label><select id="fst"><option value="">Todos</option><option value="sin" ${st.stock === 'sin' ? 'selected' : ''}>Sin stock</option><option value="bajo" ${st.stock === 'bajo' ? 'selected' : ''}>Stock bajo (menos de ${cfg.stock_bajo ?? 40})</option></select></div>
       <div><label for="fq">Buscar</label><input id="fq" type="search" placeholder="Nombre o link del producto" value="${esc(st.q)}"></div>
     </div>
-    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:12px"><input type="checkbox" id="fhome" ${st.home ? 'checked' : ''}> Solo los que están en la homepage</label></div>
-  <div class="row between wrapRow" style="margin:4px 0 10px"><div class="seg" role="group" aria-label="Vista"><button data-tab="gen" aria-pressed="${st.tab === 'gen'}">General</button><button data-tab="rent" aria-pressed="${st.tab === 'rent'}">Rentabilidad</button></div><span class="muted" id="cuenta"></span></div>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:12px"><input type="checkbox" id="fhome" ${st.home ? 'checked' : ''}> Solo los que están en la homepage</label>
+    ${ads ? `<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:8px"><input type="checkbox" id="fads" ${st.conAds ? 'checked' : ''}> Solo los que reciben visitas de anuncios</label>` : ''}</div>
+  <div class="row between wrapRow" style="margin:4px 0 10px"><div class="seg" role="group" aria-label="Vista"><button data-tab="gen" aria-pressed="${st.tab === 'gen'}">General</button><button data-tab="rent" aria-pressed="${st.tab === 'rent'}">Rentabilidad</button>${ads ? `<button data-tab="ads" aria-pressed="${st.tab === 'ads'}">Anuncios</button>` : ''}</div><span class="muted" id="cuenta"></span></div>
   <div class="card tabla"><div class="scroll"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div class="mk-pie" id="pie"></div></div>
-  <p class="muted small">Conversión = unidades ÷ visitas de la página del producto. Ganancia = precio final × (1 − comisión estimada ${pct(cfg.comision, 1)}) − costo con IVA · Margen = ganancia ÷ precio final · ROI = ganancia ÷ costo. El ↗ abre la página del producto en la tienda.</p>`;
+  <p class="muted small">Conversión = unidades ÷ visitas de la página del producto. Ganancia = precio final × (1 − comisión estimada ${pct(cfg.comision, 1)}) − costo con IVA · Margen = ganancia ÷ precio final · ROI = ganancia ÷ costo. El ↗ abre la página del producto en la tienda.${ads ? ' En «Anuncios», las visitas y compras son las de sesiones que entraron por un anuncio de Meta o de Google Ads (GA4), últimos 7 días completos.' : ''}</p>`;
   $$('[data-c]').forEach((b) => { b.onclick = () => { st.c = b.dataset.c; st.pag = 0; pintar(); }; });
   $$('[data-tab]').forEach((b) => { b.onclick = () => { st.tab = b.dataset.tab; st.pag = 0; pintar(); }; });
   $$('[data-al]').forEach((b) => { b.onclick = () => { st.al = st.al === b.dataset.al ? '' : b.dataset.al; st.pag = 0; pintar(); }; });
@@ -111,8 +128,9 @@ function pintar() {
   $('#fmk').onchange = (e) => { st.mk = e.target.value; st.pag = 0; pintarTabla(); };
   $('#fst').onchange = (e) => { st.stock = e.target.value; st.pag = 0; pintarTabla(); };
   $('#fhome').onchange = (e) => { st.home = e.target.checked; st.pag = 0; pintarTabla(); };
+  if ($('#fads')) $('#fads').onchange = (e) => { st.conAds = e.target.checked; st.pag = 0; pintarTabla(); };
   $('#fq').oninput = (e) => { st.q = e.target.value; st.pag = 0; pintarTabla(); };
-  $('#limpiar').onclick = () => { Object.assign(st, { c: '', cat: '', mk: '', stock: '', home: false, al: '', q: '', pag: 0 }); pintar(); };
+  $('#limpiar').onclick = () => { Object.assign(st, { c: '', cat: '', mk: '', stock: '', home: false, conAds: false, al: '', q: '', pag: 0 }); pintar(); };
   pintarTabla();
 }
 pintar();

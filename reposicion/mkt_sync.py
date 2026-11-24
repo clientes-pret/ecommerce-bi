@@ -137,7 +137,7 @@ def ga4_access_token():
     return r.json()["access_token"]
 
 
-def ga4_reporte(token, desde, hasta, dimensiones, metricas):
+def ga4_reporte(token, desde, hasta, dimensiones, metricas, extra=None):
     """Filas de un reporte de GA4 (dicts dimensión/métrica -> valor), paginado."""
     filas, offset = [], 0
     while True:
@@ -145,7 +145,7 @@ def ga4_reporte(token, desde, hasta, dimensiones, metricas):
                           headers={"Authorization": f"Bearer {token}"}, json={
                               "dateRanges": [{"startDate": desde.isoformat(), "endDate": hasta.isoformat()}],
                               "dimensions": [{"name": d} for d in dimensiones], "metrics": [{"name": m} for m in metricas],
-                              "limit": 100000, "offset": offset})
+                              "limit": 100000, "offset": offset, **(extra or {})})
         r.raise_for_status()
         j = r.json()
         dh = [h["name"] for h in j.get("dimensionHeaders", [])]
@@ -178,6 +178,94 @@ def _fecha_ga4(f):
 def _hora_ga4(f):
     d = f["dateHour"]                                   # AAAAMMDDHH, en la zona horaria de la propiedad (Argentina)
     return datetime(int(d[:4]), int(d[4:6]), int(d[6:8]), int(d[8:10]), tzinfo=AR).isoformat()
+
+
+# ── Anuncios: visitas y compras por fuente (GA4) ─────────────────────────────────────────────────────────────────
+
+FUENTES_META = ("ig", "fb", "an", "facebook", "instagram")      # `sessionSource` de los anuncios de Meta (medio "paid")
+
+
+def fuente_de(source, medium):
+    """'meta' si la sesión vino de un anuncio de Meta (Instagram/Facebook/Audience Network, medio pagado), 'google' si vino de
+    un anuncio de Google Ads (google / cpc), None para todo lo demás (orgánico, directo, mail, referidos…)."""
+    source, medium = (source or "").lower(), (medium or "").lower()
+    if source in FUENTES_META and medium == "paid":
+        return "meta"
+    if source == "google" and medium == "cpc":
+        return "google"
+    return None
+
+
+def _filtro(campo, valores):
+    return {"filter": {"fieldName": campo, "inListFilter": {"values": list(valores)}}}
+
+
+# Filtro de GA4: solo sesiones de anuncios de Meta o de Google Ads (el resto no interesa y haría el reporte enorme).
+FILTRO_ANUNCIOS = {"dimensionFilter": {"orGroup": {"expressions": [
+    {"andGroup": {"expressions": [_filtro("sessionSource", FUENTES_META), _filtro("sessionMedium", ["paid"])]}},
+    {"andGroup": {"expressions": [_filtro("sessionSource", ["google"]), _filtro("sessionMedium", ["cpc"])]}},
+]}}}
+
+
+def pagina_normal(ruta):
+    """Ruta de la página de destino sin parámetros, sin barra final y en minúsculas ('/' queda como '/')."""
+    r = (ruta or "").split("?")[0].split("#")[0].strip().lower()
+    if r.startswith("http"):
+        r = "/" + r.split("//", 1)[-1].split("/", 1)[-1] if "/" in r.split("//", 1)[-1] else "/"
+    r = r.rstrip("/")
+    return r if r else "/"
+
+
+def atribucion_producto(filas, variante_a_producto):
+    """{(product_id, fecha, fuente): [visitas, compras]} sumando las variantes de cada producto.
+    `filas` trae date, itemId, sessionSource, sessionMedium, itemsViewed, itemsPurchased."""
+    out = defaultdict(lambda: [0, 0])
+    for f in filas:
+        pid = variante_a_producto.get(str(f.get("itemId")))
+        fuente = fuente_de(f.get("sessionSource"), f.get("sessionMedium"))
+        if pid is None or fuente is None:
+            continue
+        v = out[(pid, _fecha_ga4(f), fuente)]
+        v[0] += int(_num(f.get("itemsViewed")))
+        v[1] += int(_num(f.get("itemsPurchased")))
+    return out
+
+
+def atribucion_paginas(filas):
+    """{(fecha, página, fuente): [sesiones, compras]}. Páginas que GA4 no pudo identificar ('(not set)') se descartan."""
+    out = defaultdict(lambda: [0, 0])
+    for f in filas:
+        fuente = fuente_de(f.get("sessionSource"), f.get("sessionMedium"))
+        pagina = pagina_normal(f.get("landingPage"))
+        if fuente is None or "(not set)" in pagina:
+            continue
+        v = out[(_fecha_ga4(f), pagina, fuente)]
+        v[0] += int(_num(f.get("sessions")))
+        v[1] += int(_num(f.get("ecommercePurchases")))
+    return out
+
+
+def google_campanas(filas):
+    """{(fecha, campaña): [gasto, clics, sesiones]} de Google Ads. Las sesiones que no son de una campaña ('(not set)') se descartan."""
+    out = defaultdict(lambda: [0.0, 0, 0])
+    for f in filas:
+        campana = (f.get("sessionGoogleAdsCampaignName") or "").strip()
+        if not campana or campana == "(not set)":
+            continue
+        v = out[(_fecha_ga4(f), campana)]
+        v[0] += _num(f.get("advertiserAdCost"))
+        v[1] += int(_num(f.get("advertiserAdClicks")))
+        v[2] += int(_num(f.get("sessions")))
+    return {k: v for k, v in out.items() if v[0] > 0 or v[1] > 0}
+
+
+def filas_anuncios(prod, pag, goo):
+    """Lo que se guarda en las tablas mkt_producto_fuente_dia, mkt_pagina_fuente_dia y mkt_google_campana_dia."""
+    return (
+        [{"fecha": f, "product_id": p, "fuente": fu, "visitas": v[0], "compras": v[1]} for (p, f, fu), v in sorted(prod.items())],
+        [{"fecha": f, "pagina": pg, "fuente": fu, "sesiones": v[0], "compras": v[1]} for (f, pg, fu), v in sorted(pag.items())],
+        [{"fecha": f, "campana": c, "gasto": round(v[0], 2), "clics": v[1], "sesiones": v[2]} for (f, c), v in sorted(goo.items())],
+    )
 
 
 # ── Homepage ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -251,6 +339,7 @@ def main():
     core.tnlog(f"  {sum(v['unidades'] for v in ventas_dia.values())} unidades en {len({k[0] for k in ventas_dia})} productos")
 
     visitas_dia = visitas_hora = None
+    ads_prod = ads_pag = ads_goo = None
     token = ga4_access_token()
     if token:
         core.tnlog("Visitas de GA4…")
@@ -259,6 +348,13 @@ def main():
         visitas_hora = visitas_por_producto(ga4_reporte(token, hoy - timedelta(days=2), hoy, ["dateHour", "itemId"], ["itemsViewed"]),
                                             variante_a_producto, _hora_ga4)
         core.tnlog(f"  {sum(visitas_dia.values())} visitas de producto en {len({k[0] for k in visitas_dia})} productos")
+        core.tnlog("Anuncios (Meta y Google Ads) por producto y página de destino…")
+        d_item = ["date", "itemId", "sessionSource", "sessionMedium"]
+        ads_prod = atribucion_producto(ga4_reporte(token, desde, hoy, d_item, ["itemsViewed", "itemsPurchased"], FILTRO_ANUNCIOS), variante_a_producto)
+        ads_pag = atribucion_paginas(ga4_reporte(token, desde, hoy, ["date", "landingPage", "sessionSource", "sessionMedium"], ["sessions", "ecommercePurchases"], FILTRO_ANUNCIOS))
+        ads_goo = google_campanas(ga4_reporte(token, desde, hoy, ["date", "sessionGoogleAdsCampaignName"], ["advertiserAdCost", "advertiserAdClicks", "sessions"]))
+        core.tnlog(f"  {len(ads_prod)} filas por producto, {len(ads_pag)} por página, {len(ads_goo)} de campañas de Google Ads "
+                   f"(gasto de Google Ads: ${sum(v[0] for v in ads_goo.values()):,.0f})")
 
     handle_a_producto = {p["handle"].lower(): pid for pid, (p, _) in productos.items() if p["handle"]}
     home = [handle_a_producto[h] for h in traer_homepage() if h in handle_a_producto]
@@ -276,6 +372,16 @@ def main():
         ayer = [f for f in dia if f["fecha"] == (hoy - timedelta(days=1)).isoformat()]
         for f in sorted(ayer, key=lambda f: (-(f.get("visitas") or 0), -f["unidades"]))[:5]:
             core.tnlog(f"  ayer · {productos[f['product_id']][0]['nombre'][:50]}: visitas {f.get('visitas', 'sin GA4')} · unidades {f['unidades']}")
+        if ads_prod is not None:
+            fp, fg, fc = filas_anuncios(ads_prod, ads_pag, ads_goo)
+            top = defaultdict(lambda: [0, 0])
+            for r in fp:
+                if r["fecha"] >= (hoy - timedelta(days=7)).isoformat():
+                    top[(r["product_id"], r["fuente"])][0] += r["visitas"]
+                    top[(r["product_id"], r["fuente"])][1] += r["compras"]
+            for (pid, fu), v in sorted(top.items(), key=lambda kv: -kv[1][0])[:5]:
+                core.tnlog(f"  anuncios {fu} · {productos[pid][0]['nombre'][:46]}: visitas {v[0]} · compras {v[1]}")
+            core.tnlog(f"  (anuncios) guardaría {len(fp)} filas por producto, {len(fg)} por página y {len(fc)} de campañas")
         core.tnlog(f"(simulación) guardaría {len(catalogo)} productos, {len(dia)} filas por día, {len(horas)} por hora y {len(home)} en homepage")
         return
 
@@ -293,6 +399,15 @@ def main():
         sigue = p and date.fromisoformat(p["ultimo"]) >= hoy - timedelta(days=2)   # estuvo ayer o antes de ayer: no se cortó la racha
         ahora.append({"product_id": pid, "desde": p["desde"] if sigue else hoy.isoformat(), "ultimo": hoy.isoformat()})
     db.upsert(config, "mkt_homepage", ahora, on_conflict="product_id")
+    if ads_prod is not None:
+        fp, fg, fc = filas_anuncios(ads_prod, ads_pag, ads_goo)
+        try:                                                  # las tablas de anuncios llegan con su propia migración
+            for tabla, filas, pk in (("mkt_producto_fuente_dia", fp, "fecha,product_id,fuente"), ("mkt_pagina_fuente_dia", fg, "fecha,pagina,fuente"),
+                                     ("mkt_google_campana_dia", fc, "fecha,campana")):
+                db.upsert(config, tabla, filas, on_conflict=pk)
+            core.tnlog(f"✓ anuncios: {len(fp)} filas por producto, {len(fg)} por página, {len(fc)} de campañas")
+        except RuntimeError as e:
+            core.tnlog(f"  ⚠ no pude guardar los anuncios (¿falta aplicar la migración mkt_anuncios?): {str(e)[:200]}")
     core.tnlog(f"✓ guardado: {len(catalogo)} productos, {len(dia)} filas por día, {len(horas)} por hora, {len(ahora)} en homepage")
 
 

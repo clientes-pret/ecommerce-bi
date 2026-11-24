@@ -75,7 +75,7 @@ export function chart(series, fechas, { bars = false, step = false, t = '', f = 
   let mn = Math.min(...todos), mx = Math.max(...todos);
   if (bars) mn = Math.min(0, mn);
   for (const r of refs) { mn = Math.min(mn, r.v); mx = Math.max(mx, r.v); }
-  if (!bars) { const pd = (mx - mn) * 0.12 || 1; mn -= pd; mx += pd; }
+  if (!bars) { const pd = (mx - mn) * 0.12 || 1, noNeg = mn >= 0; mn -= pd; mx += pd; if (noNeg && mn < 0) mn = 0; }   // un conteo (visitas, stock) no baja de 0
   if (mx === mn) mx = mn + 1;
   const Y = (v) => pt + ph * (1 - (v - mn) / (mx - mn));
   const X = (i) => pl + (len > 1 ? (i * pw) / (len - 1) : pw / 2);
@@ -127,3 +127,21 @@ export const TIPOS = { fotos: 'Cambio de fotos', precio: 'Mejora de precio', pub
 // Columnas del tablero, en orden: [clave en la base, título, clase del chip].
 export const ESTADOS = [['pendiente', 'Por hacer', ''], ['en_curso', 'En curso', 'info'], ['hecho', 'Hecho', 'ok']];
 export const nombreEstado = (e) => (ESTADOS.find((x) => x[0] === e) || [e, e])[1];
+
+// ---- Anuncios (Meta y Google Ads), medidos en GA4 por la fuente de la sesión y la página de destino ----
+export const FUENTES = { meta: 'Meta (Instagram y Facebook)', google: 'Google Ads' };
+// {product_id → {vm, cm, vg, cg}} = visitas y compras desde Meta y desde Google Ads en los últimos `dias` días completos.
+// Devuelve null si todavía no está la migración de anuncios (las pantallas siguen andando sin esa parte).
+export async function cargarAdsProducto(dias = 7) {
+  const { data, error } = await sb.rpc('mkt_ads_producto', { p_dias: dias });
+  if (error) return null;
+  return new Map(data.map((r) => [r.product_id, { vm: Number(r.visitas_meta), cm: Number(r.compras_meta), vg: Number(r.visitas_google), cg: Number(r.compras_google) }]));
+}
+// Qué es una página de destino: un producto (/productos/<handle>), el inicio o una categoría/colección.
+export function tipoPagina(ruta) {
+  if (ruta === '/') return ['inicio', 'Inicio', 'info'];
+  if (/^\/productos\/[^/]+$/.test(ruta)) return ['producto', 'Producto', 'ok'];
+  if (ruta === '/productos') return ['categoria', 'Listado', ''];
+  return ['categoria', 'Categoría', ''];
+}
+export const urlSitio = (ruta) => `https://www.pretahome.com${ruta}`;

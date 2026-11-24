@@ -97,6 +97,60 @@ def test_historia_vieja_solo_si_hubo_actividad():
     assert [(f["fecha"], f["unidades"]) for f in filas_utiles(filas, hoy)] == [("2026-11-24", 0), ("2026-11-17", 0), ("2026-11-16", 2), ("2026-10-01", 0)]
 
 
+def test_fuente_de_anuncios():
+    from reposicion.mkt_sync import fuente_de
+    assert fuente_de("ig", "paid") == "meta" and fuente_de("FB", "Paid") == "meta" and fuente_de("an", "paid") == "meta"
+    assert fuente_de("google", "cpc") == "google"
+    # lo orgánico, referido o directo NO es un anuncio
+    assert fuente_de("l.instagram.com", "referral") is None and fuente_de("google", "organic") is None
+    assert fuente_de("perfit", "email") is None and fuente_de("(direct)", "(none)") is None and fuente_de(None, None) is None
+
+
+def test_pagina_normal():
+    from reposicion.mkt_sync import pagina_normal
+    assert pagina_normal("/") == "/" and pagina_normal("") == "/" and pagina_normal(None) == "/"
+    assert pagina_normal("/cortinas/largas/") == "/cortinas/largas" == pagina_normal("/Cortinas/Largas?fbclid=abc#x")
+    assert pagina_normal("/productos/cover-uma-king-pret-szbmr") == "/productos/cover-uma-king-pret-szbmr"
+
+
+def test_atribucion_producto_suma_variantes_y_descarta_lo_que_no_es_anuncio():
+    from reposicion.mkt_sync import atribucion_producto
+    filas = [{"date": "20261120", "itemId": "11", "sessionSource": "ig", "sessionMedium": "paid", "itemsViewed": "30", "itemsPurchased": "1"},
+             {"date": "20261120", "itemId": "12", "sessionSource": "ig", "sessionMedium": "paid", "itemsViewed": "12", "itemsPurchased": "0"},
+             {"date": "20261120", "itemId": "11", "sessionSource": "google", "sessionMedium": "cpc", "itemsViewed": "5", "itemsPurchased": "2"},
+             {"date": "20261120", "itemId": "11", "sessionSource": "google", "sessionMedium": "organic", "itemsViewed": "99", "itemsPurchased": "9"},
+             {"date": "20261120", "itemId": "999", "sessionSource": "ig", "sessionMedium": "paid", "itemsViewed": "500", "itemsPurchased": "50"}]
+    r = atribucion_producto(filas, {"11": 1, "12": 1})
+    assert r == {(1, "2026-11-20", "meta"): [42, 1], (1, "2026-11-20", "google"): [5, 2]}
+
+
+def test_atribucion_paginas_une_variantes_de_la_misma_url():
+    from reposicion.mkt_sync import atribucion_paginas
+    filas = [{"date": "20261120", "landingPage": "/cortinas/largas", "sessionSource": "ig", "sessionMedium": "paid", "sessions": "100", "ecommercePurchases": "2"},
+             {"date": "20261120", "landingPage": "/cortinas/largas/", "sessionSource": "fb", "sessionMedium": "paid", "sessions": "20", "ecommercePurchases": "0"},   # misma página, otra fuente de Meta
+             {"date": "20261120", "landingPage": "/cortinas/largas?utm=1", "sessionSource": "google", "sessionMedium": "cpc", "sessions": "7", "ecommercePurchases": "1"},
+             {"date": "20261120", "landingPage": "(not set)", "sessionSource": "ig", "sessionMedium": "paid", "sessions": "50", "ecommercePurchases": "0"},
+             {"date": "20261120", "landingPage": "/", "sessionSource": "perfit", "sessionMedium": "email", "sessions": "300", "ecommercePurchases": "5"}]
+    r = atribucion_paginas(filas)
+    assert r == {("2026-11-20", "/cortinas/largas", "meta"): [120, 2], ("2026-11-20", "/cortinas/largas", "google"): [7, 1]}   # una sola fila por clave (si no, el guardado falla)
+
+
+def test_google_campanas_sin_gasto_ni_not_set():
+    from reposicion.mkt_sync import google_campanas
+    filas = [{"date": "20261120", "sessionGoogleAdsCampaignName": "P.Max - Blanquería", "advertiserAdCost": "390810.96", "advertiserAdClicks": "7202", "sessions": "6041"},
+             {"date": "20261120", "sessionGoogleAdsCampaignName": "(not set)", "advertiserAdCost": "0", "advertiserAdClicks": "0", "sessions": "12782"},
+             {"date": "20261120", "sessionGoogleAdsCampaignName": "P.Max - Rmkt", "advertiserAdCost": "0", "advertiserAdClicks": "0", "sessions": "16"}]
+    assert google_campanas(filas) == {("2026-11-20", "P.Max - Blanquería"): [390810.96, 7202, 6041]}
+
+
+def test_filas_anuncios_formato_de_guardado():
+    from reposicion.mkt_sync import filas_anuncios
+    fp, fg, fc = filas_anuncios({(1, "2026-11-20", "meta"): [42, 1]}, {("2026-11-20", "/", "meta"): [9, 0]}, {("2026-11-20", "P.Max"): [100.456, 5, 4]})
+    assert fp == [{"fecha": "2026-11-20", "product_id": 1, "fuente": "meta", "visitas": 42, "compras": 1}]
+    assert fg == [{"fecha": "2026-11-20", "pagina": "/", "fuente": "meta", "sesiones": 9, "compras": 0}]
+    assert fc == [{"fecha": "2026-11-20", "campana": "P.Max", "gasto": 100.46, "clics": 5, "sesiones": 4}]
+
+
 if __name__ == "__main__":
     for nombre, fn in list(globals().items()):
         if nombre.startswith("test_"):
