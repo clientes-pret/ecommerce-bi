@@ -33,7 +33,7 @@ for (const r of rows) {
 }
 
 const POR_PAGINA = 50;
-const st = { tab: 'gen', c: qs('c') || '', cat: '', mk: '', stock: '', home: qs('home') === '1', conAds: false, al: '', q: '', k: 'v7', dir: -1, pag: 0 };
+const st = { tab: 'gen', c: qs('c') || '', cat: '', mk: '', stock: '', conStock: false, home: qs('home') === '1', conAds: false, al: '', q: '', k: 'v7', dir: -1, pag: 0 };
 const ALERTAS = {
   sincosto: ['Sin costo', (r) => !(r.costo > 0)],
   perdida: ['Ganancia negativa', (r) => r.ganancia != null && r.ganancia < 0],
@@ -54,7 +54,7 @@ const opciones = (lista, sel, todas) => `<option value="">${todas}</option>` + l
 function filtradas() {
   const q = st.q.trim().toLowerCase();
   return rows.filter((r) => (!st.c || r.semaforo === st.c) && (!st.cat || r.categoria === st.cat) && (!st.mk || r.marca === st.mk)
-    && (!st.home || r.en_home) && (!st.conAds || r.va > 0) && (!st.al || ALERTAS[st.al][1](r))
+    && (!st.conStock || r.stock > 0) && (!st.home || r.en_home) && (!st.conAds || r.va > 0) && (!st.al || ALERTAS[st.al][1](r))
     && (!st.stock || (st.stock === 'sin' ? r.stock === 0 : r.stock != null && r.stock < (cfg.stock_bajo ?? 40)))
     && (!q || r.nombre.toLowerCase().includes(q) || (r.handle || '').includes(q)));
 }
@@ -116,7 +116,8 @@ function pintar() {
       <div><label for="fst">Stock</label><select id="fst"><option value="">Todos</option><option value="sin" ${st.stock === 'sin' ? 'selected' : ''}>Sin stock</option><option value="bajo" ${st.stock === 'bajo' ? 'selected' : ''}>Stock bajo (menos de ${cfg.stock_bajo ?? 40})</option></select></div>
       <div><label for="fq">Buscar</label><input id="fq" type="search" placeholder="Nombre o link del producto" value="${esc(st.q)}"></div>
     </div>
-    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:12px"><input type="checkbox" id="fhome" ${st.home ? 'checked' : ''}> Solo los que están en la homepage</label>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:12px"><input type="checkbox" id="fconstock" ${st.conStock ? 'checked' : ''}> Solo los que tienen stock</label>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:8px"><input type="checkbox" id="fhome" ${st.home ? 'checked' : ''}> Solo los que están en la homepage</label>
     ${ads ? `<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:8px"><input type="checkbox" id="fads" ${st.conAds ? 'checked' : ''}> Solo los que reciben visitas de anuncios</label>` : ''}</div>
   <div class="row between wrapRow" style="margin:4px 0 10px"><div class="seg" role="group" aria-label="Vista"><button data-tab="gen" aria-pressed="${st.tab === 'gen'}">General</button><button data-tab="rent" aria-pressed="${st.tab === 'rent'}">Rentabilidad</button>${ads ? `<button data-tab="ads" aria-pressed="${st.tab === 'ads'}">Anuncios</button>` : ''}</div><span class="muted" id="cuenta"></span></div>
   <div class="card tabla"><div class="scroll"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div class="mk-pie" id="pie"></div></div>
@@ -127,10 +128,11 @@ function pintar() {
   $('#fcat').onchange = (e) => { st.cat = e.target.value; st.pag = 0; pintarTabla(); };
   $('#fmk').onchange = (e) => { st.mk = e.target.value; st.pag = 0; pintarTabla(); };
   $('#fst').onchange = (e) => { st.stock = e.target.value; st.pag = 0; pintarTabla(); };
+  $('#fconstock').onchange = (e) => { st.conStock = e.target.checked; st.pag = 0; pintarTabla(); };
   $('#fhome').onchange = (e) => { st.home = e.target.checked; st.pag = 0; pintarTabla(); };
   if ($('#fads')) $('#fads').onchange = (e) => { st.conAds = e.target.checked; st.pag = 0; pintarTabla(); };
   $('#fq').oninput = (e) => { st.q = e.target.value; st.pag = 0; pintarTabla(); };
-  $('#limpiar').onclick = () => { Object.assign(st, { c: '', cat: '', mk: '', stock: '', home: false, conAds: false, al: '', q: '', pag: 0 }); pintar(); };
+  $('#limpiar').onclick = () => { Object.assign(st, { c: '', cat: '', mk: '', stock: '', conStock: false, home: false, conAds: false, al: '', q: '', pag: 0 }); pintar(); };
   pintarTabla();
 }
 pintar();
