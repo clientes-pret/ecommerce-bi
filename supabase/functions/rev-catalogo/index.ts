@@ -2,10 +2,13 @@
 //
 // Actualización diaria del catálogo de revendedores con los SKU de Ecomm-App (pedido del usuario, 24/11/2026).
 //
-// Lee TODAS las variantes de Ecomm-App (SOLO LECTURA: GET /productos) y suma a `rev_catalogo` las que faltan, si son
-// simples (no combo) y están en Tiendanube con costo (`rev_catalogo_info`, que actualiza cada 6 h el workflow
-// rev_pret_publicaciones.yml con reposicion/rev_contenido_sync.py). Solo INSERTA: nunca cambia ni borra filas del
-// catálogo (un SKU deshabilitado a mano sigue deshabilitado). No escribe en Ecomm-App ni en Mercado Libre.
+// Lee TODAS las variantes de Ecomm-App (SOLO LECTURA: GET /productos) y suma a `rev_catalogo` las que faltan, salvo
+// combos y SKU "MR-" (pedido del usuario: el catálogo sale de Ecomm-App, no de Tiendanube). Título, fotos y costo salen
+// de Tiendanube (`rev_catalogo_info`, que actualiza cada 6 h el workflow rev_pret_publicaciones.yml con
+// reposicion/rev_contenido_sync.py); para un SKU que no está en Tiendanube se guarda el nombre y la foto de Ecomm-App,
+// sin costo (sus ventas quedan "sin precio mayorista" hasta cargarlo; si después aparece en Tiendanube, esa fila se pisa).
+// Solo INSERTA: nunca cambia ni borra filas del catálogo (un SKU deshabilitado a mano sigue deshabilitado), ni pisa
+// datos de Tiendanube. No escribe en Ecomm-App ni en Mercado Libre.
 //
 // La dispara la base una vez por día (cron `rev-catalogo-dia`) a las 07:02 AR, entre dos corridas de rev-sync, que
 // también lee Ecomm-App: así las dos juntas no pasan las 120 lecturas por minuto del token.
@@ -46,7 +49,7 @@ async function variantesEcomm(): Promise<{ variantes: VarianteEcomm[]; paginas: 
       d = (await r.json()).data ?? {};
     }
     if (!d) throw new Error(`Ecomm-App no responde (página ${pagina})`);
-    for (const p of d.items ?? []) for (const v of p.variants ?? []) variantes.push({ sku: v.sku, is_combo: Boolean(v.is_combo) });
+    for (const p of d.items ?? []) for (const v of p.variants ?? []) variantes.push({ ...v, is_combo: Boolean(v.is_combo) });
     total = Number(d.pagination?.total_pages ?? pagina);
     await dormir(700); // ~85 lecturas/min, debajo de las 120 del token
   }
@@ -63,7 +66,14 @@ async function actualizar(): Promise<Json> {
   const info = new Map((await leerTodo<InfoSku>("rev_catalogo_info", "sku,costo", "sku")).map((i) => [norm(i.sku), i]));
   const r = skusParaSumar(variantes, catalogo, info);
 
-  const origen = `ecomm_auto_${new Date().toISOString().slice(0, 10)}`;
+  // Primero el título/foto de Ecomm-App (sin pisar lo que venga de Tiendanube), después el catálogo.
+  const ahora = new Date().toISOString();
+  for (let i = 0; i < r.info_nueva.length; i += 500) {
+    const filas = r.info_nueva.slice(i, i + 500).map((f) => ({ ...f, actualizado_at: ahora }));
+    const { error } = await supabase.from("rev_catalogo_info").upsert(filas, { onConflict: "sku", ignoreDuplicates: true });
+    if (error) throw new Error(`rev_catalogo_info insert: ${error.message}`);
+  }
+  const origen = `ecomm_auto_${ahora.slice(0, 10)}`;
   for (let i = 0; i < r.nuevos.length; i += 500) {
     const filas = r.nuevos.slice(i, i + 500).map((sku) => ({ sku, habilitado: true, origen }));
     const { error } = await supabase.from("rev_catalogo").upsert(filas, { onConflict: "sku", ignoreDuplicates: true });
@@ -77,8 +87,9 @@ async function actualizar(): Promise<Json> {
     sumados_ejemplos: r.nuevos.slice(0, 30),
     ya_estaban: r.ya_estaban,
     combos: r.combos,
-    sin_tiendanube: r.sin_tiendanube,
-    sin_costo: r.sin_costo,
+    mr_omitidos: r.mr,
+    sumados_sin_tiendanube: r.sin_tiendanube,
+    sumados_sin_costo: r.sin_costo,
     segundos: Math.round((Date.now() - t0) / 100) / 10,
   };
   await supabase.from("rev_sync_estado").upsert({ clave: "catalogo", ultimo_at: new Date().toISOString(), resultado: "ok", detalle }, { onConflict: "clave" });
