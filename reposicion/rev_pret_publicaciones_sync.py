@@ -7,6 +7,9 @@ ml_user_id 1255615205), que es independiente de la que usa armado-api: si venci�
 Escribe solo en rev_pret_publicaciones: reemplaza la foto completa, y borra lo que ya no está activo SOLO si se leyó al
 menos el 95 % de las publicaciones (si ML falla a medias no se pierde nada).
 
+Guarda también `creada_at` (date_created del item: cuándo Pret creó la publicación), para el filtro "nuevas de Pret" del
+catálogo (24/11/2026). Corre solo con .github/workflows/rev_pret_publicaciones.yml.
+
 Uso: python3 -m reposicion.rev_pret_publicaciones_sync [--seco]"""
 import datetime as dt
 import json
@@ -21,9 +24,12 @@ ROOT = Path(__file__).resolve().parent.parent
 PRET = 1255615205
 ML = "https://api.mercadolibre.com"
 UA = "PretaHome-Revendedores/1.0"
-ATRIBUTOS = "id,status,title,price,permalink,sold_quantity,catalog_listing,catalog_product_id,seller_custom_field,attributes,variations"
+ATRIBUTOS = "id,status,title,price,permalink,sold_quantity,catalog_listing,catalog_product_id,seller_custom_field,attributes,variations,date_created"
 
-cfg = json.load(open(ROOT / "config.json"))
+sys.path.insert(0, str(ROOT))
+from reposicion.db import load_config  # noqa: E402  (CONFIG_JSON en GitHub, config.json en la compu; con los secrets que pisan claves)
+
+cfg = load_config()
 SB = cfg["supabase"]
 H_SB = {"apikey": SB["service_role_key"], "Authorization": "Bearer " + SB["service_role_key"], "Content-Type": "application/json"}
 
@@ -78,7 +84,7 @@ def filas_de_item(it, ahora):
     marca = next((a.get("value_name") for a in it.get("attributes") or [] if a.get("id") == "BRAND"), None)
     base = {"ml_item_id": it["id"], "tipo": tipo, "catalog_product_id": it.get("catalog_product_id") if tipo == "catalogo" else None,
             "marca": marca, "titulo": it.get("title"), "vendidas": it.get("sold_quantity"), "permalink": it.get("permalink"),
-            "visto_at": ahora}
+            "visto_at": ahora, "creada_at": it.get("date_created")}
     out = []
     for v in it.get("variations") or []:
         s = sku_de(v.get("attributes"), v.get("seller_custom_field"))

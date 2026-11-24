@@ -80,7 +80,8 @@ $('#app').innerHTML = `<div class="cabecera"><div><h1>Catálogo</h1><p>Productos
     <select id="cat" aria-label="Categoría"><option value="">Todas las categorías</option></select>
     <select id="tipo" aria-label="Tipo de publicación"><option value="">Tradicional y catálogo</option><option value="tra">Con publicación tradicional</option><option value="cat">Con catálogo para sumarse</option><option value="marca">Se puede con mi marca</option></select>
     <select id="pub" aria-label="Publicación"><option value="">Publicados y no</option><option value="si">Ya los publiqué</option><option value="no">Todavía no los publiqué</option></select>
-    <select id="ord" aria-label="Ordenar"><option value="stock">Más stock primero</option><option value="nombre">Nombre A→Z</option><option value="mayorista">Costo mayorista de menor a mayor</option><option value="sugerido">Sugerido de mayor a menor</option></select>
+    <select id="nuevas" aria-label="Publicadas por Pret"><option value="">Todas las publicaciones de Pret</option><option value="7">Nuevas de Pret: últimos 7 días</option><option value="30">Nuevas de Pret: últimos 30 días</option></select>
+    <select id="ord" aria-label="Ordenar"><option value="stock">Más stock primero</option><option value="nuevas">Las más nuevas de Pret primero</option><option value="nombre">Nombre A→Z</option><option value="mayorista">Costo mayorista de menor a mayor</option><option value="sugerido">Sugerido de mayor a menor</option></select>
     <label style="margin:0;font-weight:500"><input type="checkbox" id="conStock" checked> Solo con stock</label>
   </div></div>
   <div class="scroll"><table class="apilar" style="min-width:1000px"><thead><tr><th scope="col" style="width:36px"><input type="checkbox" class="sel" id="todos" aria-label="Elegir todos los de esta página"></th><th scope="col" style="width:72px"></th><th scope="col">Producto</th><th scope="col" class="r">Stock</th><th scope="col" class="r">Costo mayorista</th><th scope="col" class="r">Sugerido</th><th scope="col" class="r">Mínimo</th><th scope="col">Publicar</th></tr></thead><tbody id="tb"></tbody></table></div>
@@ -109,6 +110,9 @@ for (const p of todos) {
   p.cat1 = primerNivel(p.categoria); p.hay = quitarAcentos([p.sku, p.titulo, p.color, p.medida, p.categoria].join(' '));
   const pp = pubsPret.get(p.sku) || {};
   p.tra = pp.tradicional || null; p.cat = pp.catalogo || null;
+  // Cuándo Pret creó su publicación más nueva de este SKU en Mercado Libre (filtro y orden "nuevas de Pret").
+  const f = [p.tra?.creada_at, p.cat?.creada_at].filter(Boolean).map((x) => Date.parse(x)).filter((x) => !isNaN(x));
+  p.creada = f.length ? Math.max(...f) : null;
 }
 const cats = [...new Set(todos.map((p) => p.cat1))].sort((a, b) => a.localeCompare(b, 'es'));
 $('#cat').insertAdjacentHTML('beforeend', cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join(''));
@@ -127,10 +131,11 @@ let vista = [], pag = 0;
 
 function filtrar() {
   const tk = quitarAcentos($('#q').value).split(/\s+/).filter(Boolean), cat = $('#cat').value, pub = $('#pub').value, cs = $('#conStock').checked, o = $('#ord').value;
-  const tipo = $('#tipo').value;
+  const tipo = $('#tipo').value, dias = Number($('#nuevas').value) || 0, desde = dias ? Date.now() - dias * 864e5 : 0;
   const okTipo = (p) => !tipo || (tipo === 'tra' && p.tra) || (tipo === 'cat' && p.cat) || (tipo === 'marca' && p.tra?.marca_propia);
-  vista = todos.filter((p) => (!cs || p.stock_ofrecido > 0) && (!cat || p.cat1 === cat) && (!pub || (pub === 'si') === p.ya_publicado) && okTipo(p) && tk.every((t) => p.hay.includes(t)));
+  vista = todos.filter((p) => (!cs || p.stock_ofrecido > 0) && (!cat || p.cat1 === cat) && (!pub || (pub === 'si') === p.ya_publicado) && okTipo(p) && (!dias || (p.creada && p.creada >= desde)) && tk.every((t) => p.hay.includes(t)));
   const k = { stock: (a, b) => b.stock_ofrecido - a.stock_ofrecido, nombre: (a, b) => (a.titulo || '').localeCompare(b.titulo || '', 'es'),
+    nuevas: (a, b) => (b.creada ?? 0) - (a.creada ?? 0),
     mayorista: (a, b) => (a.precio_mayorista ?? Infinity) - (b.precio_mayorista ?? Infinity), sugerido: (a, b) => (b.precio_sugerido ?? -1) - (a.precio_sugerido ?? -1) }[o];
   vista.sort((a, b) => k(a, b) || a.sku.localeCompare(b.sku));
   pag = 0; pintar();
@@ -144,7 +149,7 @@ function pintar() {
   $('#tb').innerHTML = fil.map((p) => `<tr>
     <td class="ck"><input type="checkbox" class="sel" data-sku="${esc(p.sku)}" ${sel.has(p.sku) ? 'checked' : ''} aria-label="Elegir ${esc(p.sku)}"></td>
     <td class="ft">${p.foto ? `<img class="foto" loading="lazy" src="${esc(p.foto)}" alt="">` : '<div class="foto"></div>'}</td>
-    <th scope="row" class="tit" style="font-weight:500"><b>${esc(p.titulo || p.sku)}</b>${p.ya_publicado ? ' <span class="chip ok">publicado</span>' : ''}<div class="muted small">${esc(p.sku)}${p.categoria ? ' · ' + esc(primerNivel(p.categoria)) : ''}</div></th>
+    <th scope="row" class="tit" style="font-weight:500"><b>${esc(p.titulo || p.sku)}</b>${p.ya_publicado ? ' <span class="chip ok">publicado</span>' : ''}${p.creada && p.creada >= Date.now() - 7 * 864e5 ? ` <span class="chip" title="Pret a Home la publicó en Mercado Libre el ${new Date(p.creada).toLocaleDateString('es-AR')}">nueva de Pret · ${new Date(p.creada).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}</span>` : ''}<div class="muted small">${esc(p.sku)}${p.categoria ? ' · ' + esc(primerNivel(p.categoria)) : ''}</div></th>
     <td class="r num ${p.stock_ofrecido ? '' : 'stock0'}" data-label="Stock">${num.format(p.stock_ofrecido)}</td>
     <td class="r num" data-label="Costo mayorista" style="font-weight:600">${p.precio_mayorista != null ? peso0(p.precio_mayorista) : '<span class="muted" title="El costo mayorista todavía no está definido">a definir</span>'}</td>
     <td class="r num" data-label="Sugerido">${p.precio_sugerido != null ? peso0(p.precio_sugerido) : '—'}</td>
@@ -185,7 +190,7 @@ $('#limpiar').onclick = () => { sel.clear(); guardarSeleccion(sel); pintar(); };
 $('#ant').onclick = () => { pag--; pintar(); scrollTo(0, 0); };
 $('#sig').onclick = () => { pag++; pintar(); scrollTo(0, 0); };
 let t; $('#q').oninput = () => { clearTimeout(t); t = setTimeout(filtrar, 200); };
-['cat', 'tipo', 'pub', 'ord', 'conStock'].forEach((id) => ($('#' + id).onchange = filtrar));
+['cat', 'tipo', 'pub', 'nuevas', 'ord', 'conStock'].forEach((id) => ($('#' + id).onchange = filtrar));
 
 
 // ───────────────────────── Panel "Publicar en mi cuenta" ─────────────────────────

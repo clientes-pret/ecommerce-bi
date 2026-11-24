@@ -1,0 +1,27 @@
+name: Revendedores — publicaciones de Pret en ML
+
+# Actualiza rev_pret_publicaciones (las publicaciones activas de Pret a Home que el portal de revendedores ofrece para
+# copiar o sumarse al catálogo). Solo LEE Mercado Libre. GitHub suele arrancar estos crons con horas de retraso.
+on:
+  schedule:
+    - cron: "0 */6 * * *"  # cada 6 horas
+  workflow_dispatch: {}
+
+concurrency:
+  group: rev_pret_publicaciones
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r reposicion/requirements.txt
+      - run: python3 -m reposicion.rev_pret_publicaciones_sync
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}
