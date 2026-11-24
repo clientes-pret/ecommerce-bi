@@ -63,6 +63,7 @@ const ITEM: ItemML = {
   attributes: [
     { id: "BRAND", value_name: "Pret.", value_id: "123" }, { id: "MODEL", value_name: "Blackout" },
     { id: "GTIN", value_name: "999" }, { id: "SELLER_PACKAGE_WEIGHT", value_name: "1 kg" }, { id: "VACIO", value_name: null },
+    { id: "VALUE_ADDED_TAX", value_name: "21 %", value_id: "48405909" }, { id: "IMPORT_DUTY", value_name: "0 %", value_id: "49553239" },
   ],
   variations: [{
     id: 10, price: 100, attribute_combinations: [{ id: "COLOR", value_name: "Gris claro", value_id: "52" }],
@@ -79,6 +80,10 @@ Deno.test("tradicional tal cual: marca y GTIN originales, color, SKU, sin atribu
   assertEquals(a.get("SELLER_SKU"), "SKU-GC");
   assert(!a.has("VACIO") && !a.has("EMPTY_GTIN_REASON"));
   assert(a.get("SELLER_PACKAGE_WEIGHT") === "1 kg"); // las medidas del paquete se copian (ML las exige en algunas categorías)
+  // IVA e impuesto interno se copian de Pret (ML los exige en varias categorías, ej. MLA30063).
+  const at = p.attributes as { id: string; value_name: string; value_id?: string }[];
+  assertEquals(at.find((x) => x.id === "VALUE_ADDED_TAX"), { id: "VALUE_ADDED_TAX", value_name: "21 %", value_id: "48405909" });
+  assertEquals(at.find((x) => x.id === "IMPORT_DUTY"), { id: "IMPORT_DUTY", value_name: "0 %", value_id: "49553239" });
   assertEquals(p.family_name, "Juego Cortinas Blackout Pret 2,10x1,40 M");
   assertEquals(p.price, 1234.57);
   assertEquals(p.available_quantity, 7);

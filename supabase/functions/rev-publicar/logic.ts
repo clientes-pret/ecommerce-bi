@@ -38,8 +38,10 @@ export interface ItemML {
 // Atributos que NO se copian: son de la cuenta de Pret, los calcula ML, o ML los rechaza ("not modifiable").
 // Las medidas del paquete (SELLER_PACKAGE_HEIGHT/WIDTH/LENGTH/WEIGHT) SÍ se copian: en varias categorías ML las exige
 // para publicar ("are all required", 20/11/2026, fundas de almohada) y el producto es el mismo que despacha Pret.
+// IVA e impuesto interno (VALUE_ADDED_TAX, IMPORT_DUTY) SÍ se copian: ML los exige en varias categorías ("are required for
+// category [MLA30063]", 23/11/2026, colchas) y el producto es el mismo, así que lleva el mismo IVA que el de Pret.
 export const NO_COPIAR = new Set([
-  "GIFTABLE", "IMPORT_DUTY", "VALUE_ADDED_TAX", "ITEM_CONDITION", "SELLER_SKU", "GTIN", "EMPTY_GTIN_REASON", "MAIN_COLOR",
+  "GIFTABLE", "ITEM_CONDITION", "SELLER_SKU", "GTIN", "EMPTY_GTIN_REASON", "MAIN_COLOR",
   "PRODUCT_FEATURES", "SHIPMENT_PACKING", "IS_TOM_BRAND", "FILTRABLE_COLOR",
 ]);
 export const MAX_FOTOS = 10;
