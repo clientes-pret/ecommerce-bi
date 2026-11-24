@@ -15,7 +15,7 @@
 // Ficha de un producto: todo lo que se sabe de su página (visitas, ventas, conversión, stock, precio, margen), la evolución en
 // gráficos, sus variantes y lo que el equipo va haciendo (tareas). Fase 1: el cambio de precio llega en la fase de precios.
 import { sb, $, $$, esc, guard, navMarketing, qs, fechaHora } from '../proveedores/app.js';
-import { chipSem, chipHome, chipMargen, linkTienda, urlTienda, n0, pct, peso, hace, cargarConfig, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumarDias, ddmm, sumar, alCambiarAncho, TIPOS, ESTADOS, nombreEstado } from './mkt-lib.js';
+import { conSinStock, chipSem, chipHome, chipMargen, linkTienda, urlTienda, n0, pct, peso, hace, cargarConfig, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumarDias, ddmm, sumar, alCambiarAncho, TIPOS, ESTADOS, nombreEstado } from './mkt-lib.js';
 
 const perfil = await guard(['admin', 'dueno', 'marketing']);
 navMarketing(perfil, 'publicaciones');
@@ -34,7 +34,7 @@ async function cargar() {
   ]);
   const err = r.slice(0, 4).find((x) => x.error)?.error;
   if (err) throw err;
-  [fila, prod, dias, tareas, cfg] = [r[0].data?.[0], r[1].data, r[2].data, r[3].data, r[4]];
+  [fila, prod, dias, tareas, cfg] = [r[0].data?.[0] && conSinStock(r[0].data[0]),r[1].data, r[2].data, r[3].data, r[4]];
   if (!fila || !prod) throw new Error('No encontré ese producto.');
   // Visitas y compras desde anuncios (null si todavía no está la migración de anuncios: esa parte no aparece).
   const fu = await sb.from('mkt_producto_fuente_dia').select('*').eq('product_id', id).gte('fecha', sumarDias(hoy, -89)).order('fecha');

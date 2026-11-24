@@ -40,7 +40,7 @@ const ultima = rows.reduce((m, r) => (r.actualizado_at > m ? r.actualizado_at : 
 const grupos = [
   { t: 'En la homepage y casi no convierte', filas: rows.filter((r) => r.en_home && r.semaforo === 'potencial').sort((a, b) => b.visitas_7d - a.visitas_7d),
     d: (r) => `${n0(r.visitas_7d)} visitas · conversión ${pct(r.conv_7d, 2)}` },
-  { t: 'Killer con poco stock', filas: rows.filter((r) => r.semaforo === 'killer' && r.stock != null && r.stock < (cfg.stock_bajo ?? 40)).sort((a, b) => a.stock - b.stock),
+  { t: 'Killer con poco stock', filas: rows.filter((r) => (r.semaforo_base ?? r.semaforo) === 'killer' && r.stock != null && r.stock < (cfg.stock_bajo ?? 40)).sort((a, b) => a.stock - b.stock),
     d: (r) => `Quedan ${n0(r.stock)} unidades · vendió ${n0(r.unidades_7d)} en 7 días` },
   { t: 'Se vende a pérdida', filas: rows.filter((r) => r.ganancia != null && r.ganancia < 0 && (r.stock || 0) > 0).sort((a, b) => b.unidades_7d - a.unidades_7d),
     d: (r) => `Ganancia ${peso(r.ganancia)} por unidad · margen ${pct(r.margen, 0)}` },

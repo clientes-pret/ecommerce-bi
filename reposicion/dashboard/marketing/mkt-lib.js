@@ -21,7 +21,11 @@ export const SEM = {
   potencial: ['Con potencial', '#E0A100', 'Buen volumen de visitas pero baja conversión'],
   impulsar: ['A impulsar', '#2B8CD9', 'Pocas visitas pero alta conversión'],
   rojo: ['Dormidas', '#D64545', 'Pocas visitas y poca conversión'],     // la clave interna sigue siendo "rojo" (así se guarda y se filtra)
+  sinstock: ['Sin stock', '#1B1D21', 'No tiene stock: no se puede comprar, así que no se juzga por visitas ni conversión'],
 };
+// Un producto sin stock no se puede comprar: sus pocas visitas o ventas no dicen nada de la publicación. Se muestra en negro como
+// «Sin stock» y el color que le tocaría queda en semaforo_base (la base lo sigue calculando igual).
+export const conSinStock = (r) => (r.stock != null && r.stock <= 0 ? { ...r, semaforo_base: r.semaforo, semaforo: 'sinstock' } : r);
 export const dotSem = (s) => (SEM[s] ? `<span class="dot" style="background:${SEM[s][1]}"></span>` : '');
 export const chipSem = (s) => (SEM[s]
   ? `<span class="chip" title="${esc(SEM[s][2])}">${dotSem(s)}${SEM[s][0]}</span>`
@@ -49,7 +53,7 @@ export async function cargarTablero() {
   for (let i = 0; ; i += 1000) {
     const { data, error } = await sb.rpc('mkt_tablero').range(i, i + 999);
     if (error) throw error;
-    out.push(...data);
+    out.push(...data.map(conSinStock));
     if (data.length < 1000) return out;
   }
 }
