@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard · Marketing Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <link rel="stylesheet" href="marketing.css?v=1">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Dashboard de Marketing (Tienda Nube Pret a Home): cómo viene la tienda, el semáforo del catálogo, la homepage y lo que hay que mirar hoy.
+// Los números salen de mkt_tablero() (7 días completos hasta ayer + últimas 24 hs) y mkt_serie_tienda().
+import { sb, $, esc, guard, navMarketing } from '../proveedores/app.js';
+import { SEM, dotSem, linkTienda, n0, pct, peso, hace, cargarConfig, cargarTablero, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumar } from './mkt-lib.js';
+
+const perfil = await guard(['admin', 'dueno', 'marketing']);
+navMarketing(perfil, 'dashboard');
+
+let rows, cfg, serie;
+try {
+  [rows, cfg] = await Promise.all([cargarTablero(), cargarConfig()]);
+  const r = await sb.rpc('mkt_serie_tienda', { p_dias: 30 });
+  if (r.error) throw r.error;
+  serie = r.data;
+} catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Dashboard</h1></div></div>` + sinDatos(e); throw e; }
+
+const suma = (k) => sumar(rows.map((r) => r[k]));
+const v7 = suma('visitas_7d'), u7 = suma('unidades_7d'), v24 = suma('visitas_24h'), u24 = suma('unidades_24h');
+const sinGA4 = rows.length && rows.every((r) => r.visitas_7d == null);
+const cuenta = (s) => rows.filter((r) => r.semaforo === s).length;
+const enHome = rows.filter((r) => r.en_home);
+const homeBaja = enHome.filter((r) => ['potencial', 'rojo'].includes(r.semaforo));
+const ultima = rows.reduce((m, r) => (r.actualizado_at > m ? r.actualizado_at : m), '');
+
+const grupos = [
+  { t: 'En la homepage y casi no convierte', filas: rows.filter((r) => r.en_home && r.semaforo === 'potencial').sort((a, b) => b.visitas_7d - a.visitas_7d),
+    d: (r) => `${n0(r.visitas_7d)} visitas · conversión ${pct(r.conv_7d, 2)}` },
+  { t: 'Killer con poco stock', filas: rows.filter((r) => r.semaforo === 'killer' && r.stock != null && r.stock < (cfg.stock_bajo ?? 40)).sort((a, b) => a.stock - b.stock),
+    d: (r) => `Quedan ${n0(r.stock)} unidades · vendió ${n0(r.unidades_7d)} en 7 días` },
+  { t: 'Se vende a pérdida', filas: rows.filter((r) => r.ganancia != null && r.ganancia < 0 && (r.stock || 0) > 0).sort((a, b) => b.unidades_7d - a.unidades_7d),
+    d: (r) => `Ganancia ${peso(r.ganancia)} por unidad · margen ${pct(r.margen, 0)}` },
+  { t: 'Convierte bien y casi nadie lo ve', filas: rows.filter((r) => r.semaforo === 'impulsar').sort((a, b) => b.conv_7d - a.conv_7d),
+    d: (r) => `Conversión ${pct(r.conv_7d, 1)} con solo ${n0(r.visitas_7d)} visitas` },
+].filter((g) => g.filas.length);
+
+const kpi = (l, v, sub = '') => `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor">${v}</div>${sub ? `<div class="cc-sub">${sub}</div>` : ''}</div>`;
+const fechas = rangoDias(hoyAR(), 30), porDia = new Map(serie.map((s) => [s.fecha, s]));
+const sv = fechas.map((f) => (porDia.has(f) ? porDia.get(f).visitas : null)), su = fechas.map((f) => (porDia.has(f) ? porDia.get(f).unidades : null));
+
+$('#app').innerHTML = `
+<div class="cabecera"><div><h1>Dashboard</h1><p>Pret a Home · Tienda Nube · 7 días completos hasta ayer · actualizado ${esc(hace(ultima))}</p></div></div>
+${sinGA4 ? '<div class="mk-aviso">Las visitas no están llegando: hay que volver a autorizar la cuenta de Google (GA4). Las ventas y los precios sí están al día.</div>' : ''}
+<div class="mk-kpis">
+  ${kpi('Visitas · 7 días', sinGA4 ? '—' : n0(v7), `últimas 24 h: ${sinGA4 ? '—' : n0(v24)}`)}
+  ${kpi('Unidades · 7 días', n0(u7), `últimas 24 h: ${n0(u24)}`)}
+  ${kpi('Conversión · 7 días', sinGA4 || !v7 ? '—' : pct(u7 / v7 * 100, 2), 'unidades ÷ visitas de producto')}
+  ${kpi('Productos publicados', n0(rows.length), `${n0(rows.filter((r) => !(r.costo > 0)).length)} sin costo`)}
+</div>
+<div class="card"><h2 style="margin:0 0 4px">Semáforo del catálogo</h2><p class="muted small" style="margin:0 0 12px">Tocá un color para ver esos productos en Publicaciones.</p>
+  <div class="mk-kpis" style="margin:0">${Object.entries(SEM).map(([k, s]) => `<button class="cc-card" data-sem="${k}" title="${esc(s[2])}"><div class="cc-label">${dotSem(k)}${s[0]}</div><div class="cc-valor">${n0(cuenta(k))}</div></button>`).join('')}</div></div>
+<div class="card"><div class="row between wrapRow"><div class="grow" style="min-width:220px"><h2 style="margin:0 0 4px">🏠 En la homepage</h2>
+  <p class="muted small" style="margin:0">${n0(enHome.length)} productos están hoy en la homepage, ${n0(homeBaja.length)} con visitas pero baja conversión. Es un indicador aparte del semáforo: un producto puede ser de cualquier color y estar o no en la home.</p></div>
+  <a class="btn" href="publicaciones.html?home=1">Ver en Publicaciones</a></div></div>
+<div class="card"><h2 style="margin:0 0 4px">Para mirar hoy</h2>
+  ${grupos.length ? grupos.map((g) => `<div class="small" style="margin:14px 0 2px;font-weight:600;color:var(--ink-soft)">${esc(g.t)} <span class="muted">· ${g.filas.length}</span></div><ul class="mk-lista">${g.filas.slice(0, 4).map((r) => `<li><a class="t" href="producto.html?id=${r.product_id}">${esc(r.nombre)}</a> ${linkTienda(r.handle)}<div class="muted small">${g.d(r)}</div></li>`).join('')}</ul>`).join('') : '<p class="muted">Nada para mirar por ahora.</p>'}</div>
+<div class="card"><h2 style="margin:0 0 4px">Toda la tienda · últimos 30 días</h2>
+  ${panelGrafico('Visitas de producto', sinGA4 ? '—' : n0(sumar(sv)), 'por día', chart([{ d: sv, c: '#7C98E0' }], fechas, { bars: true, t: 'Visitas por día', f: n0 }))}
+  ${panelGrafico('Unidades vendidas', n0(sumar(su)), 'por día', chart([{ d: su, c: '#1F6F43' }], fechas, { bars: true, t: 'Unidades por día', f: n0 }))}</div>`;
+
+document.querySelectorAll('[data-sem]').forEach((b) => { b.onclick = () => { location.href = `publicaciones.html?c=${b.dataset.sem}`; }; });
+</script>
+</body>
+</html>

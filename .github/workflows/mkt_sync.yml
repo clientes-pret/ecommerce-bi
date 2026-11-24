@@ -1,0 +1,39 @@
+name: Marketing — datos por producto (Tienda Nube Pret a Home)
+
+# Visitas (GA4), ventas, stock, precio y costo de cada producto, y qué hay en la homepage → tablas mkt_* de Supabase.
+# GitHub suele arrancar los crons con horas de retraso: las "últimas 24 hs" de la pantalla son las del momento de la
+# última corrida (se muestra "actualizado hace…").
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: "Días hacia atrás que se recalculan (por defecto 8; para cargar historia, por ejemplo 90)"
+        required: false
+        default: ""
+
+concurrency:
+  group: mkt-sync
+  cancel-in-progress: false
+
+jobs:
+  mkt_sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r reposicion/requirements.txt
+      - run: python3 -m reposicion.mkt_sync --aplicar ${DIAS:+--dias "$DIAS"}
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}
+          TN_PRET_TOKEN: ${{ secrets.TN_PRET_TOKEN }}
+          TN_LAVAN_TOKEN: ${{ secrets.TN_LAVAN_TOKEN }}
+          # Contenido de data/ga4_token.json después de volver a autorizar la cuenta de Google. Si falta o está vencido,
+          # el job igual guarda ventas, precios y stock y avisa que las visitas no llegaron.
+          GA4_TOKEN_JSON: ${{ secrets.GA4_TOKEN_JSON }}
+          DIAS: ${{ github.event.inputs.dias }}

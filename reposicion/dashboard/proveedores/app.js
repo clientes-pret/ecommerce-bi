@@ -31,7 +31,7 @@ export const chipEstado = (e) => `<span class="chip ${ESTADO[e]?.[1] || ''}">${e
 
 // Las rutas se resuelven contra esta carpeta (proveedores/) para que anden igual desde operaciones/.
 const aca = (p) => new URL(p, import.meta.url).href;
-export const rutaPara = (rol) => aca(rol === 'deposito' ? 'recibir.html' : 'admin.html');
+export const rutaPara = (rol) => aca(rol === 'deposito' ? 'recibir.html' : rol === 'marketing' ? '../marketing/dashboard.html' : 'admin.html');
 
 // Verifica sesión y rol. Si no corresponde, redirige. Devuelve el perfil.
 export async function guard(roles) {
@@ -167,7 +167,7 @@ export function nav(perfil, activa) {
     '<div class="grupo">Ventas</div>' + it('ventas.html', 'Scorecard', 'scorecard', 'sub') + it('ventas-dashboard.html', 'Dashboard', 'dashboard', 'sub') +
     '<div class="grupo">Proveedores</div>' + it('proveedores.html', 'Cuenta corriente', 'prov', 'sub') + it('ordenes.html', 'Órdenes de compra', 'ordenes', 'sub') + it('agenda.html', 'Agenda de pagos', 'agenda', 'sub') +
     '<div class="grupo">Gestión</div>' + it('costos.html', 'Costos', 'costos') + it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
-    '<div class="grupo">Otras plataformas</div>' + it('../operaciones/empaquetado.html', 'Operaciones Pret a Home ↗', 'operaciones') +
+    '<div class="grupo">Otras plataformas</div>' + it('../operaciones/empaquetado.html', 'Operaciones Pret a Home ↗', 'operaciones') + it('../marketing/dashboard.html', 'Marketing ↗', 'marketing') +
     `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a></div>` +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
@@ -192,6 +192,22 @@ export function navOperaciones(perfil, activa) {
     '<div class="links">' + it('empaquetado.html', 'Empaquetado', 'empaquetado') + it('perdido.html', 'Stock perdido', 'perdido') +
       it('devoluciones.html', 'Devoluciones', 'devoluciones') +
     '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel') + '<span class="sp"></span></div>' +
+    `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
+  document.body.classList.add('panel');
+  document.body.prepend(el);
+  centrarActiva(el);
+  $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
+}
+
+// Menú de la plataforma de Marketing (Tienda Nube). Mismo estilo y sesión que el resto, pero SIN links a otras plataformas:
+// el rol "marketing" no tiene acceso a Operaciones ni al panel de control.
+export function navMarketing(perfil, activa) {
+  const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}"${activa === k ? ' aria-current="page"' : ''}>${txt}</a>`;
+  const el = document.createElement('nav');
+  el.className = 'side';
+  el.setAttribute('aria-label', 'Marketing');
+  el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Marketing</div></div>' +
+    '<div class="links">' + it('dashboard.html', 'Dashboard', 'dashboard') + it('publicaciones.html', 'Publicaciones', 'publicaciones') + '<span class="sp"></span></div>' +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
   document.body.prepend(el);

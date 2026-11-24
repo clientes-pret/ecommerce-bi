@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Publicaciones · Marketing Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <link rel="stylesheet" href="marketing.css?v=1">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Publicaciones: todos los productos de la tienda con visitas, ventas, conversión, stock, precio y margen. Se filtra (color del
+// semáforo, categoría, marca, stock, homepage, alerta, texto) y se ordena por cualquier columna. "En homepage" es un filtro
+// aparte del semáforo. Fase 1: solo lectura; la selección masiva y las estrategias llegan en la fase de precios.
+import { $, $$, esc, guard, navMarketing, qs } from '../proveedores/app.js';
+import { SEM, dotSem, chipSem, chipHome, chipMargen, linkTienda, n0, pct, peso, hace, cargarConfig, cargarTablero, sinDatos, tono } from './mkt-lib.js';
+
+const perfil = await guard(['admin', 'dueno', 'marketing']);
+navMarketing(perfil, 'publicaciones');
+
+let rows, cfg;
+try { [rows, cfg] = await Promise.all([cargarTablero(), cargarConfig()]); }
+catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Publicaciones</h1></div></div>` + sinDatos(e); throw e; }
+
+const POR_PAGINA = 50;
+const st = { tab: 'gen', c: qs('c') || '', cat: '', mk: '', stock: '', home: qs('home') === '1', al: '', q: '', k: 'v7', dir: -1, pag: 0 };
+const ALERTAS = {
+  sincosto: ['Sin costo', (r) => !(r.costo > 0)],
+  perdida: ['Ganancia negativa', (r) => r.ganancia != null && r.ganancia < 0],
+  sinstock: ['Sin stock', (r) => r.stock === 0],
+  homebaja: ['En home, conversión baja', (r) => r.en_home && ['potencial', 'rojo'].includes(r.semaforo)],
+};
+// Cómo se ordena cada columna (null siempre al final).
+const COLS = {
+  nombre: (r) => r.nombre.toLowerCase(), v24: (r) => r.visitas_24h, v7: (r) => r.visitas_7d, conv: (r) => r.conv_7d, stock: (r) => r.stock,
+  margen: (r) => r.margen, precio: (r) => r.precio_final, costo: (r) => r.costo, ganancia: (r) => r.ganancia, roi: (r) => r.roi,
+};
+const ultima = rows.reduce((m, r) => (r.actualizado_at > m ? r.actualizado_at : m), '');
+const unicos = (k) => [...new Set(rows.map((r) => r[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+const opciones = (lista, sel, todas) => `<option value="">${todas}</option>` + lista.map((x) => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('');
+
+function filtradas() {
+  const q = st.q.trim().toLowerCase();
+  return rows.filter((r) => (!st.c || r.semaforo === st.c) && (!st.cat || r.categoria === st.cat) && (!st.mk || r.marca === st.mk)
+    && (!st.home || r.en_home) && (!st.al || ALERTAS[st.al][1](r))
+    && (!st.stock || (st.stock === 'sin' ? r.stock === 0 : r.stock != null && r.stock < (cfg.stock_bajo ?? 40)))
+    && (!q || r.nombre.toLowerCase().includes(q) || (r.handle || '').includes(q)));
+}
+function ordenadas(l) {
+  const g = COLS[st.k];
+  return [...l].sort((a, b) => {
+    const x = g(a), y = g(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return (x < y ? -1 : x > y ? 1 : 0) * st.dir;
+  });
+}
+
+const th = (k, txt, der = true) => `<th class="ord ${der ? 'r' : ''} ${st.k === k ? 'on' : ''}" data-k="${k}" data-flecha="${st.dir < 0 ? '▼' : '▲'}">${txt}</th>`;
+function fila(r) {
+  const prod = `<td><div class="mk-producto">${r.imagen ? `<img src="${esc(r.imagen)}" alt="" loading="lazy">` : ''}<div style="min-width:0">
+    <a class="prov" href="producto.html?id=${r.product_id}">${esc(r.nombre)}</a> ${linkTienda(r.handle)}
+    <div style="margin-top:3px">${chipSem(r.semaforo)}${chipHome(r)}${r.tareas_en_curso ? `<span class="chip neutro" title="Tareas en curso">✎ ${r.tareas_en_curso}</span>` : ''}</div></div></div></td>`;
+  if (st.tab === 'rent') {
+    return `<tr class="click" data-id="${r.product_id}">${prod}<td class="r">${peso(r.precio_final)}${r.precio_lista > r.precio_final ? `<div class="muted small"><s>${peso(r.precio_lista)}</s></div>` : ''}</td>
+      <td class="r">${r.costo > 0 ? peso(r.costo) : '—'}</td><td class="r ${tono(r, cfg) === 'bad' ? 'bad-t' : ''}">${peso(r.ganancia)}</td><td class="r">${chipMargen(r, cfg)}</td><td class="r">${pct(r.roi, 0)}</td></tr>`;
+  }
+  return `<tr class="click" data-id="${r.product_id}">${prod}<td class="r">${n0(r.visitas_24h)} / ${n0(r.unidades_24h)}</td><td class="r">${n0(r.visitas_7d)} / ${n0(r.unidades_7d)}</td>
+    <td class="r">${pct(r.conv_7d, 2)}</td><td class="r ${r.stock != null && r.stock < (cfg.stock_bajo ?? 40) ? 'warn-t' : ''}">${n0(r.stock)}</td><td class="r">${chipMargen(r, cfg)}</td></tr>`;
+}
+
+function pintarTabla() {
+  const l = ordenadas(filtradas()), paginas = Math.max(1, Math.ceil(l.length / POR_PAGINA));
+  st.pag = Math.min(st.pag, paginas - 1);
+  $('#cuenta').textContent = `${n0(l.length)} de ${n0(rows.length)} publicaciones`;
+  $('#thead').innerHTML = `<tr>${th('nombre', 'Producto', false)}${st.tab === 'rent'
+    ? th('precio', 'Precio final') + th('costo', 'Costo con IVA') + th('ganancia', 'Ganancia') + th('margen', 'Margen') + th('roi', 'ROI')
+    : th('v24', 'Últimas 24 h<div class="muted small" style="font-weight:400">visitas / unidades</div>') + th('v7', '7 días<div class="muted small" style="font-weight:400">visitas / unidades</div>') + th('conv', 'Conv. 7 d') + th('stock', 'Stock') + th('margen', 'Margen')}</tr>`;
+  $('#tbody').innerHTML = l.slice(st.pag * POR_PAGINA, (st.pag + 1) * POR_PAGINA).map(fila).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Ningún producto cumple estos filtros.</td></tr>';
+  $('#pie').innerHTML = `<span>Página ${st.pag + 1} de ${paginas}</span><span class="row"><button class="btn sm" id="ant" ${st.pag ? '' : 'disabled'}>← Anterior</button><button class="btn sm" id="sig" ${st.pag < paginas - 1 ? '' : 'disabled'}>Siguiente →</button></span>`;
+  $('#ant').onclick = () => { st.pag--; pintarTabla(); }; $('#sig').onclick = () => { st.pag++; pintarTabla(); };
+  $$('#thead th.ord').forEach((h) => { h.onclick = () => { st.dir = st.k === h.dataset.k ? -st.dir : (h.dataset.k === 'nombre' ? 1 : -1); st.k = h.dataset.k; st.pag = 0; pintarTabla(); }; });
+  $$('#tbody tr.click').forEach((t) => { t.onclick = () => { location.href = `producto.html?id=${t.dataset.id}`; }; });
+}
+
+function pintar() {
+  const kpi = (k) => { const n = rows.filter(ALERTAS[k][1]).length; return `<button class="cc-card ${k === 'perdida' && n ? 'alerta' : ''}" data-al="${k}" style="${st.al === k ? 'border:2px solid var(--brand);padding:13px 15px' : ''}"><div class="cc-label">${ALERTAS[k][0]}</div><div class="cc-valor">${n0(n)}</div></button>`; };
+  $('#app').innerHTML = `
+  <div class="cabecera"><div><h1>Publicaciones</h1><p>Visitas, ventas y margen de cada producto · 7 días completos hasta ayer · actualizado ${esc(hace(ultima))}</p></div></div>
+  <div class="mk-kpis">${Object.keys(ALERTAS).map(kpi).join('')}</div>
+  <div class="card"><div class="row between wrapRow"><h2 style="margin:0">Filtrar</h2><button class="btn sm" id="limpiar">Limpiar filtros</button></div>
+    <div class="seg" style="margin-top:10px" role="group" aria-label="Semáforo"><button data-c="" aria-pressed="${!st.c}">Todos</button>${Object.entries(SEM).map(([k, s]) => `<button data-c="${k}" aria-pressed="${st.c === k}" title="${esc(s[2])}">${dotSem(k)}${s[0]}</button>`).join('')}</div>
+    <div class="mk-filtros">
+      <div><label for="fcat">Categoría</label><select id="fcat">${opciones(unicos('categoria'), st.cat, 'Todas')}</select></div>
+      <div><label for="fmk">Marca</label><select id="fmk">${opciones(unicos('marca'), st.mk, 'Todas')}</select></div>
+      <div><label for="fst">Stock</label><select id="fst"><option value="">Todos</option><option value="sin" ${st.stock === 'sin' ? 'selected' : ''}>Sin stock</option><option value="bajo" ${st.stock === 'bajo' ? 'selected' : ''}>Stock bajo (menos de ${cfg.stock_bajo ?? 40})</option></select></div>
+      <div><label for="fq">Buscar</label><input id="fq" type="search" placeholder="Nombre o link del producto" value="${esc(st.q)}"></div>
+    </div>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:12px"><input type="checkbox" id="fhome" ${st.home ? 'checked' : ''}> Solo los que están en la homepage</label></div>
+  <div class="row between wrapRow" style="margin:4px 0 10px"><div class="seg" role="group" aria-label="Vista"><button data-tab="gen" aria-pressed="${st.tab === 'gen'}">General</button><button data-tab="rent" aria-pressed="${st.tab === 'rent'}">Rentabilidad</button></div><span class="muted" id="cuenta"></span></div>
+  <div class="card tabla"><div class="scroll"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div class="mk-pie" id="pie"></div></div>
+  <p class="muted small">Conversión = unidades ÷ visitas de la página del producto. Ganancia = precio final × (1 − comisión estimada ${pct(cfg.comision, 1)}) − costo con IVA · Margen = ganancia ÷ precio final · ROI = ganancia ÷ costo. El ↗ abre la página del producto en la tienda.</p>`;
+  $$('[data-c]').forEach((b) => { b.onclick = () => { st.c = b.dataset.c; st.pag = 0; pintar(); }; });
+  $$('[data-tab]').forEach((b) => { b.onclick = () => { st.tab = b.dataset.tab; st.pag = 0; pintar(); }; });
+  $$('[data-al]').forEach((b) => { b.onclick = () => { st.al = st.al === b.dataset.al ? '' : b.dataset.al; st.pag = 0; pintar(); }; });
+  $('#fcat').onchange = (e) => { st.cat = e.target.value; st.pag = 0; pintarTabla(); };
+  $('#fmk').onchange = (e) => { st.mk = e.target.value; st.pag = 0; pintarTabla(); };
+  $('#fst').onchange = (e) => { st.stock = e.target.value; st.pag = 0; pintarTabla(); };
+  $('#fhome').onchange = (e) => { st.home = e.target.checked; st.pag = 0; pintarTabla(); };
+  $('#fq').oninput = (e) => { st.q = e.target.value; st.pag = 0; pintarTabla(); };
+  $('#limpiar').onclick = () => { Object.assign(st, { c: '', cat: '', mk: '', stock: '', home: false, al: '', q: '', pag: 0 }); pintar(); };
+  pintarTabla();
+}
+pintar();
+</script>
+</body>
+</html>

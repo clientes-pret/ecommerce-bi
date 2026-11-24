@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Producto · Marketing Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <link rel="stylesheet" href="marketing.css?v=1">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Ficha de un producto: todo lo que se sabe de su página (visitas, ventas, conversión, stock, precio, margen), la evolución en
+// gráficos, sus variantes y lo que el equipo va haciendo (tareas). Fase 1: el cambio de precio llega en la fase de precios.
+import { sb, $, $$, esc, guard, navMarketing, qs, fechaHora } from '../proveedores/app.js';
+import { chipSem, chipHome, chipMargen, linkTienda, urlTienda, n0, pct, peso, hace, cargarConfig, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumarDias, ddmm, sumar } from './mkt-lib.js';
+
+const perfil = await guard(['admin', 'dueno', 'marketing']);
+navMarketing(perfil, 'publicaciones');
+const id = Number(qs('id'));
+if (!id) { location.replace('publicaciones.html'); throw new Error('sin producto'); }
+
+const TIPOS = { fotos: 'Cambio de fotos', precio: 'Mejora de precio', publicidad: 'Armado de publicidad', titulo: 'Título y descripción', otro: 'Otro' };
+const hoy = hoyAR();
+let fila, prod, dias, tareas, cfg, rango = 30;
+async function cargar() {
+  const r = await Promise.all([
+    sb.rpc('mkt_tablero', { p_product: id }),
+    sb.from('mkt_producto').select('*').eq('product_id', id).maybeSingle(),
+    sb.from('mkt_producto_dia').select('*').eq('product_id', id).gte('fecha', sumarDias(hoy, -89)).order('fecha'),
+    sb.from('mkt_tareas').select('*').eq('product_id', id).order('created_at', { ascending: false }),
+    cargarConfig(),
+  ]);
+  const err = r.slice(0, 4).find((x) => x.error)?.error;
+  if (err) throw err;
+  [fila, prod, dias, tareas, cfg] = [r[0].data?.[0], r[1].data, r[2].data, r[3].data, r[4]];
+  if (!fila || !prod) throw new Error('No encontré ese producto.');
+}
+try { await cargar(); } catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Producto</h1></div></div>` + sinDatos(e); throw e; }
+
+const kpi = (l, v, sub = '') => `<div class="cc-card"><div class="cc-label">${l}</div><div class="cc-valor">${v}</div>${sub ? `<div class="cc-sub">${sub}</div>` : ''}</div>`;
+
+function graficos() {
+  const fechas = rangoDias(hoy, rango), por = new Map(dias.map((d) => [d.fecha, d]));
+  const col = (k) => fechas.map((f) => (por.has(f) ? por.get(f)[k] : null));
+  const vis = col('visitas'), uni = col('unidades'), lista = col('precio_lista'), final = col('precio_final'), stock = col('stock'), costo = col('costo');
+  const margen = final.map((p, i) => (p > 0 && costo[i] > 0 ? Math.round(((p * (1 - (cfg.comision ?? 8.5) / 100) - costo[i]) / p) * 1000) / 10 : null));
+  const marks = []; let ant = null;                                         // día en que cambió el precio final
+  fechas.forEach((f, i) => { if (final[i] != null) { if (ant != null && final[i] !== ant) marks.push({ fecha: f, t: `Cambio de precio: ${peso(ant)} → ${peso(final[i])}` }); ant = final[i]; } });
+  const ult = (a) => [...a].reverse().find((v) => v != null);
+  const sinPrecio = final.every((v) => v == null);
+  return `
+    ${panelGrafico('Visitas', vis.every((v) => v == null) ? '—' : n0(sumar(vis)), 'total del período', chart([{ d: vis, c: '#7C98E0' }], fechas, { bars: true, t: 'Visitas por día', f: n0 }))}
+    ${panelGrafico('Ventas', n0(sumar(uni.map((v) => v ?? 0))), 'unidades por día', chart([{ d: uni, c: '#1F6F43' }], fechas, { bars: true, t: 'Unidades por día', f: n0 }))}
+    ${panelGrafico('Precio', peso(ult(final)), '<span style="color:#9a9890">━ Lista</span> &nbsp;<span style="color:#2449B8">━ Final</span> &nbsp;● cambio de precio', chart([{ d: lista, c: '#B4B2A9' }, { d: final, c: '#2449B8' }], fechas, { step: true, t: 'Precio de lista y final', f: (v) => '$' + Math.round(v / 1000) + ' k', marks }))}
+    ${panelGrafico('Margen', margen.every((v) => v == null) ? '—' : pct(ult(margen), 0), '<span style="color:#B42318">┄ 0 %</span> (por debajo se pierde plata)', chart([{ d: margen, c: '#1F6F43' }], fechas, { step: true, t: 'Margen', refs: [{ v: 0, c: '#B42318', t: '0 %' }], f: (v) => Math.round(v) + ' %' }))}
+    ${panelGrafico('Stock', n0(ult(stock)) + ' u.', 'unidades de esta página', chart([{ d: stock, c: '#B4B2A9' }], fechas, { bars: true, t: 'Stock', f: n0 }))}
+    ${sinPrecio ? '<p class="muted small">El historial de precio, margen y stock empieza el día en que se cargó el primer dato de esta plataforma.</p>' : ''}`;
+}
+
+function variantes() {
+  const v = prod.variantes || [], com = (cfg.comision ?? 8.5) / 100;
+  if (!v.length) return '<p class="muted">Sin variantes cargadas.</p>';
+  return `<div class="scroll"><table><thead><tr><th>Variante</th><th>SKU</th><th class="r">Precio</th><th class="r">Costo</th><th class="r">Ganancia</th><th class="r">Margen</th><th class="r">Stock</th></tr></thead><tbody>${v.map((x) => {
+    const f = x.promo || x.precio, g = x.costo > 0 && f > 0 ? f * (1 - com) - x.costo : null;
+    return `<tr><td>${esc(x.nombre || '—')}</td><td class="muted small">${esc(x.sku || '')}</td><td class="r">${peso(f)}${x.promo ? `<div class="muted small"><s>${peso(x.precio)}</s></div>` : ''}</td><td class="r">${x.costo > 0 ? peso(x.costo) : '—'}</td>
+      <td class="r ${g != null && g < 0 ? 'bad-t' : ''}">${peso(g)}</td><td class="r">${g == null ? '—' : pct((g / f) * 100, 0)}</td><td class="r ${x.stock < (cfg.stock_bajo ?? 40) ? 'warn-t' : ''}">${n0(x.stock)}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+function listaTareas() {
+  if (!tareas.length) return '<p class="muted">Todavía no se marcó nada en este producto.</p>';
+  return `<ul class="mk-lista">${tareas.map((t) => `<li><div class="row between wrapRow"><div class="grow"><span class="chip ${t.estado === 'hecho' ? 'ok' : 'info'}">${esc(TIPOS[t.tipo] || t.tipo)} · ${t.estado === 'hecho' ? 'hecho' : 'en curso'}</span>
+    <span class="muted small">${esc(t.autor_nombre || '—')} · ${esc(fechaHora(t.created_at))}${t.hecho_at ? ` · listo ${esc(fechaHora(t.hecho_at))}` : ''}</span>
+    ${t.nota ? `<div style="margin-top:4px">${esc(t.nota)}</div>` : ''}</div>
+    <div class="row"><button class="btn sm" data-estado="${t.id}" data-a="${t.estado === 'hecho' ? 'en_curso' : 'hecho'}">${t.estado === 'hecho' ? 'Reabrir' : 'Marcar como hecha'}</button>
+    <button class="btn sm danger" data-borrar="${t.id}">Borrar</button></div></div></li>`).join('')}</ul>`;
+}
+
+function pintar() {
+  const f = fila, sinGA4 = f.visitas_7d == null;
+  $('#app').innerHTML = `
+  <a class="small muted" href="publicaciones.html">← Publicaciones</a>
+  <div class="cabecera" style="margin-top:6px"><div><h1>${esc(f.nombre)} ${linkTienda(f.handle)}</h1><p>${chipSem(f.semaforo)}${chipHome(f)}${f.categoria ? ` <span class="muted">${esc(f.categoria)}</span>` : ''} · datos ${esc(hace(f.actualizado_at))}</p></div>
+    <a class="btn" href="${urlTienda(f.handle)}" target="_blank" rel="noopener">Ver la página en la tienda ↗</a></div>
+  ${sinGA4 ? '<div class="mk-aviso">Las visitas no están llegando: hay que volver a autorizar la cuenta de Google (GA4).</div>' : ''}
+  <div class="mk-kpis">
+    ${kpi('Últimas 24 h', `${n0(f.visitas_24h)} <span style="font-size:15px;font-weight:600">/ ${n0(f.unidades_24h)}</span>`, 'visitas / unidades')}
+    ${kpi('7 días', `${n0(f.visitas_7d)} <span style="font-size:15px;font-weight:600">/ ${n0(f.unidades_7d)}</span>`, 'visitas / unidades')}
+    ${kpi('Conversión · 7 días', pct(f.conv_7d, 2), `24 h: ${pct(f.conv_24h, 2)}`)}
+    ${kpi('Stock', n0(f.stock), f.stock != null && f.stock < (cfg.stock_bajo ?? 40) ? '<span class="chip warn">Stock bajo</span>' : 'unidades')}
+    ${kpi('Precio final', peso(f.precio_final), f.precio_lista > f.precio_final ? `lista <s>${peso(f.precio_lista)}</s>` : 'sin descuento')}
+    ${kpi('Ganancia · margen · ROI', f.margen == null ? '<span class="chip">Sin costo</span>' : `${chipMargen(f, cfg)}`, f.margen == null ? 'falta cargar el costo en Tienda Nube' : `${peso(f.ganancia)} por unidad · ROI ${pct(f.roi, 0)}`)}
+  </div>
+  ${f.en_home ? `<div class="card"><h2 style="margin:0 0 4px">🏠 En la homepage</h2><p class="muted" style="margin:0">Está en la homepage de la tienda desde el ${esc(ddmm(f.home_desde))}.</p></div>` : ''}
+  <div class="card"><div class="row between wrapRow"><h2 style="margin:0">Evolución</h2>
+    <div class="seg" role="group" aria-label="Período">${[7, 30, 90].map((n) => `<button data-r="${n}" aria-pressed="${rango === n}">${n} días</button>`).join('')}</div></div>
+    <div id="graf">${graficos()}</div></div>
+  <div class="card tabla"><div class="cab"><h2>Variantes</h2><span class="muted">${(prod.variantes || []).length} · el stock del producto es la suma de estas variantes</span></div>${variantes()}</div>
+  <div class="card"><h2 style="margin:0 0 8px">Tareas y notas</h2><div id="tareas">${listaTareas()}</div>
+    <div class="campos" style="margin-top:12px"><div><label for="tt">Qué se hizo</label><select id="tt">${Object.entries(TIPOS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+      <div class="ancho"><label for="tn">Nota (opcional)</label><input id="tn" placeholder="Ej: fotos nuevas con la cama armada"></div></div>
+    <div class="pie"><span class="err" id="terr"></span><button class="btn primary" id="tadd">Agregar tarea</button></div></div>`;
+  $$('[data-r]').forEach((b) => { b.onclick = () => { rango = +b.dataset.r; pintar(); }; });
+  $('#tadd').onclick = agregar; enlazarTareas();
+}
+
+function enlazarTareas() {
+  $$('[data-estado]').forEach((b) => { b.onclick = async () => { const { error } = await sb.from('mkt_tareas').update({ estado: b.dataset.a }).eq('id', b.dataset.estado); if (error) return alert(error.message); await recargarTareas(); }; });
+  $$('[data-borrar]').forEach((b) => { b.onclick = async () => { if (!confirm('¿Borrar esta tarea?')) return; const { error } = await sb.from('mkt_tareas').delete().eq('id', b.dataset.borrar); if (error) return alert(error.message); await recargarTareas(); }; });
+}
+async function recargarTareas() {
+  const { data, error } = await sb.from('mkt_tareas').select('*').eq('product_id', id).order('created_at', { ascending: false });
+  if (error) return alert(error.message);
+  tareas = data; $('#tareas').innerHTML = listaTareas(); enlazarTareas();
+}
+async function agregar() {
+  const b = $('#tadd'); b.disabled = true; $('#terr').textContent = '';
+  const { error } = await sb.from('mkt_tareas').insert({ product_id: id, tipo: $('#tt').value, nota: $('#tn').value.trim() || null });
+  b.disabled = false;
+  if (error) { $('#terr').textContent = 'No se pudo guardar: ' + error.message; return; }
+  $('#tn').value = ''; await recargarTareas();
+}
+pintar();
+</script>
+</body>
+</html>

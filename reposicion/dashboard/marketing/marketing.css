@@ -1,0 +1,27 @@
+/* Marketing: solo lo que el estilo del panel (../proveedores/estilo.css) no trae. */
+.mk-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 16px 0; }
+.mk-kpis .cc-card, .mk-kpis button.cc-card { padding: 14px 16px; }
+.mk-kpis .cc-valor { font-size: 24px; }
+button.cc-card { text-align: left; font: inherit; color: inherit; cursor: pointer; width: 100%; }
+button.cc-card:hover { border-color: var(--line-strong); }
+.mk-kpis .alerta .cc-valor { color: #9A3A06; }
+.mk-lista { margin: 0; padding: 0; list-style: none; }
+.mk-lista li { padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.mk-lista li:last-child { border: 0; }
+.mk-lista .t { font-weight: 600; }
+.mk-filtros { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 14px; align-items: end; }
+.mk-filtros label { margin-top: 10px; }
+.mk-mini { font-size: 12px; color: var(--muted); }
+.mk-cc { border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 12px 6px; margin-top: 12px; background: #fff; }
+.mk-cch { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+.mk-cch .t { font-weight: 600; font-size: 13px; }
+.mk-cch .lg { flex: 1; font-size: 12px; color: var(--muted); }
+.mk-cch .vv { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+th.ord.on::after { content: attr(data-flecha); margin-left: 4px; }
+.mk-pie { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px 8px; font-size: 13px; color: var(--muted); }
+.mk-producto { display: flex; gap: 10px; align-items: flex-start; }
+.mk-producto img { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; border: 1px solid var(--line); flex: none; }
+.mk-aviso { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 14px; font-weight: 600; margin: 12px 0; }
+.chip.neutro { background: var(--line-soft); color: var(--ink-soft); }
+/* Que el nombre del producto no quede en una columna angosta: en el celular lo demás se desliza hacia el costado. */
+.card.tabla td:first-child { min-width: 230px; }
