@@ -7,7 +7,7 @@
   <link rel="icon" href="../proveedores/icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
   <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
-  <link rel="stylesheet" href="marketing.css?v=1">
+  <link rel="stylesheet" href="marketing.css?v=2">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -15,7 +15,7 @@
 // Dashboard de Marketing (Tienda Nube Pret a Home): cómo viene la tienda, el semáforo del catálogo, la homepage y lo que hay que mirar hoy.
 // Los números salen de mkt_tablero() (7 días completos hasta ayer + últimas 24 hs) y mkt_serie_tienda().
 import { sb, $, esc, guard, navMarketing } from '../proveedores/app.js';
-import { SEM, dotSem, linkTienda, n0, pct, peso, hace, cargarConfig, cargarTablero, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumar } from './mkt-lib.js';
+import { SEM, dotSem, linkTienda, n0, pct, peso, hace, cargarConfig, cargarTablero, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumar, alCambiarAncho } from './mkt-lib.js';
 
 const perfil = await guard(['admin', 'dueno', 'marketing']);
 navMarketing(perfil, 'dashboard');
@@ -26,7 +26,8 @@ try {
   const r = await sb.rpc('mkt_serie_tienda', { p_dias: 30 });
   if (r.error) throw r.error;
   serie = r.data;
-} catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Dashboard</h1></div></div>` + sinDatos(e); throw e; }
+} catch (e) { 
+$('#app').innerHTML = `<div class="cabecera"><div><h1>Dashboard</h1></div></div>` + sinDatos(e); throw e; }
 
 const suma = (k) => sumar(rows.map((r) => r[k]));
 const v7 = suma('visitas_7d'), u7 = suma('unidades_7d'), v24 = suma('visitas_24h'), u24 = suma('unidades_24h');
@@ -51,6 +52,10 @@ const kpi = (l, v, sub = '') => `<div class="cc-card"><div class="cc-label">${l}
 const fechas = rangoDias(hoyAR(), 30), porDia = new Map(serie.map((s) => [s.fecha, s]));
 const sv = fechas.map((f) => (porDia.has(f) ? porDia.get(f).visitas : null)), su = fechas.map((f) => (porDia.has(f) ? porDia.get(f).unidades : null));
 
+const graficosTienda = () => `
+  ${panelGrafico('Visitas de producto', sinGA4 ? '—' : n0(sumar(sv)), 'por día', chart([{ d: sv, c: '#7C98E0' }], fechas, { bars: true, t: 'Visitas por día', f: n0 }))}
+  ${panelGrafico('Unidades vendidas', n0(sumar(su)), 'por día', chart([{ d: su, c: '#1F6F43' }], fechas, { bars: true, t: 'Unidades por día', f: n0 }))}`;
+
 $('#app').innerHTML = `
 <div class="cabecera"><div><h1>Dashboard</h1><p>Pret a Home · Tienda Nube · 7 días completos hasta ayer · actualizado ${esc(hace(ultima))}</p></div></div>
 ${sinGA4 ? '<div class="mk-aviso">Las visitas no están llegando: hay que volver a autorizar la cuenta de Google (GA4). Las ventas y los precios sí están al día.</div>' : ''}
@@ -68,9 +73,9 @@ ${sinGA4 ? '<div class="mk-aviso">Las visitas no están llegando: hay que volver
 <div class="card"><h2 style="margin:0 0 4px">Para mirar hoy</h2>
   ${grupos.length ? grupos.map((g) => `<div class="small" style="margin:14px 0 2px;font-weight:600;color:var(--ink-soft)">${esc(g.t)} <span class="muted">· ${g.filas.length}</span></div><ul class="mk-lista">${g.filas.slice(0, 4).map((r) => `<li><a class="t" href="producto.html?id=${r.product_id}">${esc(r.nombre)}</a> ${linkTienda(r.handle)}<div class="muted small">${g.d(r)}</div></li>`).join('')}</ul>`).join('') : '<p class="muted">Nada para mirar por ahora.</p>'}</div>
 <div class="card"><h2 style="margin:0 0 4px">Toda la tienda · últimos 30 días</h2>
-  ${panelGrafico('Visitas de producto', sinGA4 ? '—' : n0(sumar(sv)), 'por día', chart([{ d: sv, c: '#7C98E0' }], fechas, { bars: true, t: 'Visitas por día', f: n0 }))}
-  ${panelGrafico('Unidades vendidas', n0(sumar(su)), 'por día', chart([{ d: su, c: '#1F6F43' }], fechas, { bars: true, t: 'Unidades por día', f: n0 }))}</div>`;
+  <div id="graf">${graficosTienda()}</div></div>`;
 
+alCambiarAncho(() => { $('#graf').innerHTML = graficosTienda(); });
 document.querySelectorAll('[data-sem]').forEach((b) => { b.onclick = () => { location.href = `publicaciones.html?c=${b.dataset.sem}`; }; });
 </script>
 </body>

@@ -25,3 +25,23 @@ th.ord.on::after { content: attr(data-flecha); margin-left: 4px; }
 .chip.neutro { background: var(--line-soft); color: var(--ink-soft); }
 /* Que el nombre del producto no quede en una columna angosta: en el celular lo demás se desliza hacia el costado. */
 .card.tabla td:first-child { min-width: 230px; }
+
+/* El punto de color del semáforo, separado de la palabra (el estilo del panel no le deja espacio). */
+.dot { margin-right: 6px; vertical-align: 1px; }
+
+/* Tablero Kanban de tareas */
+.mk-tablero { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.mk-col { background: #EFEDE6; border: 2px solid transparent; border-radius: 12px; padding: 10px; min-height: 220px; transition: border-color .12s, background .12s; }
+.mk-col.sobre { border-color: var(--brand); background: var(--brand-bg); }
+.mk-colcab { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 10px; font-weight: 600; }
+.mk-colcuerpo { display: grid; gap: 10px; }
+.mk-tarjeta { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; cursor: grab; }
+.mk-tarjeta.arrastrando { opacity: .45; }
+.mk-tarjeta .mk-prod { font-weight: 600; color: var(--ink); display: inline; }
+.mk-tarjeta .mk-prod:hover { color: var(--brand); }
+.mk-nota { margin-top: 6px; font-size: 13px; color: var(--ink-soft); white-space: pre-wrap; }
+.mk-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 6px; min-height: 0; }
+.mk-x:hover { background: var(--bad-bg); color: var(--bad); }
+.mk-vacio { border: 2px dashed var(--line-strong); border-radius: 10px; padding: 22px 10px; text-align: center; color: var(--muted); font-size: 13px; }
+.mk-res { display: grid; gap: 6px; margin-top: 6px; }
+@media (max-width: 900px) { .mk-tablero { grid-template-columns: 1fr; } .mk-tarjeta { cursor: default; } }

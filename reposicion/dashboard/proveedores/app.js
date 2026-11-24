@@ -207,7 +207,7 @@ export function navMarketing(perfil, activa) {
   el.className = 'side';
   el.setAttribute('aria-label', 'Marketing');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Marketing</div></div>' +
-    '<div class="links">' + it('dashboard.html', 'Dashboard', 'dashboard') + it('publicaciones.html', 'Publicaciones', 'publicaciones') + '<span class="sp"></span></div>' +
+    '<div class="links">' + it('dashboard.html', 'Dashboard', 'dashboard') + it('publicaciones.html', 'Publicaciones', 'publicaciones') + it('tareas.html', 'Tareas', 'tareas') + '<span class="sp"></span></div>' +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
   document.body.prepend(el);

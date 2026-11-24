@@ -60,8 +60,16 @@ export const sinDatos = (e) => `<div class="card"><h2>Todavía no hay datos de M
 
 // ---- Gráficos ----
 // series: [{ d: [valor|null por día], c: color }]; fechas: ['AAAA-MM-DD'] alineado con d. Los null dejan un hueco (no se dibujan como 0).
-export function chart(series, fechas, { bars = false, step = false, t = '', f = (v) => Math.round(v), h = 124, refs = [], marks = [] } = {}) {
-  const W = 520, pl = 48, pr = 10, pt = 10, pb = 22, pw = W - pl - pr, ph = h - pt - pb, len = fechas.length;
+// Ancho en píxeles disponible para un gráfico: el de la página menos los márgenes de las tarjetas.
+export const anchoGrafico = () => Math.max(300, Math.min(1500, (document.querySelector('#app')?.clientWidth || 900) - 150));
+// Vuelve a dibujar los gráficos si cambia el ancho de la ventana (así las letras siguen siendo de tamaño normal).
+export function alCambiarAncho(fn) {
+  let ultimo = anchoGrafico(), t;
+  window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => { const a = anchoGrafico(); if (Math.abs(a - ultimo) > 40) { ultimo = a; fn(); } }, 200); });
+}
+export function chart(series, fechas, { bars = false, step = false, t = '', f = (v) => Math.round(v), h = null, refs = [], marks = [] } = {}) {
+  const W = anchoGrafico(); h = h || (W > 700 ? 150 : 124);
+  const pl = 52, pr = 12, pt = 10, pb = 24, pw = W - pl - pr, ph = h - pt - pb, len = fechas.length;
   const todos = series.flatMap((s) => s.d).filter((v) => v != null);
   if (!todos.length) return '<p class="muted small" style="margin:8px 0">Todavía no hay datos de este período.</p>';
   let mn = Math.min(...todos), mx = Math.max(...todos);
@@ -71,16 +79,16 @@ export function chart(series, fechas, { bars = false, step = false, t = '', f = 
   if (mx === mn) mx = mn + 1;
   const Y = (v) => pt + ph * (1 - (v - mn) / (mx - mn));
   const X = (i) => pl + (len > 1 ? (i * pw) / (len - 1) : pw / 2);
-  const tx = 'font-size:10px;fill:#5B5F66;font-variant-numeric:tabular-nums';
-  let s = `<svg viewBox="0 0 ${W} ${h}" width="100%" style="display:block" role="img" aria-label="${esc(t)}"><title>${esc(t)}</title>`;
+  const tx = 'font-size:11px;fill:#5B5F66;font-variant-numeric:tabular-nums';
+  let s = `<svg viewBox="0 0 ${W} ${h}" width="100%" style="display:block;max-width:${W}px" role="img" aria-label="${esc(t)}"><title>${esc(t)}</title>`;
   for (const k of [0, 0.5, 1]) {
     const v = mn + (mx - mn) * k, y = Y(v);
     s += `<line x1="${pl}" x2="${W - pr}" y1="${y}" y2="${y}" stroke="${k === 0 ? '#C9C6BD' : '#EEEDE8'}"/><text x="${pl - 6}" y="${y + 3.5}" text-anchor="end" style="${tx}">${esc(f(v))}</text>`;
   }
-  for (const r of refs) s += `<line x1="${pl}" x2="${W - pr}" y1="${Y(r.v)}" y2="${Y(r.v)}" stroke-dasharray="4 3" stroke="${r.c}"/><text x="${pl + 4}" y="${Y(r.v) - 3}" style="font-size:10px;font-weight:600;fill:${r.c}">${esc(r.t)}</text>`;
+  for (const r of refs) s += `<line x1="${pl}" x2="${W - pr}" y1="${Y(r.v)}" y2="${Y(r.v)}" stroke-dasharray="4 3" stroke="${r.c}"/><text x="${pl + 4}" y="${Y(r.v) - 3}" style="font-size:11px;font-weight:600;fill:${r.c}">${esc(r.t)}</text>`;
   series.forEach((sr) => {
     if (bars) {
-      const bw = Math.max(1.5, (pw / len) * 0.68);
+      const bw = Math.max(2, Math.min(18, (pw / len) * 0.55));
       sr.d.forEach((v, i) => { if (v != null) s += `<rect x="${X(i) - bw / 2}" y="${Y(v)}" width="${bw}" height="${Math.max(0, Y(Math.max(mn, 0)) - Y(v))}" rx="1.5" fill="${sr.c}"/>`; });
     } else {
       let d = '', prev = null;
@@ -113,3 +121,9 @@ export const panelGrafico = (titulo, valor, leyenda, svg) => `<div class="mk-cc"
 // Días [desde, hasta] en orden, para alinear series con huecos.
 export const rangoDias = (hasta, n) => Array.from({ length: n }, (_, i) => sumarDias(hasta, i - (n - 1)));
 export const sumar = (a) => a.reduce((x, y) => x + (y ?? 0), 0);
+
+// ---- Tareas del equipo (ficha del producto y tablero Kanban) ----
+export const TIPOS = { fotos: 'Cambio de fotos', precio: 'Mejora de precio', publicidad: 'Armado de publicidad', titulo: 'Título y descripción', otro: 'Otro' };
+// Columnas del tablero, en orden: [clave en la base, título, clase del chip].
+export const ESTADOS = [['pendiente', 'Por hacer', ''], ['en_curso', 'En curso', 'info'], ['hecho', 'Hecho', 'ok']];
+export const nombreEstado = (e) => (ESTADOS.find((x) => x[0] === e) || [e, e])[1];

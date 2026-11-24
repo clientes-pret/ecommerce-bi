@@ -7,7 +7,7 @@
   <link rel="icon" href="../proveedores/icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
   <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
-  <link rel="stylesheet" href="marketing.css?v=1">
+  <link rel="stylesheet" href="marketing.css?v=2">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -15,16 +15,15 @@
 // Ficha de un producto: todo lo que se sabe de su página (visitas, ventas, conversión, stock, precio, margen), la evolución en
 // gráficos, sus variantes y lo que el equipo va haciendo (tareas). Fase 1: el cambio de precio llega en la fase de precios.
 import { sb, $, $$, esc, guard, navMarketing, qs, fechaHora } from '../proveedores/app.js';
-import { chipSem, chipHome, chipMargen, linkTienda, urlTienda, n0, pct, peso, hace, cargarConfig, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumarDias, ddmm, sumar } from './mkt-lib.js';
+import { chipSem, chipHome, chipMargen, linkTienda, urlTienda, n0, pct, peso, hace, cargarConfig, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumarDias, ddmm, sumar, alCambiarAncho, TIPOS, ESTADOS, nombreEstado } from './mkt-lib.js';
 
 const perfil = await guard(['admin', 'dueno', 'marketing']);
 navMarketing(perfil, 'publicaciones');
 const id = Number(qs('id'));
 if (!id) { location.replace('publicaciones.html'); throw new Error('sin producto'); }
 
-const TIPOS = { fotos: 'Cambio de fotos', precio: 'Mejora de precio', publicidad: 'Armado de publicidad', titulo: 'Título y descripción', otro: 'Otro' };
 const hoy = hoyAR();
-let fila, prod, dias, tareas, cfg, rango = 30;
+let fila, prod, dias, tareas, cfg, rango = 30, pestana = location.hash === '#tareas' ? 'tareas' : 'metricas';
 async function cargar() {
   const r = await Promise.all([
     sb.rpc('mkt_tablero', { p_product: id }),
@@ -70,17 +69,39 @@ function variantes() {
   }).join('')}</tbody></table></div>`;
 }
 
+const selEstado = (id, actual) => `<select data-cambiar="${id}" aria-label="Estado de la tarea" style="width:auto;min-height:34px;padding:4px 8px">${ESTADOS.map(([k, t]) => `<option value="${k}" ${k === actual ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+
 function listaTareas() {
-  if (!tareas.length) return '<p class="muted">Todavía no se marcó nada en este producto.</p>';
-  return `<ul class="mk-lista">${tareas.map((t) => `<li><div class="row between wrapRow"><div class="grow"><span class="chip ${t.estado === 'hecho' ? 'ok' : 'info'}">${esc(TIPOS[t.tipo] || t.tipo)} · ${t.estado === 'hecho' ? 'hecho' : 'en curso'}</span>
-    <span class="muted small">${esc(t.autor_nombre || '—')} · ${esc(fechaHora(t.created_at))}${t.hecho_at ? ` · listo ${esc(fechaHora(t.hecho_at))}` : ''}</span>
-    ${t.nota ? `<div style="margin-top:4px">${esc(t.nota)}</div>` : ''}</div>
-    <div class="row"><button class="btn sm" data-estado="${t.id}" data-a="${t.estado === 'hecho' ? 'en_curso' : 'hecho'}">${t.estado === 'hecho' ? 'Reabrir' : 'Marcar como hecha'}</button>
-    <button class="btn sm danger" data-borrar="${t.id}">Borrar</button></div></div></li>`).join('')}</ul>`;
+  if (!tareas.length) return '<p class="muted">Todavía no se marcó nada en este producto. Agregá la primera tarea con el formulario de arriba.</p>';
+  return ESTADOS.map(([est, titulo, cl]) => {
+    const l = tareas.filter((t) => t.estado === est);
+    if (!l.length) return '';
+    return `<div class="small" style="margin:16px 0 2px;font-weight:600;color:var(--ink-soft)"><span class="chip ${cl}">${titulo}</span> <span class="muted">${l.length}</span></div>
+    <ul class="mk-lista">${l.map((t) => `<li><div class="row between wrapRow"><div class="grow"><span class="chip neutro">${esc(TIPOS[t.tipo] || t.tipo)}</span>
+      <span class="muted small">${esc(t.autor_nombre || '—')} · ${esc(fechaHora(t.created_at))}${t.hecho_at ? ` · listo ${esc(fechaHora(t.hecho_at))}` : ''}</span>
+      ${t.nota ? `<div style="margin-top:4px">${esc(t.nota)}</div>` : ''}</div>
+      <div class="row">${selEstado(t.id, t.estado)}<button class="btn sm danger" data-borrar="${t.id}">Borrar</button></div></div></li>`).join('')}</ul>`;
+  }).join('');
+}
+
+function pestanaMetricas() {
+  return `<div class="card"><div class="row between wrapRow"><h2 style="margin:0">Evolución</h2>
+    <div class="seg" role="group" aria-label="Período">${[7, 30, 90].map((n) => `<button data-r="${n}" aria-pressed="${rango === n}">${n} días</button>`).join('')}</div></div>
+    <div id="graf">${graficos()}</div></div>
+  <div class="card tabla"><div class="cab"><h2>Variantes</h2><span class="muted">${(prod.variantes || []).length} · el stock del producto es la suma de estas variantes</span></div>${variantes()}</div>`;
+}
+
+function pestanaTareas() {
+  return `<div class="card"><h2 style="margin:0 0 4px">Nueva tarea</h2><p class="muted small" style="margin:0 0 8px">Lo que el equipo va a hacer o hizo en este producto. También se ve y se mueve en el tablero de Tareas del menú.</p>
+    <div class="campos"><div><label for="tt">Qué es</label><select id="tt">${Object.entries(TIPOS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+      <div><label for="te">En qué estado</label><select id="te">${ESTADOS.map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div>
+      <div class="ancho"><label for="tn">Nota (opcional)</label><input id="tn" placeholder="Ej: fotos nuevas con la cama armada"></div></div>
+    <div class="pie"><span class="err" id="terr"></span><button class="btn primary" id="tadd">Agregar tarea</button></div></div>
+  <div class="card"><h2 style="margin:0">Tareas de este producto</h2><div id="tareas">${listaTareas()}</div></div>`;
 }
 
 function pintar() {
-  const f = fila, sinGA4 = f.visitas_7d == null;
+  const f = fila, sinGA4 = f.visitas_7d == null, abiertas = tareas.filter((t) => t.estado !== 'hecho').length;
   $('#app').innerHTML = `
   <a class="small muted" href="publicaciones.html">← Publicaciones</a>
   <div class="cabecera" style="margin-top:6px"><div><h1>${esc(f.nombre)} ${linkTienda(f.handle)}</h1><p>${chipSem(f.semaforo)}${chipHome(f)}${f.categoria ? ` <span class="muted">${esc(f.categoria)}</span>` : ''} · datos ${esc(hace(f.actualizado_at))}</p></div>
@@ -95,35 +116,33 @@ function pintar() {
     ${kpi('Ganancia · margen · ROI', f.margen == null ? '<span class="chip">Sin costo</span>' : `${chipMargen(f, cfg)}`, f.margen == null ? 'falta cargar el costo en Tienda Nube' : `${peso(f.ganancia)} por unidad · ROI ${pct(f.roi, 0)}`)}
   </div>
   ${f.en_home ? `<div class="card"><h2 style="margin:0 0 4px">🏠 En la homepage</h2><p class="muted" style="margin:0">Está en la homepage de la tienda desde el ${esc(ddmm(f.home_desde))}.</p></div>` : ''}
-  <div class="card"><div class="row between wrapRow"><h2 style="margin:0">Evolución</h2>
-    <div class="seg" role="group" aria-label="Período">${[7, 30, 90].map((n) => `<button data-r="${n}" aria-pressed="${rango === n}">${n} días</button>`).join('')}</div></div>
-    <div id="graf">${graficos()}</div></div>
-  <div class="card tabla"><div class="cab"><h2>Variantes</h2><span class="muted">${(prod.variantes || []).length} · el stock del producto es la suma de estas variantes</span></div>${variantes()}</div>
-  <div class="card"><h2 style="margin:0 0 8px">Tareas y notas</h2><div id="tareas">${listaTareas()}</div>
-    <div class="campos" style="margin-top:12px"><div><label for="tt">Qué se hizo</label><select id="tt">${Object.entries(TIPOS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
-      <div class="ancho"><label for="tn">Nota (opcional)</label><input id="tn" placeholder="Ej: fotos nuevas con la cama armada"></div></div>
-    <div class="pie"><span class="err" id="terr"></span><button class="btn primary" id="tadd">Agregar tarea</button></div></div>`;
+  <div class="seg" role="tablist" aria-label="Secciones del producto" style="margin:4px 0 14px">
+    <button role="tab" data-pest="metricas" aria-pressed="${pestana === 'metricas'}">Métricas</button>
+    <button role="tab" data-pest="tareas" aria-pressed="${pestana === 'tareas'}">Tareas${abiertas ? ` · ${abiertas}` : ''}</button></div>
+  <div id="pestana">${pestana === 'tareas' ? pestanaTareas() : pestanaMetricas()}</div>`;
+  $$('[data-pest]').forEach((b) => { b.onclick = () => { pestana = b.dataset.pest; history.replaceState(null, '', pestana === 'tareas' ? '#tareas' : location.pathname + location.search); pintar(); }; });
   $$('[data-r]').forEach((b) => { b.onclick = () => { rango = +b.dataset.r; pintar(); }; });
-  $('#tadd').onclick = agregar; enlazarTareas();
+  if ($('#tadd')) { $('#tadd').onclick = agregar; enlazarTareas(); }
 }
 
 function enlazarTareas() {
-  $$('[data-estado]').forEach((b) => { b.onclick = async () => { const { error } = await sb.from('mkt_tareas').update({ estado: b.dataset.a }).eq('id', b.dataset.estado); if (error) return alert(error.message); await recargarTareas(); }; });
+  $$('[data-cambiar]').forEach((sel) => { sel.onchange = async () => { const { error } = await sb.from('mkt_tareas').update({ estado: sel.value }).eq('id', sel.dataset.cambiar); if (error) alert('No se pudo cambiar: ' + error.message); await recargarTareas(); }; });
   $$('[data-borrar]').forEach((b) => { b.onclick = async () => { if (!confirm('¿Borrar esta tarea?')) return; const { error } = await sb.from('mkt_tareas').delete().eq('id', b.dataset.borrar); if (error) return alert(error.message); await recargarTareas(); }; });
 }
 async function recargarTareas() {
   const { data, error } = await sb.from('mkt_tareas').select('*').eq('product_id', id).order('created_at', { ascending: false });
   if (error) return alert(error.message);
-  tareas = data; $('#tareas').innerHTML = listaTareas(); enlazarTareas();
+  tareas = data; pintar();
 }
 async function agregar() {
   const b = $('#tadd'); b.disabled = true; $('#terr').textContent = '';
-  const { error } = await sb.from('mkt_tareas').insert({ product_id: id, tipo: $('#tt').value, nota: $('#tn').value.trim() || null });
+  const { error } = await sb.from('mkt_tareas').insert({ product_id: id, tipo: $('#tt').value, estado: $('#te').value, nota: $('#tn').value.trim() || null });
   b.disabled = false;
   if (error) { $('#terr').textContent = 'No se pudo guardar: ' + error.message; return; }
-  $('#tn').value = ''; await recargarTareas();
+  await recargarTareas();
 }
 pintar();
+alCambiarAncho(() => { const g = $('#graf'); if (g) g.innerHTML = graficos(); });
 </script>
 </body>
 </html>

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tareas · Marketing Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <link rel="stylesheet" href="marketing.css?v=2">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Tareas de Marketing en un tablero: Por hacer → En curso → Hecho. Cada tarjeta es una tarea de un producto; se arrastra a la
+// columna que corresponda (o se mueve con las flechas, que sirven en el celular). Las tareas nuevas también se crean desde la
+// ficha de cada producto. Las hechas se muestran solo si son de los últimos 30 días.
+import { sb, $, $$, esc, guard, navMarketing, leerTodo, fechaHora } from '../proveedores/app.js';
+import { linkTienda, TIPOS, ESTADOS, sinDatos } from './mkt-lib.js';
+
+const perfil = await guard(['admin', 'dueno', 'marketing']);
+navMarketing(perfil, 'tareas');
+
+let tareas = [], prods = new Map();
+const st = { tipo: '', mias: false, todas: false, nueva: false };
+const orden = ESTADOS.map((e) => e[0]);
+const hace30 = Date.now() - 30 * 86400e3;
+
+async function traerProductos(ids) {
+  const faltan = [...new Set(ids)].filter((i) => !prods.has(i));
+  for (let i = 0; i < faltan.length; i += 150) {
+    const { data, error } = await sb.from('mkt_producto').select('product_id,nombre,handle').in('product_id', faltan.slice(i, i + 150));
+    if (error) throw error;
+    data.forEach((p) => prods.set(p.product_id, p));
+  }
+}
+async function cargar() {
+  tareas = await leerTodo('mkt_tareas', '*', ['created_at', 'id']);
+  await traerProductos(tareas.map((t) => t.product_id));
+}
+try { await cargar(); } catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Tareas</h1></div></div>` + sinDatos(e); throw e; }
+
+const visibles = () => tareas.filter((t) => (!st.tipo || t.tipo === st.tipo) && (!st.mias || t.autor === perfil.id)
+  && (t.estado !== 'hecho' || st.todas || new Date(t.hecho_at || t.created_at).getTime() >= hace30));
+
+function tarjeta(t) {
+  const p = prods.get(t.product_id) || { nombre: `Producto ${t.product_id}`, handle: '' }, i = orden.indexOf(t.estado);
+  return `<div class="mk-tarjeta" draggable="true" data-id="${t.id}">
+    <div class="row between" style="align-items:flex-start;gap:6px"><span class="chip neutro">${esc(TIPOS[t.tipo] || t.tipo)}</span>
+      <button class="mk-x" data-borrar="${t.id}" title="Borrar la tarea" aria-label="Borrar la tarea">✕</button></div>
+    <a class="mk-prod" href="producto.html?id=${t.product_id}#tareas">${esc(p.nombre)}</a> ${linkTienda(p.handle)}
+    ${t.nota ? `<div class="mk-nota">${esc(t.nota)}</div>` : ''}
+    <div class="muted small" style="margin-top:6px">${esc(t.autor_nombre || '—')} · ${esc(fechaHora(t.created_at))}${t.hecho_at ? ` · listo ${esc(fechaHora(t.hecho_at))}` : ''}</div>
+    <div class="row between" style="margin-top:8px">
+      <button class="btn sm" data-mover="${t.id}" data-a="${orden[i - 1] || ''}" ${i === 0 ? 'disabled' : ''} aria-label="Mover a la columna anterior">←</button>
+      <button class="btn sm" data-mover="${t.id}" data-a="${orden[i + 1] || ''}" ${i === orden.length - 1 ? 'disabled' : ''} aria-label="Mover a la columna siguiente">→</button></div></div>`;
+}
+
+function pintarTablero() {
+  const v = visibles(), ocultas = tareas.filter((t) => t.estado === 'hecho').length - v.filter((t) => t.estado === 'hecho').length;
+  $('#tablero').innerHTML = ESTADOS.map(([k, titulo, cl]) => {
+    const l = v.filter((t) => t.estado === k).sort((a, b) => (k === 'hecho' ? new Date(b.hecho_at) - new Date(a.hecho_at) : new Date(a.created_at) - new Date(b.created_at)));
+    return `<section class="mk-col" data-col="${k}" aria-label="${titulo}"><div class="mk-colcab"><span class="chip ${cl}">${titulo}</span><span class="muted">${l.length}</span></div>
+      <div class="mk-colcuerpo">${l.map(tarjeta).join('') || '<div class="mk-vacio">Soltá una tarea acá</div>'}</div></section>`;
+  }).join('');
+  $('#nota-hechas').textContent = st.todas ? 'Mostrando todas las tareas hechas.' : (ocultas > 0 ? `Hay ${ocultas} tarea${ocultas > 1 ? 's' : ''} hecha${ocultas > 1 ? 's' : ''} de hace más de 30 días.` : 'Se muestran las hechas de los últimos 30 días.');
+  enlazar();
+}
+
+async function mover(id, a) {
+  const t = tareas.find((x) => String(x.id) === String(id));
+  if (!t || !a || t.estado === a) return;
+  const antes = { estado: t.estado, hecho_at: t.hecho_at };
+  t.estado = a; t.hecho_at = a === 'hecho' ? new Date().toISOString() : null; pintarTablero();       // se ve al instante
+  const { error } = await sb.from('mkt_tareas').update({ estado: a }).eq('id', t.id);
+  if (error) { Object.assign(t, antes); pintarTablero(); alert('No se pudo mover la tarea: ' + error.message); }
+}
+
+function enlazar() {
+  let arrastrando = null;
+  $$('.mk-tarjeta').forEach((c) => {
+    c.ondragstart = (e) => { arrastrando = c.dataset.id; e.dataTransfer.setData('text/plain', arrastrando); e.dataTransfer.effectAllowed = 'move'; c.classList.add('arrastrando'); };
+    c.ondragend = () => { c.classList.remove('arrastrando'); $$('.mk-col').forEach((x) => x.classList.remove('sobre')); };
+  });
+  $$('.mk-col').forEach((col) => {
+    col.ondragover = (e) => { e.preventDefault(); col.classList.add('sobre'); };
+    col.ondragleave = (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('sobre'); };
+    col.ondrop = (e) => { e.preventDefault(); col.classList.remove('sobre'); mover(e.dataTransfer.getData('text/plain') || arrastrando, col.dataset.col); };
+  });
+  $$('[data-mover]').forEach((b) => { b.onclick = () => mover(b.dataset.mover, b.dataset.a); });
+  $$('[data-borrar]').forEach((b) => { b.onclick = async () => {
+    if (!confirm('¿Borrar esta tarea?')) return;
+    const { error } = await sb.from('mkt_tareas').delete().eq('id', b.dataset.borrar);
+    if (error) return alert('No se pudo borrar: ' + error.message);
+    tareas = tareas.filter((t) => String(t.id) !== b.dataset.borrar); pintarTablero();
+  }; });
+}
+
+// ---- Nueva tarea: se busca el producto por nombre ----
+let elegido = null;
+function formNueva() {
+  return `<div class="card"><h2 style="margin:0 0 8px">Nueva tarea</h2>
+    <label for="nq" style="margin-top:0">Producto</label><input id="nq" type="search" placeholder="Escribí parte del nombre del producto" autocomplete="off">
+    <div id="nres" class="mk-res"></div><div id="nelegido" class="small" style="margin-top:6px"></div>
+    <div class="campos"><div><label for="nt">Qué es</label><select id="nt">${Object.entries(TIPOS).map(([k, x]) => `<option value="${k}">${x}</option>`).join('')}</select></div>
+      <div><label for="ne">Columna</label><select id="ne">${ESTADOS.map(([k, x]) => `<option value="${k}">${x}</option>`).join('')}</select></div>
+      <div class="ancho"><label for="nn">Nota (opcional)</label><input id="nn" placeholder="Ej: cambiar las fotos por unas con la cama armada"></div></div>
+    <div class="pie"><span class="err" id="nerr"></span><button class="btn" id="ncancel">Cancelar</button><button class="btn primary" id="nadd">Agregar tarea</button></div></div>`;
+}
+function enlazarNueva() {
+  let t;
+  $('#nq').oninput = () => { clearTimeout(t); t = setTimeout(async () => {
+    const tokens = $('#nq').value.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!tokens.length) { $('#nres').innerHTML = ''; return; }
+    let q = sb.from('mkt_producto').select('product_id,nombre,handle').eq('publicado', true).limit(8);
+    for (const tk of tokens) q = q.ilike('nombre', `%${tk.replace(/[%_,()]/g, '')}%`);
+    const { data } = await q;
+    $('#nres').innerHTML = (data || []).map((p) => `<button class="pick" data-p="${p.product_id}" style="min-height:44px;padding:8px 12px;font-size:14px">${esc(p.nombre)}</button>`).join('') || '<p class="muted small">No encontré nada. Probá con menos palabras.</p>';
+    (data || []).forEach((p) => prods.set(p.product_id, p));
+    $$('[data-p]').forEach((b) => { b.onclick = () => { elegido = prods.get(Number(b.dataset.p)); $('#nres').innerHTML = ''; $('#nq').value = ''; $('#nelegido').innerHTML = `Producto elegido: <b>${esc(elegido.nombre)}</b>`; }; });
+  }, 250); };
+  $('#ncancel').onclick = () => { st.nueva = false; elegido = null; pintar(); };
+  $('#nadd').onclick = async () => {
+    $('#nerr').textContent = '';
+    if (!elegido) { $('#nerr').textContent = 'Elegí primero un producto de la lista.'; return; }
+    const b = $('#nadd'); b.disabled = true;
+    const { data, error } = await sb.from('mkt_tareas').insert({ product_id: elegido.product_id, tipo: $('#nt').value, estado: $('#ne').value, nota: $('#nn').value.trim() || null }).select();
+    b.disabled = false;
+    if (error) { $('#nerr').textContent = 'No se pudo guardar: ' + error.message; return; }
+    st.nueva = false; elegido = null; await cargar(); pintar();
+  };
+}
+
+function pintar() {
+  const abiertas = tareas.filter((t) => t.estado !== 'hecho').length;
+  $('#app').innerHTML = `
+  <div class="cabecera"><div><h1>Tareas</h1><p>Lo que el equipo tiene por hacer, en curso y hecho en los productos · ${abiertas} abiertas</p></div>
+    <button class="btn primary" id="nueva">＋ Nueva tarea</button></div>
+  ${st.nueva ? formNueva() : ''}
+  <div class="row wrapRow" style="margin:14px 0 12px;gap:10px 16px">
+    <div class="row" style="gap:8px"><label for="ftipo" style="margin:0">Tipo</label><select id="ftipo" style="width:auto"><option value="">Todos</option>${Object.entries(TIPOS).map(([k, x]) => `<option value="${k}" ${st.tipo === k ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+    <label style="display:inline-flex;gap:6px;align-items:center;font-weight:400;margin:0"><input type="checkbox" id="fmias" ${st.mias ? 'checked' : ''}> Solo las mías</label>
+    <label style="display:inline-flex;gap:6px;align-items:center;font-weight:400;margin:0"><input type="checkbox" id="ftodas" ${st.todas ? 'checked' : ''}> Ver todas las hechas</label></div>
+  <div class="mk-tablero" id="tablero"></div>
+  <p class="muted small" id="nota-hechas" style="margin-top:12px"></p>
+  <p class="muted small">Arrastrá una tarjeta a otra columna, o usá las flechas ← → de cada tarjeta (sirven en el celular). Al tocar el nombre del producto se abre su ficha.</p>`;
+  $('#nueva').onclick = () => { st.nueva = !st.nueva; elegido = null; pintar(); };
+  $('#ftipo').onchange = (e) => { st.tipo = e.target.value; pintarTablero(); };
+  $('#fmias').onchange = (e) => { st.mias = e.target.checked; pintarTablero(); };
+  $('#ftodas').onchange = (e) => { st.todas = e.target.checked; pintarTablero(); };
+  if (st.nueva) enlazarNueva();
+  pintarTablero();
+}
+pintar();
+</script>
+</body>
+</html>
