@@ -20,7 +20,7 @@ export const SEM = {
   killer: ['Killer', '#2F9E5B', 'Buen volumen de visitas y alta conversión'],
   potencial: ['Con potencial', '#E0A100', 'Buen volumen de visitas pero baja conversión'],
   impulsar: ['A impulsar', '#2B8CD9', 'Pocas visitas pero alta conversión'],
-  rojo: ['Rojo', '#D64545', 'Pocas visitas y poca conversión'],
+  rojo: ['Dormidas', '#D64545', 'Pocas visitas y poca conversión'],     // la clave interna sigue siendo "rojo" (así se guarda y se filtra)
 };
 export const dotSem = (s) => (SEM[s] ? `<span class="dot" style="background:${SEM[s][1]}"></span>` : '');
 export const chipSem = (s) => (SEM[s]
