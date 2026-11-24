@@ -63,20 +63,29 @@ def test_destino_creativo_varias_paginas_queda_sin_destino():
     assert destino_creativo(c2) == (False, "/cortinas/largas")
 
 
-def test_filas_guardar_une_anuncio_con_su_destino():
-    anuncios = {("2026-11-20", "9"): {"campana": "C", "anuncio": "x", "gasto": 10.0, "impresiones": 1, "clics": 0, "compras": 0, "valor": 0.0}}
+def test_filas_guardar_guarda_solo_el_resto_de_cada_anuncio():
+    anuncios = {("2026-11-20", "9"): {"campana": "C", "anuncio": "x", "gasto": 100.0, "impresiones": 10, "clics": 5, "compras": 3, "valor": 900.0},
+                ("2026-11-20", "8"): {"campana": "C", "anuncio": "y", "gasto": 50.0, "impresiones": 4, "clics": 1, "compras": 0, "valor": 0.0}}
+    link = {"object_story_spec": {"link_data": {"link": "https://www.pretahome.com/productos/z/"}}}
+    desglose = {("2026-11-20", "9"): {"gasto": 60.0, "impresiones": 6, "clics": 2, "compras": 1, "valor": 300.0},
+                ("2026-11-20", "8"): {"gasto": 50.4, "impresiones": 4, "clics": 1, "compras": 0, "valor": 0.0}}
     fa, fp = filas_guardar(anuncios, {("2026-11-20", "A"): {"product_id": 1, "gasto": 5.0, "impresiones": 1, "clics": 0, "compras": 0, "valor": 0.0}},
-                           {"9": {"object_story_spec": {"link_data": {"link": "https://www.pretahome.com/productos/z/"}}}})
-    assert fa[0]["pagina"] == "/productos/z" and fa[0]["catalogo"] is False and fa[0]["ad_id"] == "9"
-    fa2, _ = filas_guardar(anuncios, {}, {"9": {}}, {("2026-11-20", "9"): 8.0})
-    assert fa2[0]["catalogo"] is True
+                           {"9": link, "8": link}, desglose)
+    assert len(fa) == 1                                           # el anuncio 8 es de catálogo puro: no deja resto (el desglose lo pasó por $0,4)
+    assert fa[0] == {"fecha": "2026-11-20", "ad_id": "9", "campana": "C", "anuncio": "x", "pagina": "/productos/z",
+                     "gasto": 40.0, "impresiones": 4, "clics": 3, "compras": 2, "valor": 600.0}
     assert fp[0]["sku"] == "A" and fp[0]["product_id"] == 1
+
+
+def test_anuncio_sin_desglose_guarda_todo_y_pagina_none_si_no_se_sabe():
+    fa, _ = filas_guardar({("2026-11-20", "7"): {"campana": "C", "anuncio": "z", "gasto": 10.0, "impresiones": 1, "clics": 0, "compras": 0, "valor": 0.0}}, {}, {})
+    assert fa[0]["gasto"] == 10.0 and fa[0]["pagina"] is None
 
 
 def test_desglose_por_anuncio_marca_los_de_catalogo():
     filas = [{"date_start": "2026-11-20", "ad_id": "9", "product_id": "A, x", "spend": "4"}, {"date_start": "2026-11-20", "ad_id": "9", "product_id": "B, y", "spend": "1.5"},
              {"date_start": "2026-11-20", "ad_id": "7", "product_id": "None", "spend": "3"}, {"date_start": "2026-11-21", "ad_id": "9", "product_id": "A, x", "spend": "0"}]
-    assert desglose_por_anuncio(filas) == {("2026-11-20", "9"): 5.5}
+    assert desglose_por_anuncio(filas) == {("2026-11-20", "9"): {"gasto": 5.5, "impresiones": 0, "clics": 0, "compras": 0, "valor": 0.0}}
 
 
 if __name__ == "__main__":

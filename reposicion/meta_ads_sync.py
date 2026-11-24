@@ -146,13 +146,19 @@ def agrupar_productos(filas, sku_a_producto):
 
 
 def desglose_por_anuncio(filas):
-    """{(fecha, ad_id): gasto} de lo que Meta repartió por producto del catálogo. Un anuncio que aparece acá es de catálogo:
-    su gasto se cuenta por producto y no por página (el creativo no alcanza para saberlo: hay anuncios de catálogo que llevan a una categoría)."""
-    out = defaultdict(float)
+    """{(fecha, ad_id): {gasto, impresiones, clics, compras, valor}} de lo que Meta repartió por producto del catálogo en cada anuncio."""
+    out = {}
     for f in filas:
-        if sku_de_producto(f.get("product_id")) and float(f.get("spend") or 0) > 0:
-            out[(f["date_start"], f["ad_id"])] += float(f["spend"])
-    return {k: round(v, 2) for k, v in out.items()}
+        gasto = float(f.get("spend") or 0)
+        if not sku_de_producto(f.get("product_id")) or gasto <= 0:
+            continue
+        v = out.setdefault((f["date_start"], f["ad_id"]), {"gasto": 0.0, "impresiones": 0, "clics": 0, "compras": 0, "valor": 0.0})
+        v["gasto"] += gasto
+        v["impresiones"] += int(f.get("impressions") or 0)
+        v["clics"] += int(f.get("clicks") or 0)
+        v["compras"] += int(_compra(f.get("actions")))
+        v["valor"] += _compra(f.get("action_values"))
+    return out
 
 
 def destino_creativo(creativo):
@@ -168,12 +174,24 @@ def destino_creativo(creativo):
     return catalogo, (next(iter(paginas)) if len(paginas) == 1 else None)
 
 
+def resto_anuncio(v, d):
+    """Lo del anuncio `v` que Meta NO repartió por producto (`d`, puede ser None): nunca negativo."""
+    d = d or {"gasto": 0.0, "impresiones": 0, "clics": 0, "compras": 0, "valor": 0.0}
+    return {"gasto": round(max(0.0, v["gasto"] - d["gasto"]), 2), "impresiones": max(0, v["impresiones"] - d["impresiones"]),
+            "clics": max(0, v["clics"] - d["clics"]), "compras": max(0, v["compras"] - d["compras"]), "valor": round(max(0.0, v["valor"] - d["valor"]), 2)}
+
+
 def filas_guardar(anuncios, productos, creativos_por_ad, desglose=None):
-    """Filas para mkt_meta_anuncio_dia y mkt_meta_producto_dia. `catalogo` = el anuncio tiene gasto repartido por producto ese día."""
-    dest = {ad: destino_creativo(c) for ad, c in creativos_por_ad.items()}
+    """(filas de mkt_meta_anuncio_dia, filas de mkt_meta_producto_dia).
+    Cada peso se cuenta una sola vez: lo que Meta reparte por producto va a mkt_meta_producto_dia y de cada anuncio solo se guarda
+    el resto (con la página a la que lleva el anuncio, si se sabe). Un anuncio de catálogo puro casi no deja resto."""
+    dest = {ad: destino_creativo(c)[1] for ad, c in creativos_por_ad.items()}
     desglose = desglose or {}
-    fa = [{"fecha": f, "ad_id": ad, "catalogo": (f, ad) in desglose, "pagina": dest.get(ad, (False, None))[1], **v}
-          for (f, ad), v in sorted(anuncios.items())]
+    fa = []
+    for (f, ad), v in sorted(anuncios.items()):
+        r = resto_anuncio(v, desglose.get((f, ad)))
+        if r["gasto"] >= 1:                                           # menos de $1: es redondeo entre las dos consultas
+            fa.append({"fecha": f, "ad_id": ad, "campana": v["campana"], "anuncio": v["anuncio"], "pagina": dest.get(ad), **r})
     fp = [{"fecha": f, "sku": sku, **v} for (f, sku), v in sorted(productos.items())]
     return fa, fp
 
@@ -209,30 +227,29 @@ def main():
     fa, fp = filas_guardar(anuncios, productos, creativos_por_ad, desglose)
 
     total = sum(v["gasto"] for v in anuncios.values())
-    cat = sum(r["gasto"] for r in fa if r["catalogo"])
-    con_pagina = sum(r["gasto"] for r in fa if not r["catalogo"] and r["pagina"])
-    sin_destino = total - cat - con_pagina
     por_prod = sum(v["gasto"] for v in productos.values())
+    con_pagina = sum(r["gasto"] for r in fa if r["pagina"])
+    sin_destino = sum(r["gasto"] for r in fa if not r["pagina"])
     asignado = sum(v["gasto"] for v in productos.values() if v["product_id"] is not None)
     pct = lambda a, b: f"{(a / b * 100 if b else 0):.0f} %"
-    core.tnlog(f"Reparto del gasto de ${total:,.0f}: catálogo ${cat:,.0f} ({pct(cat, total)}) · páginas conocidas ${con_pagina:,.0f} ({pct(con_pagina, total)}) "
-               f"· sin destino ${sin_destino:,.0f} ({pct(sin_destino, total)})")
-    core.tnlog(f"Catálogo: Meta repartió ${por_prod:,.0f} entre {len({s for _, s in productos})} SKUs (los anuncios de catálogo suman ${cat:,.0f}); "
-               f"asignado a un producto de la tienda: ${asignado:,.0f} ({pct(asignado, por_prod)})")
+    core.tnlog(f"Reparto del gasto de ${total:,.0f}: por producto del catálogo ${por_prod:,.0f} ({pct(por_prod, total)}) · páginas conocidas ${con_pagina:,.0f} "
+               f"({pct(con_pagina, total)}) · sin destino ${sin_destino:,.0f} ({pct(sin_destino, total)})")
+    core.tnlog(f"Catálogo: {len({s for _, s in productos})} SKUs; asignado a un producto de la tienda: ${asignado:,.0f} ({pct(asignado, por_prod)})")
     sin_asignar = defaultdict(float)
     for (_, sku), v in productos.items():
         if v["product_id"] is None:
             sin_asignar[sku] += v["gasto"]
-    por_ad = defaultdict(lambda: {"gasto": 0.0, "desglose": 0.0, "campana": "", "pagina": None, "creativo_catalogo": False})
+    por_ad = defaultdict(lambda: {"gasto": 0.0, "producto": 0.0, "resto": 0.0, "campana": "", "pagina": None})
+    for (f, ad), v in anuncios.items():
+        a = por_ad[ad]
+        a["gasto"] += v["gasto"]
+        a["producto"] += (desglose.get((f, ad)) or {}).get("gasto", 0.0)
+        a["campana"], a["pagina"] = v["campana"], destinos.get(ad, (False, None))[1]
     for r in fa:
-        a = por_ad[r["ad_id"]]
-        a["gasto"] += r["gasto"]
-        a["campana"], a["pagina"] = r["campana"], r["pagina"]
-        a["desglose"] += desglose.get((r["fecha"], r["ad_id"]), 0.0)
-        a["creativo_catalogo"] = destinos.get(r["ad_id"], (False, None))[0]
-    core.tnlog("Anuncios con más gasto (gasto · repartido por producto · ¿creativo de catálogo? · página):")
+        por_ad[r["ad_id"]]["resto"] += r["gasto"]
+    core.tnlog("Anuncios con más gasto (total · por producto · resto a la página · página):")
     for ad, a in sorted(por_ad.items(), key=lambda kv: -kv[1]["gasto"])[:8]:
-        core.tnlog(f"  {ad}: ${a['gasto']:,.0f} · ${a['desglose']:,.0f} · {'sí' if a['creativo_catalogo'] else 'no'} · {a['pagina']} · {a['campana'][:34]}")
+        core.tnlog(f"  {ad}: ${a['gasto']:,.0f} · ${a['producto']:,.0f} · ${a['resto']:,.0f} · {a['pagina']} · {a['campana'][:34]}")
     for sku, g in sorted(sin_asignar.items(), key=lambda kv: -kv[1])[:5]:
         core.tnlog(f"  sin producto · SKU {sku}: ${g:,.0f}{' (repetido en más de un producto)' if sku in repetidos else ' (no está en la tienda)'}")
     top = defaultdict(float)
@@ -244,7 +261,7 @@ def main():
         core.tnlog(f"  producto {pid}: ${g:,.0f}")
     por_pagina = defaultdict(float)
     for r in fa:
-        if not r["catalogo"] and r["pagina"]:
+        if r["pagina"]:
             por_pagina[r["pagina"]] += r["gasto"]
     for pg, g in sorted(por_pagina.items(), key=lambda kv: -kv[1])[:5]:
         core.tnlog(f"  página {pg}: ${g:,.0f}")

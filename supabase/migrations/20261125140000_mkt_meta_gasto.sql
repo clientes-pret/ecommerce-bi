@@ -1,8 +1,10 @@
 -- Marketing: gasto de Meta Ads por producto y por página de destino (lo carga reposicion/meta_ads_sync.py con la API de Meta).
--- Dos fuentes que no se pisan entre sí:
---   · anuncios de catálogo: Meta reparte el gasto por producto del catálogo (el id del producto del catálogo es el SKU) → mkt_meta_producto_dia
---   · todos los anuncios, uno por día: gasto, compras y a qué página de la tienda llevan (null si no se pudo saber) → mkt_meta_anuncio_dia
--- Al sumar por producto, los anuncios de catálogo salen de la primera tabla y los demás (los que llevan a /productos/<handle>) de la segunda.
+-- Cada peso se cuenta una sola vez, repartido en dos tablas:
+--   · mkt_meta_producto_dia: lo que Meta reparte por producto del catálogo en los anuncios de catálogo (el id del producto del
+--     catálogo es el SKU; se cruza con las variantes de la tienda para saber de qué producto es).
+--   · mkt_meta_anuncio_dia: el resto de cada anuncio (lo que Meta no repartió por producto), con la página de la tienda a la que
+--     lleva el anuncio (null si no se pudo saber o lleva a varias).
+-- Al sumar por producto: gasto de catálogo del producto + el resto de los anuncios que llevan a /productos/<handle>.
 
 create table if not exists mkt_meta_producto_dia (
   fecha date not null,
@@ -22,9 +24,8 @@ create table if not exists mkt_meta_anuncio_dia (
   ad_id text not null,
   campana text not null default '',
   anuncio text not null default '',
-  catalogo boolean not null default false, -- true: anuncio de catálogo (su gasto por producto está en mkt_meta_producto_dia)
   pagina text,                             -- ruta de la tienda a la que lleva (sin dominio ni parámetros); null si no se sabe o son varias
-  gasto numeric not null default 0,
+  gasto numeric not null default 0,        -- solo lo que NO se repartió por producto
   impresiones integer not null default 0,
   clics integer not null default 0,
   compras integer not null default 0,
@@ -63,7 +64,7 @@ begin
     select p.product_id, a.gasto, a.compras, a.valor
     from mkt_meta_anuncio_dia a
     join mkt_producto p on a.pagina = '/productos/' || lower(p.handle)
-    where not a.catalogo and a.fecha between v_hoy - p_dias and v_hoy - 1
+    where a.fecha between v_hoy - p_dias and v_hoy - 1
   ) x
   group by x.product_id
   order by 2 desc, 1;
@@ -71,6 +72,7 @@ end $$;
 revoke execute on function mkt_ads_meta_producto(integer) from public, anon;
 grant execute on function mkt_ads_meta_producto(integer) to authenticated;
 
+-- Páginas de destino (categorías, inicio y productos): lo que no se repartió por producto del catálogo.
 create or replace function mkt_ads_meta_paginas(p_dias integer default 7)
 returns table (pagina text, gasto numeric, compras bigint, valor numeric)
 language plpgsql stable security definer set search_path = public as $$
@@ -81,30 +83,31 @@ begin
   return query
   select a.pagina, round(sum(a.gasto), 0), sum(a.compras)::bigint, round(sum(a.valor), 0)
   from mkt_meta_anuncio_dia a
-  where not a.catalogo and a.pagina is not null and a.fecha between v_hoy - p_dias and v_hoy - 1
+  where a.pagina is not null and a.fecha between v_hoy - p_dias and v_hoy - 1
   group by a.pagina
   order by 2 desc, 1;
 end $$;
 revoke execute on function mkt_ads_meta_paginas(integer) from public, anon;
 grant execute on function mkt_ads_meta_paginas(integer) to authenticated;
 
--- Una sola fila: cuánto se gastó en Meta y a dónde fue (catálogo, páginas conocidas o sin destino).
+-- Una sola fila: cuánto se gastó en Meta y a dónde fue (por producto del catálogo, páginas conocidas o sin destino).
 create or replace function mkt_ads_meta_resumen(p_dias integer default 7)
 returns table (gasto_total numeric, gasto_catalogo numeric, gasto_paginas numeric, gasto_sin_destino numeric, compras bigint, valor numeric)
 language plpgsql stable security definer set search_path = public as $$
 #variable_conflict use_column
-declare v_hoy date := (now() at time zone 'America/Argentina/Buenos_Aires')::date;
+declare
+  v_hoy date := (now() at time zone 'America/Argentina/Buenos_Aires')::date;
+  v_cat numeric; v_pag numeric; v_sin numeric; v_cmp bigint; v_val numeric;
 begin
   if mkt_rol() is null then raise exception 'Sin permiso'; end if;
-  return query
-  select round(coalesce(sum(a.gasto), 0), 0),
-         round(coalesce(sum(a.gasto) filter (where a.catalogo), 0), 0),
-         round(coalesce(sum(a.gasto) filter (where not a.catalogo and a.pagina is not null), 0), 0),
-         round(coalesce(sum(a.gasto) filter (where not a.catalogo and a.pagina is null), 0), 0),
-         coalesce(sum(a.compras), 0)::bigint,
-         round(coalesce(sum(a.valor), 0), 0)
-  from mkt_meta_anuncio_dia a
-  where a.fecha between v_hoy - p_dias and v_hoy - 1;
+  select coalesce(sum(m.gasto), 0), coalesce(sum(m.compras), 0), coalesce(sum(m.valor), 0)
+    into v_cat, v_cmp, v_val
+    from mkt_meta_producto_dia m where m.fecha between v_hoy - p_dias and v_hoy - 1;
+  select coalesce(sum(a.gasto) filter (where a.pagina is not null), 0), coalesce(sum(a.gasto) filter (where a.pagina is null), 0),
+         v_cmp + coalesce(sum(a.compras), 0), v_val + coalesce(sum(a.valor), 0)
+    into v_pag, v_sin, v_cmp, v_val
+    from mkt_meta_anuncio_dia a where a.fecha between v_hoy - p_dias and v_hoy - 1;
+  return query select round(v_cat + v_pag + v_sin, 0), round(v_cat, 0), round(v_pag, 0), round(v_sin, 0), v_cmp::bigint, round(v_val, 0);
 end $$;
 revoke execute on function mkt_ads_meta_resumen(integer) from public, anon;
 grant execute on function mkt_ads_meta_resumen(integer) to authenticated;
