@@ -1,0 +1,19 @@
+name: Marketing — prueba del token de Meta (solo lectura)
+
+# Se corre a mano. Verifica que el secret META_ADS_TOKEN lea la cuenta publicitaria de Pret y muestra qué devuelve.
+# No escribe en ninguna base y no imprime el token.
+on:
+  workflow_dispatch:
+
+jobs:
+  meta_probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m reposicion.meta_probe
+        env:
+          META_ADS_TOKEN: ${{ secrets.META_ADS_TOKEN }}
