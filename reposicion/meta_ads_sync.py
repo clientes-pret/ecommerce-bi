@@ -47,7 +47,12 @@ def _pedir(url, params=None, reintentos=4):
         r = requests.get(url, headers=_cabeceras(), params=params, timeout=120)
         if r.status_code == 200:
             return r.json()
-        pasajero = r.status_code >= 500 or (r.json().get("error", {}).get("code") in (1, 2, 4, 17, 32, 613) if r.headers.get("content-type", "").startswith("application/json") else False)
+        try:
+            codigo = r.json().get("error", {}).get("code")
+        except ValueError:
+            codigo = None
+        # Código 100 = pedido mal armado: reintentar no lo arregla (Meta a veces lo acompaña con un 500).
+        pasajero = codigo in (1, 2, 4, 17, 32, 613) or (r.status_code >= 500 and codigo != 100)
         if pasajero and intento < reintentos - 1:
             time.sleep(20 * (intento + 1))
             continue
@@ -70,15 +75,15 @@ def insights(desde, hasta, extra=None):
     return paginar(f"{CUENTA}/insights", params)
 
 
-def creativos(ad_ids, lote=25):
-    """{ad_id: creativo} leyendo de a `lote` anuncios."""
+def creativos(ad_ids):
+    """{ad_id: creativo}, un pedido por anuncio (el parámetro `ids` para leer varios juntos ya no existe en las versiones nuevas de la API)."""
     out = {}
-    ids = sorted(ad_ids)
-    for i in range(0, len(ids), lote):
-        j = _pedir(API + "/", {"ids": ",".join(ids[i:i + lote]),
-                               "fields": "creative{product_set_id,object_story_spec,asset_feed_spec}"})
-        for ad, v in j.items():
-            out[ad] = v.get("creative") or {}
+    for ad in sorted(ad_ids):
+        try:
+            out[ad] = _pedir(f"{API}/{ad}", {"fields": "creative{product_set_id,object_story_spec,asset_feed_spec}"}).get("creative") or {}
+        except RuntimeError as e:                    # un anuncio borrado no debe frenar la carga de los demás
+            core.tnlog(f"  ⚠ no pude leer el creativo del anuncio {ad}: {str(e)[:160]}")
+            out[ad] = {}
     return out
 
 
