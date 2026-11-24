@@ -1,0 +1,44 @@
+name: Marketing — gasto de Meta Ads por producto y página
+
+# Gasto, clics y compras de los anuncios de Meta (solo lectura) → tablas mkt_meta_* de Supabase.
+# El cron guarda siempre. A mano se puede correr en simulación (aplicar = false): muestra el reparto del gasto sin guardar nada.
+# GitHub suele arrancar los crons con horas de retraso.
+on:
+  schedule:
+    - cron: "20 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: "Días hacia atrás que se recalculan (por defecto 8; para cargar historia, por ejemplo 35)"
+        required: false
+        default: ""
+      aplicar:
+        description: "true = guardar en Supabase; false = solo mostrar qué guardaría"
+        required: false
+        default: "false"
+
+concurrency:
+  group: meta-ads-sync
+  cancel-in-progress: false
+
+jobs:
+  meta_ads_sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r reposicion/requirements.txt
+      - name: Cargar gasto de Meta
+        run: |
+          EXTRA=""
+          if [ "$EVENTO" = "schedule" ] || [ "$APLICAR" = "true" ]; then EXTRA="--aplicar"; fi
+          python3 -m reposicion.meta_ads_sync $EXTRA ${DIAS:+--dias "$DIAS"}
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          META_ADS_TOKEN: ${{ secrets.META_ADS_TOKEN }}
+          EVENTO: ${{ github.event_name }}
+          APLICAR: ${{ github.event.inputs.aplicar }}
+          DIAS: ${{ github.event.inputs.dias }}
