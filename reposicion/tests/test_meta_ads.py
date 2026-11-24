@@ -3,7 +3,7 @@
 Correr:  python3 -m reposicion.tests.test_meta_ads
 """
 
-from reposicion.meta_ads_sync import (agrupar_anuncios, agrupar_productos, destino_creativo, filas_guardar, mapa_skus,
+from reposicion.meta_ads_sync import (desglose_por_anuncio, agrupar_anuncios, agrupar_productos, destino_creativo, filas_guardar, mapa_skus,
                                       sku_de_producto, _compra)
 
 
@@ -68,7 +68,15 @@ def test_filas_guardar_une_anuncio_con_su_destino():
     fa, fp = filas_guardar(anuncios, {("2026-11-20", "A"): {"product_id": 1, "gasto": 5.0, "impresiones": 1, "clics": 0, "compras": 0, "valor": 0.0}},
                            {"9": {"object_story_spec": {"link_data": {"link": "https://www.pretahome.com/productos/z/"}}}})
     assert fa[0]["pagina"] == "/productos/z" and fa[0]["catalogo"] is False and fa[0]["ad_id"] == "9"
+    fa2, _ = filas_guardar(anuncios, {}, {"9": {}}, {("2026-11-20", "9"): 8.0})
+    assert fa2[0]["catalogo"] is True
     assert fp[0]["sku"] == "A" and fp[0]["product_id"] == 1
+
+
+def test_desglose_por_anuncio_marca_los_de_catalogo():
+    filas = [{"date_start": "2026-11-20", "ad_id": "9", "product_id": "A, x", "spend": "4"}, {"date_start": "2026-11-20", "ad_id": "9", "product_id": "B, y", "spend": "1.5"},
+             {"date_start": "2026-11-20", "ad_id": "7", "product_id": "None", "spend": "3"}, {"date_start": "2026-11-21", "ad_id": "9", "product_id": "A, x", "spend": "0"}]
+    assert desglose_por_anuncio(filas) == {("2026-11-20", "9"): 5.5}
 
 
 if __name__ == "__main__":

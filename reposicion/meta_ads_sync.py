@@ -145,6 +145,16 @@ def agrupar_productos(filas, sku_a_producto):
     return out
 
 
+def desglose_por_anuncio(filas):
+    """{(fecha, ad_id): gasto} de lo que Meta repartió por producto del catálogo. Un anuncio que aparece acá es de catálogo:
+    su gasto se cuenta por producto y no por página (el creativo no alcanza para saberlo: hay anuncios de catálogo que llevan a una categoría)."""
+    out = defaultdict(float)
+    for f in filas:
+        if sku_de_producto(f.get("product_id")) and float(f.get("spend") or 0) > 0:
+            out[(f["date_start"], f["ad_id"])] += float(f["spend"])
+    return {k: round(v, 2) for k, v in out.items()}
+
+
 def destino_creativo(creativo):
     """(es_de_catalogo, página de la tienda a la que lleva o None). Si el anuncio lleva a varias páginas distintas, None."""
     spec = creativo.get("object_story_spec") or {}
@@ -158,10 +168,11 @@ def destino_creativo(creativo):
     return catalogo, (next(iter(paginas)) if len(paginas) == 1 else None)
 
 
-def filas_guardar(anuncios, productos, creativos_por_ad):
-    """Filas para mkt_meta_anuncio_dia y mkt_meta_producto_dia."""
+def filas_guardar(anuncios, productos, creativos_por_ad, desglose=None):
+    """Filas para mkt_meta_anuncio_dia y mkt_meta_producto_dia. `catalogo` = el anuncio tiene gasto repartido por producto ese día."""
     dest = {ad: destino_creativo(c) for ad, c in creativos_por_ad.items()}
-    fa = [{"fecha": f, "ad_id": ad, "catalogo": dest.get(ad, (False, None))[0], "pagina": dest.get(ad, (False, None))[1], **v}
+    desglose = desglose or {}
+    fa = [{"fecha": f, "ad_id": ad, "catalogo": (f, ad) in desglose, "pagina": dest.get(ad, (False, None))[1], **v}
           for (f, ad), v in sorted(anuncios.items())]
     fp = [{"fecha": f, "sku": sku, **v} for (f, sku), v in sorted(productos.items())]
     return fa, fp
@@ -188,11 +199,14 @@ def main():
     destinos = {ad: destino_creativo(c) for ad, c in creativos_por_ad.items()}
 
     core.tnlog("Gasto de catálogo por producto…")
+    t0 = time.time()
     filas_prod = insights(desde, hoy, {"breakdowns": "product_id"})
+    core.tnlog(f"  {len(filas_prod)} filas del desglose por producto en {time.time() - t0:.0f} s")
+    desglose = desglose_por_anuncio(filas_prod)
     prods = db.select(config, "mkt_producto", {"select": "product_id,variantes", "order": "product_id"})
     sku_a_producto, repetidos = mapa_skus(prods)
     productos = agrupar_productos(filas_prod, sku_a_producto)
-    fa, fp = filas_guardar(anuncios, productos, creativos_por_ad)
+    fa, fp = filas_guardar(anuncios, productos, creativos_por_ad, desglose)
 
     total = sum(v["gasto"] for v in anuncios.values())
     cat = sum(r["gasto"] for r in fa if r["catalogo"])
@@ -209,6 +223,16 @@ def main():
     for (_, sku), v in productos.items():
         if v["product_id"] is None:
             sin_asignar[sku] += v["gasto"]
+    por_ad = defaultdict(lambda: {"gasto": 0.0, "desglose": 0.0, "campana": "", "pagina": None, "creativo_catalogo": False})
+    for r in fa:
+        a = por_ad[r["ad_id"]]
+        a["gasto"] += r["gasto"]
+        a["campana"], a["pagina"] = r["campana"], r["pagina"]
+        a["desglose"] += desglose.get((r["fecha"], r["ad_id"]), 0.0)
+        a["creativo_catalogo"] = destinos.get(r["ad_id"], (False, None))[0]
+    core.tnlog("Anuncios con más gasto (gasto · repartido por producto · ¿creativo de catálogo? · página):")
+    for ad, a in sorted(por_ad.items(), key=lambda kv: -kv[1]["gasto"])[:8]:
+        core.tnlog(f"  {ad}: ${a['gasto']:,.0f} · ${a['desglose']:,.0f} · {'sí' if a['creativo_catalogo'] else 'no'} · {a['pagina']} · {a['campana'][:34]}")
     for sku, g in sorted(sin_asignar.items(), key=lambda kv: -kv[1])[:5]:
         core.tnlog(f"  sin producto · SKU {sku}: ${g:,.0f}{' (repetido en más de un producto)' if sku in repetidos else ' (no está en la tienda)'}")
     top = defaultdict(float)
