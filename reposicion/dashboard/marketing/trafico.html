@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tráfico · Marketing Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <link rel="stylesheet" href="marketing.css?v=3">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Tráfico: de dónde llega la gente a la tienda (orgánico, Meta, Google Ads, directo, email) y cuánto compra cada canal.
+// Todo sale de GA4, que guarda la fuente y el medio de cada sesión. Dos puntos de vista de atribución:
+//   · último contacto = el canal de la sesión en la que se compró;
+//   · primer contacto = el canal por el que esa persona llegó la primera vez.
+// Contra eso se comparan lo que se gastó en Meta y Google Ads y los pedidos reales de Tienda Nube.
+import { sb, $, $$, esc, guard, navMarketing } from '../proveedores/app.js';
+import { n0, pct, peso, sinDatos, chart, panelGrafico, rangoDias, sumarDias, hoyAR, alCambiarAncho, fmtRoas } from './mkt-lib.js';
+
+const perfil = await guard(['admin', 'dueno', 'marketing']);
+navMarketing(perfil, 'trafico');
+
+// [nombre, color, qué incluye]
+const CANALES = {
+  meta: ['Meta (anuncios)', '#2B8CD9', 'Anuncios de Instagram, Facebook y Audience Network (fuente ig / fb / an con medio paid).'],
+  google: ['Google Ads', '#E0A100', 'Anuncios de Google (google / cpc). Incluye Performance Max, que Google Analytics llama «Cross-network».'],
+  organico: ['Orgánico', '#1F6F43', 'Búsqueda en Google sin pagar, redes sociales sin anuncio y links desde Instagram, Facebook, YouTube o TikTok.'],
+  directo: ['Directo', '#6B6F76', 'Entran escribiendo la dirección o desde un link sin marcar (WhatsApp, mensajes, favoritos, apps).'],
+  email: ['Email', '#B4558C', 'Campañas de email (Perfit).'],
+  otros: ['Otros', '#B4B2A9', 'Sin dato de origen, pasarelas de pago, reseñas y otros sitios que mandan visitas.'],
+};
+const ORDEN = Object.keys(CANALES);
+const chipCanal = (k) => `<span class="dot" style="background:${CANALES[k]?.[1] || '#B4B2A9'}"></span>${esc(CANALES[k]?.[0] || k)}`;
+
+const st = { dias: 30, todas: false };
+let canales = [], serie = [], fuentes = [], pedidos = null, metaRes = null, google = null;
+
+async function cargar() {
+  const [c, s, f, p, mr, g] = await Promise.all([
+    sb.rpc('mkt_trafico_canales', { p_dias: st.dias }), sb.rpc('mkt_trafico_serie', { p_dias: st.dias }), sb.rpc('mkt_trafico_fuentes', { p_dias: st.dias }),
+    sb.rpc('mkt_trafico_pedidos', { p_dias: st.dias }), sb.rpc('mkt_ads_meta_resumen', { p_dias: st.dias }), sb.rpc('mkt_ads_google', { p_dias: st.dias })]);
+  for (const r of [c, s, f]) if (r.error) throw r.error;
+  canales = c.data; serie = s.data; fuentes = f.data;
+  // Lo que sigue es opcional: si falta, esa parte se muestra vacía y el resto sigue andando.
+  pedidos = !p.error && p.data?.[0] ? { n: Number(p.data[0].pedidos), v: Number(p.data[0].ventas) } : null;
+  metaRes = !mr.error && mr.data?.[0] && Number(mr.data[0].gasto_total) > 0 ? mr.data[0] : null;
+  google = !g.error && g.data?.length ? { gasto: g.data.reduce((a, x) => a + Number(x.gasto), 0), clics: g.data.reduce((a, x) => a + Number(x.clics), 0) } : null;
+}
+try { await cargar(); } catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Tráfico</h1></div></div>` + sinDatos(e); throw e; }
+
+const num = (v) => Number(v || 0);
+// {canal → totales} de un punto de vista ('sesion' = último contacto, 'primer' = primer contacto), con todos los canales aunque no tengan filas.
+function porCanal(modelo) {
+  const m = Object.fromEntries(ORDEN.map((k) => [k, { canal: k, s: 0, act: 0, nuevos: 0, car: 0, chk: 0, c: 0, i: 0 }]));
+  for (const r of canales.filter((x) => x.modelo === modelo)) {
+    const x = m[r.canal] || (m[r.canal] = { canal: r.canal, s: 0, act: 0, nuevos: 0, car: 0, chk: 0, c: 0, i: 0 });
+    x.s += num(r.sesiones); x.act += num(r.sesiones_activas); x.nuevos += num(r.usuarios_nuevos);
+    x.car += num(r.carritos); x.chk += num(r.checkouts); x.c += num(r.compras); x.i += num(r.ingresos);
+  }
+  return m;
+}
+const tot = (m, k) => Object.values(m).reduce((a, x) => a + x[k], 0);
+const div = (a, b) => (b > 0 ? a / b : null);
+const kpi = (l, v, sub = '', cls = '') => `<div class="cc-card ${cls}"><div class="cc-label">${l}</div><div class="cc-valor">${v}</div>${sub ? `<div class="cc-sub">${sub}</div>` : ''}</div>`;
+
+function graficos(ult) {
+  const fechas = rangoDias(sumarDias(hoyAR(), -1), st.dias), por = new Map(serie.map((r) => [r.fecha + '|' + r.canal, r]));
+  const activos = ORDEN.filter((k) => ult[k].s > 0 && k !== 'otros');
+  const arma = (campo) => activos.map((k) => ({ d: fechas.map((f) => (por.has(f + '|' + k) ? num(por.get(f + '|' + k)[campo]) : 0)), c: CANALES[k][1], n: CANALES[k][0] }));
+  const leyenda = activos.map((k) => `<span style="color:${CANALES[k][1]}">━ ${esc(CANALES[k][0])}</span>`).join(' &nbsp;');
+  return panelGrafico('Sesiones por día', n0(tot(ult, 's')), leyenda, chart(arma('sesiones'), fechas, { t: 'Sesiones por día y canal', f: (v) => (v >= 1000 ? Math.round(v / 100) / 10 + ' k' : Math.round(v)), ft: n0 }))
+    + panelGrafico('Compras por día', n0(tot(ult, 'c')), leyenda, chart(arma('compras'), fechas, { t: 'Compras por día y canal', f: (v) => Math.round(v), ft: n0 }));
+}
+
+function tablaCanales(ult) {
+  const S = tot(ult, 's'), I = tot(ult, 'i'), C = tot(ult, 'c');
+  const fila = (k) => {
+    const x = ult[k], conv = div(x.c, x.s);
+    return `<tr><td title="${esc(CANALES[k][2])}">${chipCanal(k)}</td><td class="r">${n0(x.s)}</td><td class="r">${S ? pct(x.s / S * 100, 0) : '—'}</td>
+      <td class="r">${x.s ? n0(Math.round(x.car / x.s * 100)) : '—'}</td><td class="r"><b>${n0(x.c)}</b></td><td class="r">${conv == null ? '—' : pct(conv * 100, 2)}</td>
+      <td class="r">${peso(x.i)}</td><td class="r">${I ? pct(x.i / I * 100, 0) : '—'}</td><td class="r">${x.c ? peso(x.i / x.c) : '—'}</td><td class="r">${x.s ? peso(x.i / x.s) : '—'}</td></tr>`;
+  };
+  return `<div class="scroll"><table><thead><tr><th>Canal</th><th class="r">Sesiones</th><th class="r">% del tráfico</th><th class="r" title="Eventos de «agregar al carrito» cada 100 sesiones">Carritos<div class="muted small" style="font-weight:400">cada 100 sesiones</div></th>
+    <th class="r">Compras</th><th class="r">Conversión</th><th class="r">Ingresos</th><th class="r">% de los ingresos</th><th class="r">Ticket</th><th class="r">Ingreso por sesión</th></tr></thead><tbody>
+    ${ORDEN.map(fila).join('')}
+    <tr style="font-weight:600"><td>Total</td><td class="r">${n0(S)}</td><td class="r">100 %</td><td class="r">${S ? n0(Math.round(tot(ult, 'car') / S * 100)) : '—'}</td><td class="r">${n0(C)}</td><td class="r">${S ? pct(C / S * 100, 2) : '—'}</td><td class="r">${peso(I)}</td><td class="r">100 %</td><td class="r">${C ? peso(I / C) : '—'}</td><td class="r">${S ? peso(I / S) : '—'}</td></tr>
+    </tbody></table></div>`;
+}
+
+// Inversión y retorno de lo que se paga. Meta y Google Ads miden las compras a su manera: se muestra al lado de lo que ve GA4.
+function tablaPago(ult) {
+  const filas = [];
+  if (metaRes) {
+    const g = num(metaRes.gasto_total), x = ult.meta;
+    filas.push({ k: 'meta', g, ga4c: x.c, ga4i: x.i, s: x.s, pc: num(metaRes.compras), pv: num(metaRes.valor) });
+  }
+  if (google) {
+    const x = ult.google;
+    filas.push({ k: 'google', g: google.gasto, ga4c: x.c, ga4i: x.i, s: x.s, pc: null, pv: null });
+  }
+  if (!filas.length) return '<p class="muted" style="padding:6px 24px 18px">Todavía no hay gasto cargado de Meta ni de Google Ads para este período.</p>';
+  return `<div class="scroll"><table><thead><tr><th>Canal pago</th><th class="r">Gasto</th><th class="r">Compras<div class="muted small" style="font-weight:400">según GA4</div></th><th class="r">Costo por compra</th>
+    <th class="r">Ingresos<div class="muted small" style="font-weight:400">según GA4</div></th><th class="r">ROAS<div class="muted small" style="font-weight:400">según GA4</div></th><th class="r">Compras<div class="muted small" style="font-weight:400">según la plataforma</div></th><th class="r">ROAS<div class="muted small" style="font-weight:400">según la plataforma</div></th></tr></thead><tbody>${
+    filas.map((f) => `<tr><td>${chipCanal(f.k)}</td><td class="r">${peso(f.g)}</td><td class="r">${n0(f.ga4c)}</td><td class="r">${f.ga4c ? peso(f.g / f.ga4c) : '—'}</td>
+      <td class="r">${peso(f.ga4i)}</td><td class="r"><b>${fmtRoas(f.g > 0 ? f.ga4i / f.g : null)}</b></td><td class="r">${f.pc == null ? '<span class="muted" title="Google Analytics no trae las conversiones de Google Ads">—</span>' : n0(f.pc)}</td>
+      <td class="r">${f.pv == null ? '—' : fmtRoas(f.g > 0 ? f.pv / f.g : null)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+// Último contacto vs primer contacto: qué canal «abre la puerta» y cuál «cierra la venta».
+function tablaAtribucion(ult, pri) {
+  const filas = ORDEN.map((k) => {
+    const u = ult[k], p = pri[k];
+    const rol = p.c + u.c < 5 ? ['', ''] : p.c > u.c * 1.15 ? ['info', 'Abre la puerta'] : u.c > p.c * 1.15 ? ['ok', 'Cierra la venta'] : ['', 'Parejo'];
+    return `<tr><td>${chipCanal(k)}</td><td class="r">${n0(u.c)}</td><td class="r">${n0(p.c)}</td><td class="r">${peso(u.i)}</td><td class="r">${peso(p.i)}</td><td>${rol[1] ? `<span class="chip ${rol[0]}">${rol[1]}</span>` : ''}</td></tr>`;
+  }).join('');
+  return `<div class="scroll"><table><thead><tr><th>Canal</th><th class="r">Compras<div class="muted small" style="font-weight:400">último contacto</div></th><th class="r">Compras<div class="muted small" style="font-weight:400">primer contacto</div></th>
+    <th class="r">Ingresos<div class="muted small" style="font-weight:400">último contacto</div></th><th class="r">Ingresos<div class="muted small" style="font-weight:400">primer contacto</div></th><th>Rol</th></tr></thead><tbody>${filas}</tbody></table></div>`;
+}
+
+function tablaFuentes() {
+  const lim = st.todas ? fuentes.length : 15;
+  return `<div class="scroll"><table><thead><tr><th>Fuente / medio</th><th>Canal</th><th class="r">Sesiones</th><th class="r">Carritos</th><th class="r">Compras</th><th class="r">Conversión</th><th class="r">Ingresos</th></tr></thead><tbody>${
+    fuentes.slice(0, lim).map((r) => `<tr><td>${esc(r.fuente)} <span class="muted">/ ${esc(r.medio)}</span></td><td>${chipCanal(r.canal)}</td><td class="r">${n0(r.sesiones)}</td><td class="r">${n0(r.carritos)}</td><td class="r">${n0(r.compras)}</td>
+      <td class="r">${num(r.sesiones) ? pct(num(r.compras) / num(r.sesiones) * 100, 2) : '—'}</td><td class="r">${peso(r.ingresos)}</td></tr>`).join('')}</tbody></table></div>
+    ${fuentes.length > 15 ? `<div class="mk-pie"><span>${st.todas ? `Mostrando las ${n0(fuentes.length)} fuentes` : `Mostrando las 15 con más tráfico de ${n0(fuentes.length)}`}</span><button class="btn sm" id="vermas">${st.todas ? 'Ver menos' : 'Ver todas'}</button></div>` : ''}`;
+}
+
+function pintar() {
+  const ult = porCanal('sesion'), pri = porCanal('primer');
+  const S = tot(ult, 's'), C = tot(ult, 'c'), I = tot(ult, 'i');
+  const titulo = `<div class="cabecera"><div><h1>Tráfico</h1><p>De dónde llega la gente y cuánto compra cada canal · Google Analytics · ${st.dias} días completos hasta ayer</p></div>
+    <div class="seg" role="group" aria-label="Período">${[7, 30, 90].map((d) => `<button data-d="${d}" aria-pressed="${st.dias === d}">${d} días</button>`).join('')}</div></div>`;
+  if (!S) {
+    $('#app').innerHTML = titulo + `<div class="card"><h2>Todavía no hay datos de tráfico en este período</h2><p class="muted">Se cargan solos desde Google Analytics cada pocas horas. Si recién se agregó esta pantalla, falta correr la carga una vez (con 90 días para tener historia).</p></div>`;
+  } else {
+    const cobertura = pedidos && pedidos.n > 0 ? C / pedidos.n * 100 : null;
+    const pagos = ult.meta.s + ult.google.s;
+    $('#app').innerHTML = titulo + `
+    <div class="mk-kpis">
+      ${kpi('Sesiones', n0(S), `${pct(div(tot(ult, 'act'), S) * 100, 0)} con interacción real`)}
+      ${kpi('Compras', n0(C), `conversión ${pct(C / S * 100, 2)}`)}
+      ${kpi('Ingresos', peso(I), `ticket ${C ? peso(I / C) : '—'}`)}
+      ${kpi('Tráfico pago', pct(pagos / S * 100, 0), `${n0(pagos)} sesiones de Meta y Google Ads`)}
+      ${pedidos ? kpi('Pedidos reales', n0(pedidos.n), `GA4 registró ${n0(C)} compras (${pct(cobertura, 0)}) · Tienda Nube ${peso(pedidos.v)}`, cobertura != null && (cobertura < 85 || cobertura > 115) ? 'alerta' : '') : ''}
+    </div>
+    <div class="card tabla"><div class="cab"><div><h2>Por canal · último contacto</h2><span class="muted">A cada compra se le da el canal de la sesión en la que se hizo. Pasá el mouse por el nombre del canal para ver qué incluye.</span></div></div>${tablaCanales(ult)}</div>
+    <div class="card"><h2 style="margin:0 0 4px">Día por día</h2><div id="graf">${graficos(ult)}</div></div>
+    <div class="card tabla"><div class="cab"><div><h2>Lo que se paga: inversión y retorno</h2><span class="muted">Gasto de cada plataforma contra lo que Google Analytics ve comprar. Lo que dice cada plataforma suele ser más alto porque cuenta compras que también pasaron por otros canales.</span></div></div>${tablaPago(ult)}</div>
+    <div class="card tabla"><div class="cab"><div><h2>Último contacto vs primer contacto</h2><span class="muted">«Abre la puerta»: trae gente que después compra, a veces por otro canal. «Cierra la venta»: la compra se hace en una visita que vino por ese canal.</span></div></div>${tablaAtribucion(ult, pri)}</div>
+    <div class="card tabla"><div class="cab"><div><h2>Detalle por fuente y medio</h2><span class="muted">Lo que hay adentro de cada canal, tal como lo trae Google Analytics.</span></div></div>${tablaFuentes()}</div>
+    <p class="muted small">Cómo leerlo: Google Analytics asigna las compras al origen de la sesión (último contacto) o al de la primera visita de la persona (primer contacto). Ninguno ve lo que pasa fuera de la tienda (mirar un anuncio sin hacer clic, hablar con alguien, entrar días después por otro canal). «Directo» incluye links sin marcar (por ejemplo WhatsApp) y el «Orgánico» de Instagram puede incluir clics de anuncios sin marcar. Los pedidos reales salen del scorecard de Tienda Nube. </p>`;
+  }
+  $$('[data-d]').forEach((b) => { b.onclick = async () => { st.dias = +b.dataset.d; st.todas = false; await cargar(); pintar(); }; });
+  if ($('#vermas')) $('#vermas').onclick = () => { st.todas = !st.todas; pintar(); };
+}
+pintar();
+alCambiarAncho(() => { if ($('#graf')) $('#graf').innerHTML = graficos(porCanal('sesion')); });
+</script>
+</body>
+</html>

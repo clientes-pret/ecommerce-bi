@@ -151,6 +151,27 @@ def test_filas_anuncios_formato_de_guardado():
     assert fc == [{"fecha": "2026-11-20", "campana": "P.Max", "gasto": 100.46, "clics": 5, "sesiones": 4}]
 
 
+def test_trafico_junta_filas_repetidas_y_deja_fuente_y_medio_crudos():
+    from reposicion.mkt_sync import agrupar_trafico, filas_trafico
+    filas = [{"date": "20261120", "sessionSource": "ig", "sessionMedium": "paid", "sessions": "100", "engagedSessions": "60", "newUsers": "50",
+              "addToCarts": "8", "checkouts": "3", "ecommercePurchases": "2", "purchaseRevenue": "150000.5"},
+             {"date": "20261120", "sessionSource": "ig", "sessionMedium": "paid", "sessions": "10", "engagedSessions": "5", "newUsers": "4",
+              "addToCarts": "1", "checkouts": "0", "ecommercePurchases": "0", "purchaseRevenue": "0"},
+             {"date": "20261120", "sessionSource": "", "sessionMedium": "", "sessions": "0", "engagedSessions": "0", "newUsers": "0",
+              "addToCarts": "0", "checkouts": "0", "ecommercePurchases": "0", "purchaseRevenue": "0"}]            # fila vacía: no se guarda
+    t = agrupar_trafico(filas, "sesion")
+    assert list(t) == [("2026-11-20", "sesion", "ig", "paid")]
+    assert t[("2026-11-20", "sesion", "ig", "paid")] == [110, 65, 54, 9, 3, 2, 150000.5]
+    assert filas_trafico(t)[0] == {"fecha": "2026-11-20", "modelo": "sesion", "fuente": "ig", "medio": "paid", "sesiones": 110,
+                                   "sesiones_activas": 65, "usuarios_nuevos": 54, "carritos": 9, "checkouts": 3, "compras": 2, "ingresos": 150000.5}
+
+
+def test_trafico_primer_contacto_lee_las_dimensiones_del_primer_usuario():
+    from reposicion.mkt_sync import agrupar_trafico
+    filas = [{"date": "20261120", "firstUserSource": "google", "firstUserMedium": "organic", "sessions": "5", "ecommercePurchases": "1", "purchaseRevenue": "1000"}]
+    assert agrupar_trafico(filas, "primer") == {("2026-11-20", "primer", "google", "organic"): [5, 0, 0, 0, 0, 1, 1000.0]}
+
+
 if __name__ == "__main__":
     for nombre, fn in list(globals().items()):
         if nombre.startswith("test_"):

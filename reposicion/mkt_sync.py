@@ -268,6 +268,46 @@ def filas_anuncios(prod, pag, goo):
     )
 
 
+# ── Tráfico y conversión por canal (GA4) ─────────────────────────────────────────────────────────────────────────
+
+METRICAS_TRAFICO = ["sessions", "engagedSessions", "newUsers", "addToCarts", "checkouts", "ecommercePurchases", "purchaseRevenue"]
+# Dos puntos de vista: la fuente de la sesión en la que se compró (último contacto) y la fuente por la que el usuario llegó
+# la primera vez (primer contacto). Cada uno trae sus dimensiones de GA4.
+MODELOS_TRAFICO = {"sesion": ("sessionSource", "sessionMedium"), "primer": ("firstUserSource", "firstUserMedium")}
+
+
+def agrupar_trafico(filas, modelo):
+    """{(fecha, modelo, fuente, medio): [sesiones, activas, nuevos, carritos, checkouts, compras, ingresos]}.
+    Fuente y medio se guardan tal cual los trae GA4 (el canal se decide al leer, en la base)."""
+    dim_fuente, dim_medio = MODELOS_TRAFICO[modelo]
+    out = defaultdict(lambda: [0, 0, 0, 0, 0, 0, 0.0])
+    for f in filas:
+        fuente = (f.get(dim_fuente) or "").strip() or "(not set)"
+        medio = (f.get(dim_medio) or "").strip() or "(not set)"
+        v = out[(_fecha_ga4(f), modelo, fuente, medio)]
+        v[0] += int(_num(f.get("sessions")))
+        v[1] += int(_num(f.get("engagedSessions")))
+        v[2] += int(_num(f.get("newUsers")))
+        v[3] += int(_num(f.get("addToCarts")))
+        v[4] += int(_num(f.get("checkouts")))
+        v[5] += int(_num(f.get("ecommercePurchases")))
+        v[6] += _num(f.get("purchaseRevenue"))
+    return {k: v for k, v in out.items() if any(v)}
+
+
+def filas_trafico(trafico):
+    return [{"fecha": f, "modelo": mo, "fuente": fu, "medio": me, "sesiones": v[0], "sesiones_activas": v[1], "usuarios_nuevos": v[2],
+             "carritos": v[3], "checkouts": v[4], "compras": v[5], "ingresos": round(v[6], 2)}
+            for (f, mo, fu, me), v in sorted(trafico.items())]
+
+
+def traer_trafico(token, desde, hasta):
+    trafico = {}
+    for modelo, dims in MODELOS_TRAFICO.items():
+        trafico.update(agrupar_trafico(ga4_reporte(token, desde, hasta, ["date", *dims], METRICAS_TRAFICO), modelo))
+    return trafico
+
+
 # ── Homepage ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def handles_homepage(html):
@@ -339,7 +379,7 @@ def main():
     core.tnlog(f"  {sum(v['unidades'] for v in ventas_dia.values())} unidades en {len({k[0] for k in ventas_dia})} productos")
 
     visitas_dia = visitas_hora = None
-    ads_prod = ads_pag = ads_goo = None
+    ads_prod = ads_pag = ads_goo = trafico = None
     token = ga4_access_token()
     if token:
         core.tnlog("Visitas de GA4…")
@@ -355,6 +395,10 @@ def main():
         ads_goo = google_campanas(ga4_reporte(token, desde, hoy, ["date", "sessionGoogleAdsCampaignName"], ["advertiserAdCost", "advertiserAdClicks", "sessions"]))
         core.tnlog(f"  {len(ads_prod)} filas por producto, {len(ads_pag)} por página, {len(ads_goo)} de campañas de Google Ads "
                    f"(gasto de Google Ads: ${sum(v[0] for v in ads_goo.values()):,.0f})")
+        core.tnlog("Tráfico por canal (último y primer contacto)…")
+        trafico = traer_trafico(token, desde, hoy)
+        core.tnlog(f"  {len(trafico)} filas, {sum(v[0] for k, v in trafico.items() if k[1] == 'sesion')} sesiones, "
+                   f"{sum(v[5] for k, v in trafico.items() if k[1] == 'sesion')} compras (último contacto)")
 
     handle_a_producto = {p["handle"].lower(): pid for pid, (p, _) in productos.items() if p["handle"]}
     home = [handle_a_producto[h] for h in traer_homepage() if h in handle_a_producto]
@@ -382,6 +426,8 @@ def main():
             for (pid, fu), v in sorted(top.items(), key=lambda kv: -kv[1][0])[:5]:
                 core.tnlog(f"  anuncios {fu} · {productos[pid][0]['nombre'][:46]}: visitas {v[0]} · compras {v[1]}")
             core.tnlog(f"  (anuncios) guardaría {len(fp)} filas por producto, {len(fg)} por página y {len(fc)} de campañas")
+        if trafico is not None:
+            core.tnlog(f"  (tráfico) guardaría {len(trafico)} filas por día, fuente y medio")
         core.tnlog(f"(simulación) guardaría {len(catalogo)} productos, {len(dia)} filas por día, {len(horas)} por hora y {len(home)} en homepage")
         return
 
@@ -408,6 +454,12 @@ def main():
             core.tnlog(f"✓ anuncios: {len(fp)} filas por producto, {len(fg)} por página, {len(fc)} de campañas")
         except RuntimeError as e:
             core.tnlog(f"  ⚠ no pude guardar los anuncios (¿falta aplicar la migración mkt_anuncios?): {str(e)[:200]}")
+    if trafico is not None:
+        try:                                                  # la tabla de tráfico llega con su propia migración
+            db.upsert(config, "mkt_trafico_dia", filas_trafico(trafico), on_conflict="fecha,modelo,fuente,medio")
+            core.tnlog(f"✓ tráfico: {len(trafico)} filas por día, fuente y medio")
+        except RuntimeError as e:
+            core.tnlog(f"  ⚠ no pude guardar el tráfico (¿falta aplicar la migración mkt_trafico?): {str(e)[:200]}")
     core.tnlog(f"✓ guardado: {len(catalogo)} productos, {len(dia)} filas por día, {len(horas)} por hora, {len(ahora)} en homepage")
 
 
