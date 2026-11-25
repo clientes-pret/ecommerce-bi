@@ -13,7 +13,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { COLUMNAS_REVENDEDOR, dormir, mlGet, type Revendedor, tokenValido } from "../_shared/rev_ml.ts";
-import { type ItemML, normSku, planificarVinculos, type PubExistente, vinculosDeItem } from "./logic.ts";
+import { completarPorProductoDeUsuario, type ItemML, normSku, planificarVinculos, type PubExistente, vinculosDeItem } from "./logic.ts";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const MAX_PUBLICACIONES_POR_REVENDEDOR = 1000; // límite de paginación de ML por offset; más allá habría que usar `scan`
@@ -52,7 +52,7 @@ async function detalles(token: string, ids: string[]): Promise<ItemML[] | null> 
   const out: ItemML[] = [];
   for (let i = 0; i < ids.length; i += 20) {
     const lote = ids.slice(i, i + 20);
-    const atributos = "id,status,price,seller_custom_field,variations,attributes";
+    const atributos = "id,status,price,seller_custom_field,user_product_id,variations,attributes";
     const r = await mlGet<Array<{ code: number; body: ItemML }>>(token, `/items?ids=${lote.join(",")}&attributes=${atributos}`);
     if (r.body) {
       for (const x of r.body) if (x.code === 200 && x.body) out.push(x.body);
@@ -83,7 +83,9 @@ async function vincularRevendedor(rev: Revendedor, catalogo: Map<string, string>
   if (!items) return { revendedor: rev.nickname, ok: false, motivo: "no se pudo leer el detalle de publicaciones" };
 
   // Las cerradas no se pueden reactivar ni vender: no se vinculan.
-  const vinculos = items.filter((it) => it.status !== "closed").flatMap(vinculosDeItem);
+  // Las filas sin SKU toman el de su publicación "sincronizada" (mismo producto de usuario), aunque esa esté cerrada.
+  const todas = items.flatMap(vinculosDeItem);
+  const vinculos = completarPorProductoDeUsuario(items.filter((it) => it.status !== "closed").flatMap(vinculosDeItem), todas);
   const existentes = await leerTodo<PubExistente>(
     "rev_publicaciones",
     "id,ml_item_id,ml_variation_id,sku,vinculo,estado_ml,precio",

@@ -14,8 +14,15 @@ export interface ItemML {
   status?: string | null;
   price?: number | null;
   seller_custom_field?: string | null;
+  user_product_id?: string | null;
   attributes?: AtributoML[] | null;
-  variations?: Array<{ id: number; price?: number | null; seller_custom_field?: string | null; attributes?: AtributoML[] | null }> | null;
+  variations?: Array<{
+    id: number;
+    price?: number | null;
+    seller_custom_field?: string | null;
+    user_product_id?: string | null;
+    attributes?: AtributoML[] | null;
+  }> | null;
 }
 
 export interface VinculoML {
@@ -24,6 +31,9 @@ export interface VinculoML {
   sku_ml: string | null;
   precio: number | null;
   estado_ml: string | null;
+  /** "Producto de usuario" de ML de esta fila (variación o publicación). Dos publicaciones de la misma cuenta con el mismo
+   *  producto de usuario son el mismo producto y comparten stock ("Sincronizada con #…" en el panel de ML). */
+  producto_usuario?: string;
 }
 
 /** Los SKU se comparan sin distinguir mayúsculas ni espacios en los extremos (así los compara también Ecomm-App). */
@@ -48,15 +58,42 @@ export function vinculosDeItem(it: ItemML): VinculoML[] {
   const skuItem = limpio(it.seller_custom_field) ?? skuDeAtributos(it.attributes);
   const variaciones = it.variations ?? [];
   if (variaciones.length > 0) {
-    return variaciones.map((v) => ({
-      ml_item_id: it.id,
-      ml_variation_id: v.id,
-      sku_ml: limpio(v.seller_custom_field) ?? skuDeAtributos(v.attributes) ?? skuItem,
-      precio: v.price ?? it.price ?? null,
-      estado_ml: estado,
-    }));
+    return variaciones.map((v) => {
+      const up = limpio(v.user_product_id);
+      return {
+        ml_item_id: it.id,
+        ml_variation_id: v.id,
+        sku_ml: limpio(v.seller_custom_field) ?? skuDeAtributos(v.attributes) ?? skuItem,
+        precio: v.price ?? it.price ?? null,
+        estado_ml: estado,
+        ...(up ? { producto_usuario: up } : {}),
+      };
+    });
   }
-  return [{ ml_item_id: it.id, ml_variation_id: null, sku_ml: skuItem, precio: it.price ?? null, estado_ml: estado }];
+  const up = limpio(it.user_product_id);
+  return [{ ml_item_id: it.id, ml_variation_id: null, sku_ml: skuItem, precio: it.price ?? null, estado_ml: estado, ...(up ? { producto_usuario: up } : {}) }];
+}
+
+/** Mercado Libre pasó las publicaciones con variaciones al modelo nuevo: cada variación quedó "sincronizada" con una
+ *  publicación aparte (mismo producto de usuario, mismo stock), y muchas veces el SKU está cargado SOLO en esa
+ *  publicación nueva (caso real de PINARHOME, 25/11/2026: MLA1852134043 var. 204818550051 sin SKU, sincronizada con
+ *  MLA3585121682 que tiene PRETA-3VISON). A las filas sin SKU les completa el SKU de otra publicación de la misma cuenta
+ *  con el mismo producto de usuario, si todas las que lo tienen dicen el mismo SKU. `todas` puede incluir publicaciones
+ *  cerradas: siguen diciendo qué producto es. */
+export function completarPorProductoDeUsuario(filas: VinculoML[], todas: VinculoML[] = filas): VinculoML[] {
+  const skus = new Map<string, Set<string>>();
+  for (const v of todas) {
+    if (!v.producto_usuario || !v.sku_ml) continue;
+    if (!skus.has(v.producto_usuario)) skus.set(v.producto_usuario, new Set());
+    skus.get(v.producto_usuario)!.add(normSku(v.sku_ml));
+  }
+  const original = new Map<string, string>();
+  for (const v of todas) if (v.sku_ml) original.set(normSku(v.sku_ml), v.sku_ml);
+  return filas.map((v) => {
+    if (v.sku_ml || !v.producto_usuario) return v;
+    const s = skus.get(v.producto_usuario);
+    return s && s.size === 1 ? { ...v, sku_ml: original.get([...s][0]) ?? null } : v;
+  });
 }
 
 export interface PubExistente {
