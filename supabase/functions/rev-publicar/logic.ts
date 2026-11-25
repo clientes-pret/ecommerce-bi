@@ -389,3 +389,39 @@ export function condicionDeItem(it: { status?: string | null; listing_type_id?: 
   if (!it || !it.listing_type_id || it.status === "closed") return null;
   return claveCondicion(it.catalog_listing ? "catalogo" : "tradicional", it.listing_type_id);
 }
+
+// ── Medidas del paquete cargadas a mano (cuando la publicación de Pret no las tiene) ─────────────────────────────
+export interface Medidas { alto: number; ancho: number; largo: number; peso: number } // cm, cm, cm, gramos
+
+/** Lee y controla las medidas que manda el portal. Centímetros con hasta un decimal (1 a 300); peso en gramos (1 a 100.000). */
+export function leerMedidas(b: Record<string, unknown>): { ok: true; m: Medidas } | { ok: false; error: string } {
+  const n = (v: unknown) => Number(String(v ?? "").replace(",", "."));
+  const m = { alto: n(b.alto), ancho: n(b.ancho), largo: n(b.largo), peso: n(b.peso) };
+  for (const [k, nombre] of [["alto", "El alto"], ["ancho", "El ancho"], ["largo", "El largo"]] as const) {
+    if (!Number.isFinite(m[k]) || m[k] <= 0 || m[k] > 300) return { ok: false, error: `${nombre} tiene que ser un número de centímetros entre 1 y 300.` };
+    m[k] = Math.round(m[k] * 10) / 10;
+  }
+  if (!Number.isFinite(m.peso) || m.peso < 1 || m.peso > 100000) return { ok: false, error: "El peso tiene que estar en gramos (entre 1 y 100.000; 1 kg = 1000 g)." };
+  m.peso = Math.round(m.peso);
+  return { ok: true, m };
+}
+
+export function atributosMedidas(m: Medidas): Atributo[] {
+  return [
+    { id: "SELLER_PACKAGE_HEIGHT", value_name: `${m.alto} cm` },
+    { id: "SELLER_PACKAGE_WIDTH", value_name: `${m.ancho} cm` },
+    { id: "SELLER_PACKAGE_LENGTH", value_name: `${m.largo} cm` },
+    { id: "SELLER_PACKAGE_WEIGHT", value_name: `${m.peso} g` },
+  ];
+}
+
+/** Agrega las medidas a una publicación que no trae las cuatro (si ya las trae, de Pret, no se tocan). */
+export function conMedidas<T extends Record<string, unknown>>(payload: T, medidas: Atributo[]): T {
+  const attrs = (payload.attributes ?? []) as Atributo[];
+  const tiene = attrs.filter((a) => /^SELLER_PACKAGE_(HEIGHT|WIDTH|LENGTH|WEIGHT)$/.test(a.id) && a.value_name).length === 4;
+  if (tiene || medidas.length !== 4) return payload;
+  return { ...payload, attributes: [...attrs.filter((a) => !/^SELLER_PACKAGE_/.test(a.id)), ...medidas] };
+}
+
+/** ML rechazó la publicación porque faltan las medidas del paquete. */
+export const faltanMedidas = (errores: string[]) => errores.some((e) => /seller_package/i.test(e));

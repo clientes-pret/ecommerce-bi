@@ -257,3 +257,31 @@ Deno.test("medidas del paquete: solo si están las cuatro, y van en la publicaci
   const p = payloadCatalogo({ categoryId: "MLA1", catalogProductId: "MLA9", sku: "X", precio: 100, cantidad: 1, tipoVenta: "gold_special", medidas: medidasPaquete(cuatro) });
   assertEquals((p.attributes as { id: string }[]).map((a) => a.id).sort(), ["SELLER_PACKAGE_HEIGHT", "SELLER_PACKAGE_LENGTH", "SELLER_PACKAGE_WEIGHT", "SELLER_PACKAGE_WIDTH", "SELLER_SKU"]);
 });
+
+// ---- Medidas del paquete cargadas por el revendedor (25/11/2026) ----
+import { atributosMedidas, conMedidas, faltanMedidas, leerMedidas } from "./logic.ts";
+
+Deno.test("leerMedidas: acepta coma decimal, redondea y controla rangos", () => {
+  const r = leerMedidas({ alto: "48", ancho: "36,25", largo: 8, peso: "1290.4" });
+  assertEquals(r, { ok: true, m: { alto: 48, ancho: 36.3, largo: 8, peso: 1290 } });
+  assertEquals(leerMedidas({ alto: 0, ancho: 1, largo: 1, peso: 1 }).ok, false);
+  assertEquals(leerMedidas({ alto: 1, ancho: 301, largo: 1, peso: 1 }).ok, false);
+  assertEquals(leerMedidas({ alto: 1, ancho: 1, largo: 1, peso: "" }).ok, false);
+  assertEquals(leerMedidas({ alto: "a", ancho: 1, largo: 1, peso: 1 }).ok, false);
+});
+
+Deno.test("conMedidas: agrega las cuatro si faltan; si la publicación ya las trae, no las toca", () => {
+  const m = atributosMedidas({ alto: 48, ancho: 36, largo: 8, peso: 1290 });
+  assertEquals(m.map((a) => a.value_name), ["48 cm", "36 cm", "8 cm", "1290 g"]);
+  const sin = { attributes: [{ id: "BRAND", value_name: "Pret." }, { id: "SELLER_PACKAGE_HEIGHT", value_name: "5 cm" }] };
+  assertEquals((conMedidas(sin, m).attributes as { id: string }[]).map((a) => a.id),
+    ["BRAND", "SELLER_PACKAGE_HEIGHT", "SELLER_PACKAGE_WIDTH", "SELLER_PACKAGE_LENGTH", "SELLER_PACKAGE_WEIGHT"]);
+  const con = { attributes: atributosMedidas({ alto: 1, ancho: 2, largo: 3, peso: 4 }) };
+  assertEquals(conMedidas(con, m), con);
+  assertEquals(conMedidas(sin, []), sin);
+});
+
+Deno.test("faltanMedidas: reconoce el error de ML", () => {
+  assertEquals(faltanMedidas(["The attributes [seller_package_height, seller_package_width, seller_package_length, seller_package_weight] are all required"]), true);
+  assertEquals(faltanMedidas(["Otro error"]), false);
+});

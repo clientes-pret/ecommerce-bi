@@ -11,7 +11,7 @@
 // pendiente de la cola. Todo lo que manda el navegador se vuelve a controlar acá (ver nucleo.ts y logic.ts).
 
 import { COLUMNAS_REVENDEDOR, type Revendedor, tokenValido } from "../_shared/rev_ml.ts";
-import { esMarcaPropia, GANANCIA_NETA_POR_DEFECTO, leerOpcionesMasivas, leerPedido, MAX_PRODUCTOS_POR_LOTE, TIPOS_VENTA } from "./logic.ts";
+import { esMarcaPropia, GANANCIA_NETA_POR_DEFECTO, leerMedidas, leerOpcionesMasivas, leerPedido, MAX_PRODUCTOS_POR_LOTE, TIPOS_VENTA } from "./logic.ts";
 import {
   coloresDe, comisionMLEstimada, datosSkus, detalleCatalogo, ErrorUsuario, type Json, leerItemPret, LimiteML, marcasPropias, procesarCola,
   publicacionesPret, publicarProducto, recargoCuotasEstimado, supabase, tokenPret,
@@ -191,6 +191,40 @@ async function lotes(rev: Revendedor): Promise<Response> {
   return json({ filas: data ?? [], comision_ml: await comisionMLEstimada(), ganancia_defecto: GANANCIA_NETA_POR_DEFECTO, recargo_cuotas: await recargoCuotasEstimado() });
 }
 
+// ───────────────────────── medidas del paquete ─────────────────────────
+// Cuando ML pide las medidas del paquete y la publicación de Pret no las tiene, el revendedor las carga una vez por
+// producto (sirven para todos los revendedores) y se vuelve a publicar lo que había fallado por eso.
+async function guardarMedidas(rev: Revendedor, b: Json): Promise<Response> {
+  const sku = String(b.sku ?? "").trim();
+  if (!sku) return fallo("Falta el producto.");
+  const lm = leerMedidas(b);
+  if (!lm.ok) return fallo(lm.error);
+  const { data: cat } = await supabase.from("rev_catalogo").select("sku").eq("sku", sku).eq("habilitado", true).maybeSingle();
+  if (!cat) return fallo(`${sku} no está en el catálogo para revendedores.`);
+  const { error } = await supabase.from("rev_medidas_paquete").upsert({
+    sku, alto_cm: lm.m.alto, ancho_cm: lm.m.ancho, largo_cm: lm.m.largo, peso_g: lm.m.peso, revendedor_id: rev.id,
+    actualizado_at: new Date().toISOString(),
+  }, { onConflict: "sku" });
+  if (error) throw new Error(error.message);
+  return json({ ok: true, medidas: lm.m });
+}
+
+/** Vuelve a poner en la cola un producto de una publicación masiva que falló por las medidas (lo ya publicado no se repite). */
+async function reintentar(rev: Revendedor, b: Json): Promise<Response> {
+  const id = Number(b.id);
+  if (!Number.isInteger(id) || id <= 0) return fallo("Falta el producto.");
+  const { data: f } = await supabase.from("rev_publicar_cola").select("id,estado,resultados").eq("id", id).eq("revendedor_id", rev.id).maybeSingle();
+  if (!f) return fallo("No encontré ese producto.", 404);
+  if (["pendiente", "procesando"].includes(String(f.estado))) return json({ ok: true, ya_en_cola: true });
+  const res = (f.resultados ?? []) as Array<{ faltan_medidas?: boolean }>;
+  if (!res.some((r) => r.faltan_medidas)) return fallo("Ese producto no tiene nada pendiente por medidas.");
+  const { error } = await supabase.from("rev_publicar_cola").update({
+    estado: "pendiente", error: null, intentos: 0, terminado_at: null, resultados: res.filter((r) => !r.faltan_medidas),
+  }).eq("id", id).eq("revendedor_id", rev.id);
+  if (error) throw new Error(error.message);
+  return json({ ok: true });
+}
+
 async function cancelar(rev: Revendedor, b: Json): Promise<Response> {
   const lote = String(b.lote ?? "");
   if (!/^[0-9a-f-]{36}$/i.test(lote)) return fallo("Falta el lote.");
@@ -254,6 +288,8 @@ Deno.serve(async (req) => {
     if (ruta.endsWith("/encolar")) return await encolar(quien.rev, body);
     if (ruta.endsWith("/lotes")) return await lotes(quien.rev);
     if (ruta.endsWith("/cancelar")) return await cancelar(quien.rev, body);
+    if (ruta.endsWith("/medidas")) return await guardarMedidas(quien.rev, body);
+    if (ruta.endsWith("/reintentar")) return await reintentar(quien.rev, body);
     return fallo("No encontrado.", 404);
   } catch (e) {
     if (e instanceof LimiteML) return fallo("Mercado Libre pidió ir más despacio. Esperá unos minutos y probá de nuevo (o usá Publicar seleccionados, que va a su ritmo).", 429);

@@ -50,6 +50,12 @@
     #avance .fila { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     #avance .fila .grow { flex: 1; min-width: 220px; }
     .det-prod { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    /* Medidas del paquete que pide ML cuando la publicación de Pret no las tiene (25/11/2026) */
+    form.medidas { border: 1px solid var(--line); border-left: 4px solid #d9a400; border-radius: 10px; padding: 10px 12px; margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+    form.medidas .campos { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    form.medidas label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted, #666); }
+    form.medidas input { min-height: 0; padding: 6px 8px; width: 100%; }
+    @media (max-width: 560px) { form.medidas .campos { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .det-prod .small a { white-space: nowrap; }
     .regla { display: flex; flex-direction: column; gap: 6px; }
     .regla .op input[type=number] { width: 80px; min-height: 0; padding: 4px 8px; display: inline-block; margin: 0 4px; }
@@ -326,6 +332,17 @@ function pintarPanel() {
       <button class="btn primary" id="dpOk" ${problemas.length || st.enviando ? 'disabled' : ''}>${st.enviando ? 'Publicando…' : 'Publicar en mi cuenta'}</button></div>`;
 }
 
+// Formulario de medidas del paquete para un SKU (cuando ML las pide y la publicación de Pret no las tiene).
+function formMedidas(sku, nombre, attrs = '') {
+  const campo = (k, t, u) => `<label>${t} (${u})<input type="number" inputmode="decimal" min="0" step="any" name="${k}" required></label>`;
+  return `<form class="medidas" data-sku="${esc(sku)}" ${attrs}>
+    <div class="small"><b>Medidas del paquete · ${esc(nombre)}</b><br><span class="muted">Mercado Libre las pide para publicar este producto: el paquete armado, listo para enviar. Se cargan una sola vez y quedan guardadas para este producto.</span></div>
+    <div class="campos">${campo('alto', 'Alto', 'cm')}${campo('ancho', 'Ancho', 'cm')}${campo('largo', 'Largo', 'cm')}${campo('peso', 'Peso', 'gramos')}</div>
+    <div class="fila" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm primary" type="submit">Guardar medidas y publicar</button><span class="small err" data-e></span></div>
+  </form>`;
+}
+const leerForm = (f) => Object.fromEntries(['alto', 'ancho', 'largo', 'peso'].map((k) => [k, f.elements[k].value]));
+
 function pintarResultados() {
   const r = st.resultados, ok = r.filter((x) => x.ok).length;
   const TIPO = { tradicional: 'Tradicional', catalogo: 'Catálogo' }, VENTA = { gold_special: 'Clásica', gold_pro: 'Premium' };
@@ -334,7 +351,8 @@ function pintarResultados() {
       <div class="muted small">${ok} de ${r.length} ${r.length === 1 ? 'publicación creada' : 'publicaciones creadas'}. Ya quedan vinculadas: las ves en Mis publicaciones.</div></div><button class="btn sm" data-cerrar>Cerrar</button></div>
     <div class="dp-cuerpo"><div class="res">${r.map((x) => `<div class="${x.ok ? 'ok' : 'no'}">
       <b>${esc(color(x.sku))}</b> · ${TIPO[x.tipo]} · ${VENTA[x.tipo_venta] || x.tipo_venta} <span class="muted small">${esc(x.sku)}</span>
-      <div class="small">${x.ok ? `<a href="${esc(x.permalink || 'https://articulo.mercadolibre.com.ar/' + x.ml_item_id)}" target="_blank" rel="noopener">${esc(x.ml_item_id)} ↗</a> · ${x.estado === 'paused' ? 'pausada' : 'activa'}` : `<span class="err">${esc(x.error)}</span>`}${x.aviso ? `<div class="warn-t">${esc(x.aviso)}</div>` : ''}</div></div>`).join('')}</div></div>
+      <div class="small">${x.ok ? `<a href="${esc(x.permalink || 'https://articulo.mercadolibre.com.ar/' + x.ml_item_id)}" target="_blank" rel="noopener">${esc(x.ml_item_id)} ↗</a> · ${x.estado === 'paused' ? 'pausada' : 'activa'}` : `<span class="err">${esc(x.error)}</span>`}${x.aviso ? `<div class="warn-t">${esc(x.aviso)}</div>` : ''}</div></div>`).join('')}</div>
+      ${[...new Set(r.filter((x) => x.faltan_medidas).map((x) => x.sku))].map((s) => formMedidas(s, color(s), 'data-uno')).join('')}</div>
     <div class="dp-pie"><div class="grow"></div><a class="btn" href="publicaciones.html">Ir a Mis publicaciones</a><button class="btn primary" data-cerrar>Cerrar</button></div>`;
 }
 
@@ -378,6 +396,27 @@ dp.addEventListener('input', (e) => {
   const foco = e.target.id, pos = e.target.selectionStart;
   pintarPanel();
   volverAlCampo($('#' + foco, dp), pos);
+});
+
+// Guarda las medidas y vuelve a publicar SOLO lo que había fallado por eso (lo ya creado no se repite).
+dp.addEventListener('submit', async (e) => {
+  const f = e.target.closest('form.medidas[data-uno]');
+  if (!f) return;
+  e.preventDefault();
+  const sku = f.dataset.sku, b = f.querySelector('button'), err = f.querySelector('[data-e]');
+  const fallidos = st.resultados.filter((x) => x.sku === sku && x.faltan_medidas);
+  b.disabled = true; b.textContent = 'Publicando…'; err.textContent = '';
+  try {
+    await apiPublicar('medidas', { sku, ...leerForm(f) });
+    const tra = fallidos.some((x) => x.tipo === 'tradicional'), cat = fallidos.some((x) => x.tipo === 'catalogo');
+    const r = await apiPublicar('publicar', {
+      item_id: tra ? st.d.item?.id ?? null : null, skus: [sku], tradicional: tra, catalogo: cat,
+      marca: tra && st.marcaPropia ? st.marca.trim() : null, precio: Number(st.precio), tipos_venta: [...new Set(fallidos.map((x) => x.tipo_venta))],
+      pausada: st.pausada, recargo_cuotas: fallidos.some((x) => x.tipo_venta === 'gold_pro') ? st.recargo : 0,
+    });
+    st.resultados = [...st.resultados.filter((x) => !(x.sku === sku && x.faltan_medidas)), ...(r.resultados || [])];
+    pintarResultados();
+  } catch (ex) { err.textContent = ex.message; b.disabled = false; b.textContent = 'Guardar medidas y publicar'; }
 });
 
 async function publicarYa() {
@@ -518,9 +557,11 @@ async function encolarYa() {
 }
 
 // Avance: tarjeta arriba del catálogo con el último lote (se actualiza sola mientras hay algo pendiente).
-let filasCola = [], timerAvance = null, detalleAbierto = false;
+let filasCola = [], timerAvance = null, detalleAbierto = false, abiertoPorMedidas = null;
 const loteCerrado = () => { try { return localStorage.getItem('rev_lote_cerrado'); } catch { return null; } };
 async function verAvance(forzar = false) {
+  // Mientras alguien está cargando medidas en el detalle, no se redibuja (se perdería lo escrito).
+  if (document.activeElement?.closest?.('#avance form.medidas')) { clearTimeout(timerAvance); timerAvance = setTimeout(() => verAvance(forzar), 5000); return; }
   try { const r = await apiPublicar('lotes', {}); filasCola = r.filas || []; ML_EST = Number(r.comision_ml ?? ML_EST); GANANCIA_DEF = Number(r.ganancia_defecto ?? GANANCIA_DEF); RECARGO_DEF = Number(r.recargo_cuotas ?? RECARGO_DEF); } catch { return; } // si la función no responde, no se muestra
   if (!filasCola.length) { $('#avance').hidden = true; return; }
   const lote = filasCola[0].lote, fl = filasCola.filter((f) => f.lote === lote);
@@ -530,6 +571,9 @@ async function verAvance(forzar = false) {
   const hechos = fl.filter((f) => !['pendiente', 'procesando'].includes(f.estado)).length;
   const res = fl.flatMap((f) => f.resultados || []);
   const ok = res.filter((r) => r.ok).length, errs = res.filter((r) => r.error).length;
+  // Productos que esperan medidas del paquete: el detalle se abre solo (una vez por lote) para que se vea el formulario.
+  const piden = fl.filter((f) => !['pendiente', 'procesando'].includes(f.estado) && (f.resultados || []).some((r) => r.faltan_medidas)).length;
+  if (piden && abiertoPorMedidas !== lote) { detalleAbierto = true; abiertoPorMedidas = lote; }
   const enCurso = fl.some((f) => ['pendiente', 'procesando'].includes(f.estado));
   const pend = fl.filter((f) => f.estado === 'pendiente').length;
   const pct = Math.round((hechos / fl.length) * 100);
@@ -537,7 +581,7 @@ async function verAvance(forzar = false) {
   $('#avance').innerHTML = `<div class="fila"><div class="grow"><b>${enCurso ? 'Publicando por detrás' : 'Última publicación masiva'}</b>
       <span class="muted small"> · ${new Date(fl[fl.length - 1].creado_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
       <div class="prog"><span style="width:${pct}%"></span></div>
-      <span class="small">${hechos} de ${fl.length} productos · <b>${ok}</b> ${ok === 1 ? 'publicación creada' : 'publicaciones creadas'}${errs ? ` · <span class="bad-t">${errs} con problema</span>` : ''}${enCurso ? ' · se actualiza solo' : ''}</span></div>
+      <span class="small">${hechos} de ${fl.length} productos · <b>${ok}</b> ${ok === 1 ? 'publicación creada' : 'publicaciones creadas'}${errs ? ` · <span class="bad-t">${errs} con problema</span>` : ''}${piden ? ` · <b class="warn-t">${piden === 1 ? '1 producto pide' : piden + ' productos piden'} medidas del paquete</b>` : ''}${enCurso ? ' · se actualiza solo' : ''}</span></div>
     <button class="btn sm" id="avDet">${detalleAbierto ? 'Ocultar detalle' : 'Ver detalle'}</button>${pend ? `<button class="btn sm danger" id="avCan">Cancelar lo que falta (${pend})</button>` : ''}${enCurso ? '' : '<button class="btn sm" id="avCerrar" title="Ocultar este aviso">Cerrar ✕</button>'}</div>
     <div id="avLista" ${detalleAbierto ? '' : 'hidden'} style="margin-top:12px;display:${detalleAbierto ? 'flex' : 'none'};flex-direction:column;gap:8px">${fl.slice().reverse().map(filaDetalle).join('')}</div>`;
   $('#avDet').onclick = () => { detalleAbierto = !detalleAbierto; verAvance(); };
@@ -561,8 +605,26 @@ function filaDetalle(f) {
       ? `<span>✓ ${esc(r.sku)} · ${TIPO_TXT[r.tipo]} · ${VENTA_TXT[r.tipo_venta] || ''} · ${r.precio != null ? peso0(r.precio) + ' · ' : ''}<a href="${esc(r.permalink || 'https://articulo.mercadolibre.com.ar/' + r.ml_item_id)}" target="_blank" rel="noopener">${esc(r.ml_item_id)} ↗</a>${r.estado === 'paused' ? ' · pausada' : ''}</span>`
       : r.error ? `<span class="bad-t">✕ ${esc(r.sku)}${r.tipo ? ' · ' + TIPO_TXT[r.tipo] : ''}: ${esc(r.error)}</span>`
       : `<span class="warn-t">${esc(r.aviso || '')}</span>`).join('')}</div>` : ''}
-    ${f.error ? `<div class="small bad-t">${esc(f.error)}</div>` : ''}</div>`;
+    ${f.error ? `<div class="small bad-t">${esc(f.error)}</div>` : ''}
+    ${['pendiente', 'procesando'].includes(f.estado) ? '' : [...new Set(res.filter((r) => r.faltan_medidas).map((r) => r.sku))].map((s) => formMedidas(s, porSku.get(s)?.titulo || s, `data-fila="${f.id}"`)).join('')}</div>`;
 }
+// Masiva: guarda las medidas de cada color que las pidió y vuelve a poner ese producto en la cola.
+$('#avance').addEventListener('submit', async (e) => {
+  const f = e.target.closest('form.medidas[data-fila]');
+  if (!f) return;
+  e.preventDefault();
+  const b = f.querySelector('button'), err = f.querySelector('[data-e]');
+  b.disabled = true; b.textContent = 'Guardando…'; err.textContent = '';
+  try {
+    await apiPublicar('medidas', { sku: f.dataset.sku, ...leerForm(f) });
+    // Si al mismo producto le faltan medidas de otro color, se espera a que las carguen todas antes de reintentar.
+    const otros = [...$('#avance').querySelectorAll(`form.medidas[data-fila="${f.dataset.fila}"]`)].filter((x) => x !== f && !x.dataset.listo);
+    f.dataset.listo = '1';
+    if (otros.length) { b.textContent = '✓ Guardadas'; err.textContent = 'Completá las de los otros colores para volver a publicar.'; return; }
+    await apiPublicar('reintentar', { id: Number(f.dataset.fila) });
+    verAvance(true);
+  } catch (ex) { err.textContent = ex.message; b.disabled = false; b.textContent = 'Guardar medidas y publicar'; }
+});
 verAvance();
 
 filtrar();

@@ -11,7 +11,7 @@ import { COLUMNAS_REVENDEDOR, ML_API, mlGet, type Revendedor, tokenValido, USER_
 import { sinFotosDeMarca } from "../_shared/fotos_marca.ts";
 import {
   claveCondicion, claveResultado, COMISION_ML_ESTIMADA, colorDe, condicionDeItem, minutosDePausa, RITMO, erroresML, esMarcaPropia, estadoFinal, type ItemML, limpiarDescripcion, marcaDe,
-  type Atributo, MAX_RECARGO_CUOTAS, medidasPaquete, type OpcionesMasivas, payloadCatalogo, payloadTradicional, precioPorRegla, precioPorTipo, RECARGO_CUOTAS_ESTIMADO, skuDe, type TipoVenta,
+  type Atributo, atributosMedidas, conMedidas, faltanMedidas, MAX_RECARGO_CUOTAS, medidasPaquete, type OpcionesMasivas, payloadCatalogo, payloadTradicional, precioPorRegla, precioPorTipo, RECARGO_CUOTAS_ESTIMADO, skuDe, type TipoVenta,
   type VariacionML,
 } from "./logic.ts";
 
@@ -144,7 +144,18 @@ export function coloresDe(it: ItemML): { sku: string; color: string | null; vari
 }
 
 // ───────────────────────── publicar un producto ─────────────────────────
-export interface Resultado { sku: string; tipo: "tradicional" | "catalogo"; tipo_venta: TipoVenta; ok: boolean; ml_item_id?: string; permalink?: string; estado?: string; error?: string; aviso?: string; precio?: number }
+export interface Resultado {
+  sku: string; tipo: "tradicional" | "catalogo"; tipo_venta: TipoVenta; ok: boolean; ml_item_id?: string; permalink?: string; estado?: string;
+  error?: string; aviso?: string; precio?: number;
+  faltan_medidas?: boolean; // ML pide las medidas del paquete y no hay: el portal se las pide al revendedor
+}
+
+/** Medidas del paquete que cargó algún revendedor para ese SKU (rev_medidas_paquete), como atributos de ML. */
+export async function medidasGuardadas(sku: string): Promise<Atributo[]> {
+  const { data } = await supabase.from("rev_medidas_paquete").select("alto_cm,ancho_cm,largo_cm,peso_g").eq("sku", sku).maybeSingle();
+  if (!data) return [];
+  return atributosMedidas({ alto: Number(data.alto_cm), ancho: Number(data.ancho_cm), largo: Number(data.largo_cm), peso: Number(data.peso_g) });
+}
 
 export interface PedidoProducto {
   itemId: string | null;           // publicación tradicional de Pret (null = solo catálogo)
@@ -159,6 +170,8 @@ export interface PedidoProducto {
   recargoCuotas: number;           // % extra en Premium para que la ganancia quede igual que en Clásica
   comision: number;                // % estimado que se quedan ML + impuestos (para el recargo)
 }
+
+const MSJ_MEDIDAS = "Mercado Libre pide las medidas del paquete y la publicación de Pret a Home no las tiene: cargalas acá abajo.";
 
 /** Crea las publicaciones de UN producto en la cuenta del revendedor. `hechos` = claves ya publicadas (se saltean);
  *  `alGuardar` se llama después de cada intento (la cola guarda el avance, así un corte no repite publicaciones). */
@@ -204,10 +217,12 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
     await dormirMs(conAzar(RITMO.pausaEntreCreacionesMs)); // espaciar las creaciones, como recomienda ML
     const v = await mlEnviar(tokRev, "POST", "/items/validate", payload);
     const errV = erroresML(v.status, v.body);
+    if (faltanMedidas(errV)) return anotar({ ...base, error: MSJ_MEDIDAS, faltan_medidas: true });
     if (errV.length) return anotar({ ...base, error: "Mercado Libre no lo acepta: " + errV.join(" · ") });
     const c = await mlEnviar(tokRev, "POST", "/items", payload);
     const errC = erroresML(c.status, c.body);
     const it = c.body as { id?: string; permalink?: string; status?: string } | null;
+    if (faltanMedidas(errC)) return anotar({ ...base, error: MSJ_MEDIDAS, faltan_medidas: true });
     if (errC.length || !it?.id) return anotar({ ...base, error: "No se pudo crear: " + (errC.join(" · ") || `HTTP ${c.status}`) });
     const r: Resultado = { ...base, ok: true, ml_item_id: it.id, permalink: it.permalink, estado: it.status };
     if (descripcion) {
@@ -242,12 +257,13 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
         continue;
       }
       if (fuera.length) console.log(`${col.sku}: ${fuera.length} foto(s) de marca o sin revisar no se copiaron`);
+      const guardadas = await medidasGuardadas(col.sku); // si la publicación de Pret no trae las medidas del paquete
       for (const tv of pendientes) {
         const precio = precioDe(col.sku, tv);
-        await crear(col.sku, "tradicional", tv, precio == null ? null : payloadTradicional(item, {
+        await crear(col.sku, "tradicional", tv, precio == null ? null : conMedidas(payloadTradicional(item, {
           variacion: col.variacion, fotos: quedan.map((i) => pics.get(i)!), precio,
           cantidad: p.cantidades.get(col.sku)!, tipoVenta: tv, marca: p.marca,
-        }), descripcion);
+        }), guardadas), descripcion);
       }
     }
   }
@@ -267,13 +283,15 @@ export async function publicarProducto(rev: Revendedor, tokRev: string, tokPret:
         for (const tv of pendientes) await anotar({ sku: s, tipo: "catalogo", tipo_venta: tv, ok: false, error: "No pude leer la ficha de catálogo; probá de nuevo." });
         continue;
       }
-      // Medidas del paquete: las de la publicación de catálogo de Pret o, si no las tiene, las de su tradicional.
+      // Medidas del paquete: las de la publicación de catálogo de Pret o, si no las tiene, las de su tradicional, o las
+      // que haya cargado un revendedor para ese SKU.
       let medidas = medidasPaquete(ci.body.attributes);
       const trad = filas.find((x) => x.sku === s && x.tipo === "tradicional");
       if (!medidas.length && trad) {
         const t = await mlGet<{ attributes?: Atributo[] }>(tokPret, `/items/${trad.ml_item_id}?attributes=attributes`);
         medidas = medidasPaquete(t.body?.attributes);
       }
+      if (!medidas.length) medidas = await medidasGuardadas(s);
       for (const tv of pendientes) {
         const precio = precioDe(s, tv);
         await crear(s, "catalogo", tv, precio == null ? null : payloadCatalogo({
