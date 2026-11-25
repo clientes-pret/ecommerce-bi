@@ -7,7 +7,7 @@
   <link rel="icon" href="../proveedores/icon-192.png">
   <meta name="theme-color" content="#F5F4F0">
   <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
-  <link rel="stylesheet" href="marketing.css?v=2">
+  <link rel="stylesheet" href="marketing.css?v=3">
 </head>
 <body>
 <div class="wrap" id="app"></div>
@@ -59,7 +59,7 @@ function adsVisitas(fechas) {
   const serie = (f) => fechas.map((d) => por.get(d + f)?.visitas ?? 0);
   const meta = serie('meta'), goo = serie('google');
   return panelGrafico('Visitas desde anuncios', n0(sumar(meta) + sumar(goo)), '<span style="color:#2B8CD9">━ Meta</span> &nbsp;<span style="color:#E0A100">━ Google Ads</span> &nbsp;por día',
-    chart([{ d: meta, c: '#2B8CD9' }, { d: goo, c: '#E0A100' }], fechas, { t: 'Visitas desde anuncios', f: n0 }));
+    chart([{ d: meta, c: '#2B8CD9', n: 'Meta' }, { d: goo, c: '#E0A100', n: 'Google Ads' }], fechas, { t: 'Visitas desde anuncios', f: n0 }));
 }
 function kpiAds() {
   if (!fuentes) return '';
@@ -87,8 +87,8 @@ function graficos() {
     ${panelGrafico('Visitas', vis.every((v) => v == null) ? '—' : n0(sumar(vis)), 'total del período', chart([{ d: vis, c: '#7C98E0' }], fechas, { bars: true, t: 'Visitas por día', f: n0 }))}
     ${adsVisitas(fechas)}
     ${panelGrafico('Ventas', n0(sumar(uni.map((v) => v ?? 0))), 'unidades por día', chart([{ d: uni, c: '#1F6F43' }], fechas, { bars: true, t: 'Unidades por día', f: n0 }))}
-    ${panelGrafico('Precio', peso(ult(final)), '<span style="color:#9a9890">━ Lista</span> &nbsp;<span style="color:#2449B8">━ Final</span> &nbsp;● cambio de precio', chart([{ d: lista, c: '#B4B2A9' }, { d: final, c: '#2449B8' }], fechas, { step: true, t: 'Precio de lista y final', f: (v) => '$' + Math.round(v / 1000) + ' k', marks }))}
-    ${panelGrafico('Margen', margen.every((v) => v == null) ? '—' : pct(ult(margen), 0), '<span style="color:#B42318">┄ 0 %</span> (por debajo se pierde plata)', chart([{ d: margen, c: '#1F6F43' }], fechas, { step: true, t: 'Margen', refs: [{ v: 0, c: '#B42318', t: '0 %' }], f: (v) => Math.round(v) + ' %' }))}
+    ${panelGrafico('Precio', peso(ult(final)), '<span style="color:#9a9890">━ Lista</span> &nbsp;<span style="color:#2449B8">━ Final</span> &nbsp;● cambio de precio', chart([{ d: lista, c: '#B4B2A9', n: 'Lista' }, { d: final, c: '#2449B8', n: 'Final' }], fechas, { step: true, t: 'Precio de lista y final', f: (v) => '$' + Math.round(v / 1000) + ' k', ft: peso, marks }))}
+    ${panelGrafico('Margen', margen.every((v) => v == null) ? '—' : pct(ult(margen), 0), '<span style="color:#B42318">┄ 0 %</span> (por debajo se pierde plata)', chart([{ d: margen, c: '#1F6F43' }], fechas, { step: true, t: 'Margen', refs: [{ v: 0, c: '#B42318', t: '0 %' }], f: (v) => Math.round(v) + ' %', ft: (v) => pct(v, 1) }))}
     ${panelGrafico('Stock', n0(ult(stock)) + ' u.', 'unidades de esta página', chart([{ d: stock, c: '#B4B2A9' }], fechas, { bars: true, t: 'Stock', f: n0 }))}
     ${sinPrecio ? '<p class="muted small">El historial de precio, margen y stock empieza el día en que se cargó el primer dato de esta plataforma.</p>' : ''}`;
 }

@@ -45,3 +45,11 @@ th.ord.on::after { content: attr(data-flecha); margin-left: 4px; }
 .mk-vacio { border: 2px dashed var(--line-strong); border-radius: 10px; padding: 22px 10px; text-align: center; color: var(--muted); font-size: 13px; }
 .mk-res { display: grid; gap: 6px; margin-top: 6px; }
 @media (max-width: 900px) { .mk-tablero { grid-template-columns: 1fr; } .mk-tarjeta { cursor: default; } }
+
+/* Gráficos: franja del día bajo el mouse y cuadro con el número exacto */
+.mk-hit { fill: transparent; }
+.mk-hit:hover { fill: rgba(36, 73, 184, .09); }
+.mk-tip { display: none; position: fixed; z-index: 60; pointer-events: none; background: #1B1D21; color: #fff; font-size: 12px; line-height: 1.5;
+  padding: 7px 10px; border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); font-variant-numeric: tabular-nums; max-width: 260px; }
+.mk-tip .mk-tf { color: #B9BCC2; font-size: 11px; text-transform: capitalize; margin-bottom: 1px; }
+.mk-tip b { font-weight: 700; }

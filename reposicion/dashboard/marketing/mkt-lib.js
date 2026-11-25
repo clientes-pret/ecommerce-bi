@@ -71,7 +71,8 @@ export function alCambiarAncho(fn) {
   let ultimo = anchoGrafico(), t;
   window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => { const a = anchoGrafico(); if (Math.abs(a - ultimo) > 40) { ultimo = a; fn(); } }, 200); });
 }
-export function chart(series, fechas, { bars = false, step = false, t = '', f = (v) => Math.round(v), h = null, refs = [], marks = [] } = {}) {
+// f da el texto corto de los ejes ($96 k); ft el número exacto del cuadro al pasar el mouse (por defecto el mismo f).
+export function chart(series, fechas, { bars = false, step = false, t = '', f = (v) => Math.round(v), ft = f, h = null, refs = [], marks = [] } = {}) {
   const W = anchoGrafico(); h = h || (W > 700 ? 150 : 124);
   const pl = 52, pr = 12, pt = 10, pb = 24, pw = W - pl - pr, ph = h - pt - pb, len = fechas.length;
   const todos = series.flatMap((s) => s.d).filter((v) => v != null);
@@ -113,11 +114,39 @@ export function chart(series, fechas, { bars = false, step = false, t = '', f = 
     const i = Math.round((k * (len - 1)) / 4);
     s += `<text x="${X(i)}" y="${h - 6}" text-anchor="${k === 0 ? 'start' : k === 4 ? 'end' : 'middle'}" style="${tx}">${ddmm(fechas[i])}</text>`;
   }
+  // Una franja por día: al pasar el mouse se resalta y aparece el cuadro con el número exacto (ver activarTooltips más abajo).
   fechas.forEach((fe, i) => {
-    s += `<rect x="${X(i) - pw / len / 2}" y="${pt}" width="${pw / len}" height="${ph}" fill="transparent"><title>${esc(ddmm(fe) + ' · ' + series.map((sr) => (sr.d[i] == null ? 'sin dato' : f(sr.d[i]))).join(' / '))}</title></rect>`;
+    const dia = new Date(fe + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short' }).replace('.', '');
+    const lineas = series.map((sr) => `<div><span style="color:${sr.c}">●</span> ${sr.n || (series.length === 1 ? esc(t) : '')} <b>${sr.d[i] == null ? 'sin dato' : esc(ft(sr.d[i]))}</b></div>`).join('');
+    s += `<rect class="mk-hit" x="${X(i) - pw / len / 2}" y="${pt}" width="${pw / len}" height="${ph}" data-tip="${esc(`<div class="mk-tf">${dia} ${ddmm(fe)}</div>${lineas}`)}"></rect>`;
   });
   return s + '</svg>';
 }
+
+// Cuadro flotante con el número exacto de cada gráfico (un solo listener para toda la página: sirve para cualquier gráfico de chart()).
+let _tip;
+function activarTooltips() {
+  if (_tip) return;
+  _tip = document.createElement('div');
+  _tip.className = 'mk-tip';
+  document.body.appendChild(_tip);
+  const mover = (e) => {
+    const hit = e.target.closest?.('.mk-hit');
+    if (!hit) { _tip.style.display = 'none'; return; }
+    const html = hit.getAttribute('data-tip');
+    if (_tip.dataset.k !== html) { _tip.innerHTML = html; _tip.dataset.k = html; }
+    _tip.style.display = 'block';
+    const w = _tip.offsetWidth, h = _tip.offsetHeight;
+    let x = e.clientX + 14, y = e.clientY + 14;
+    if (x + w > window.innerWidth - 8) x = e.clientX - w - 14;
+    if (y + h > window.innerHeight - 8) y = e.clientY - h - 14;
+    _tip.style.left = Math.max(8, x) + 'px'; _tip.style.top = Math.max(8, y) + 'px';
+  };
+  document.addEventListener('pointermove', mover);
+  document.addEventListener('pointerdown', mover);                       // en el celular se ve al tocar
+  document.addEventListener('scroll', () => { _tip.style.display = 'none'; }, true);
+}
+activarTooltips();
 
 // Panel de un gráfico: título, leyenda y valor actual a la derecha.
 export const panelGrafico = (titulo, valor, leyenda, svg) => `<div class="mk-cc"><div class="mk-cch"><span class="t">${titulo}</span><span class="lg">${leyenda || ''}</span><span class="vv">${valor}</span></div>${svg}</div>`;
