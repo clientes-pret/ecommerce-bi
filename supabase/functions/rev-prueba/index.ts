@@ -27,9 +27,11 @@ const REDIRECT_URI = `${Deno.env.get("SUPABASE_URL")}/functions/v1/rev-prueba/ca
 const ML_AUTH = "https://auth.mercadolibre.com.ar/authorization";
 const ML_API = "https://api.mercadolibre.com";
 const STATE_VIDA_MS = 30 * 60 * 1000;
-// Temas de mucho volumen (cambios de precios y ofertas de la propia cuenta, ~90 % de los avisos medidos el
-// 17/11/2026) que no sirven para esta prueba: se responden 200 sin guardar, para no llenar la base.
-const TOPICS_IGNORADOS = new Set(["items_prices", "public_offers"]);
+// Solo se guardan los avisos de ventas: `rev-ordenes` es lo único que lee esta tabla y solo mira `orders_v2`.
+// El resto (items, public_candidates, shipments, price_suggestion, etc.) era ~94 % de los avisos y llenaba unos
+// 17 MB por día de la base (24/11/2026: 287.000 filas inútiles, 118 MB, en 9 días); se responde 200 sin guardar.
+// Si algún día hace falta otro tema, se agrega acá.
+const TOPICS_GUARDADOS = new Set(["orders_v2"]);
 
 const enc = new TextEncoder();
 
@@ -141,7 +143,7 @@ async function notificacion(req: Request): Promise<Response> {
   try {
     body = await req.json();
   } catch { /* aviso sin cuerpo válido: se registra vacío */ }
-  if (TOPICS_IGNORADOS.has(String(body.topic))) return new Response("ok", { status: 200 });
+  if (!TOPICS_GUARDADOS.has(String(body.topic))) return new Response("ok", { status: 200 });
   const { error } = await supabase.from("rev_ml_avisos").insert({
     topic: (body.topic as string) ?? null,
     ml_user_id: (body.user_id as number) ?? null,
