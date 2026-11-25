@@ -16,7 +16,7 @@ import { COLUMNAS_REVENDEDOR, dormir, mlGet, type Revendedor, tokenValido } from
 import { completarPorProductoDeUsuario, type ItemML, normSku, planificarVinculos, type PubExistente, vinculosDeItem } from "./logic.ts";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-const MAX_PUBLICACIONES_POR_REVENDEDOR = 1000; // límite de paginación de ML por offset; más allá habría que usar `scan`
+const MAX_PAGINAS = 300; // 30.000 publicaciones por revendedor (de a 100): tope de seguridad
 
 type Json = Record<string, unknown>;
 
@@ -33,19 +33,30 @@ async function leerTodo<T>(tabla: string, columnas: string, orden: string, filtr
   return out;
 }
 
-/** Ids de todas las publicaciones del revendedor (cualquier estado). */
+type PaginaML = { results?: string[]; paging?: { total?: number }; scroll_id?: string };
+
+/** Ids de todas las publicaciones del revendedor (cualquier estado). Con `search_type=scan` (de a 100, con scroll_id):
+ *  la búsqueda común por offset corta en 1.000 y PINARHOME tiene más (25/11/2026: 1.112; quedaban ~66 sin leer). */
 async function idsDePublicaciones(token: string, mlUserId: number): Promise<{ ids: string[]; truncado: boolean } | null> {
-  const ids: string[] = [];
+  const ids = new Set<string>();
+  let scroll: string | null = null;
   let total = 0;
-  for (let offset = 0; offset < MAX_PUBLICACIONES_POR_REVENDEDOR; offset += 100) {
-    const r = await mlGet<{ results: string[]; paging: { total: number } }>(token, `/users/${mlUserId}/items/search?limit=100&offset=${offset}`);
+  for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+    const q: string = scroll ? `&scroll_id=${encodeURIComponent(scroll)}` : "";
+    const r: { status: number; body: PaginaML | null } = await mlGet<PaginaML>(
+      token,
+      `/users/${mlUserId}/items/search?search_type=scan&limit=100${q}`,
+    );
     if (!r.body) throw new Error(`ML lista de publicaciones -> HTTP ${r.status}`);
-    ids.push(...r.body.results);
-    total = r.body.paging?.total ?? ids.length;
-    if (r.body.results.length < 100 || ids.length >= total) break;
+    total = r.body.paging?.total ?? total;
+    const lote = r.body.results ?? [];
+    if (lote.length === 0) break;
+    for (const id of lote) ids.add(id);
+    scroll = r.body.scroll_id ?? null;
+    if (!scroll || ids.size >= total) break;
     await dormir(300);
   }
-  return { ids, truncado: total > MAX_PUBLICACIONES_POR_REVENDEDOR };
+  return { ids: [...ids], truncado: ids.size < total };
 }
 
 async function detalles(token: string, ids: string[]): Promise<ItemML[] | null> {
