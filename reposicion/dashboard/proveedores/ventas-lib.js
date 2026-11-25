@@ -40,11 +40,21 @@ export async function todo(tabla, cols, desde, orden) {
 // 8 meses de historia alcanzan para el promedio (8 semanas / 8 meses previos).
 export const desde = masDias(hoy(), -300);
 export let filas, ads;
+// El scorecard de Marketing (marketing/scorecard.html) marca SCORECARD_MKT antes de importar este archivo: lee por funciones que
+// devuelven solo Pret a Home · Tienda Nube (el rol marketing no lee las tablas del scorecard).
+const rpc = async (nombre) => { const { data, error } = await sb.rpc(nombre, { p_desde: desde }); if (error) throw error; return data; };
 try {
-  [filas, ads] = await Promise.all([
-    todo('scorecard_canal_dia', 'fecha,marca,canal,ventas,ordenes,facturacion_neta,costo_productos,costo_envio', desde, ['fecha', 'marca', 'canal']),
-    todo('scorecard_ads_dia', 'fecha,marca,plataforma,inversion', desde, ['fecha', 'marca', 'plataforma']),
-  ]);
+  if (globalThis.SCORECARD_MKT === true) {
+    [filas, ads] = await Promise.all([
+      rpc('mkt_scorecard_dias').then((r) => r.map((f) => ({ ...f, marca: 'pret', canal: 'tn' }))),
+      rpc('mkt_scorecard_ads').then((r) => r.map((a) => ({ ...a, marca: 'pret' }))),
+    ]);
+  } else {
+    [filas, ads] = await Promise.all([
+      todo('scorecard_canal_dia', 'fecha,marca,canal,ventas,ordenes,facturacion_neta,costo_productos,costo_envio', desde, ['fecha', 'marca', 'canal']),
+      todo('scorecard_ads_dia', 'fecha,marca,plataforma,inversion', desde, ['fecha', 'marca', 'plataforma']),
+    ]);
+  }
 } catch (e) {
   $('#app').innerHTML = `<h1>Ventas</h1><div class="card"><p class="err">No pude leer el scorecard: ${esc(e.message)}</p></div>`;
   throw e;

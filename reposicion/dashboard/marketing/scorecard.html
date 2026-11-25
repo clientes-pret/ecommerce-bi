@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scorecard · Marketing Pret a Home</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <link rel="stylesheet" href="marketing.css?v=3">
+<style>
+  /* En pantallas angostas cada período es una tarjeta (sin tabla de 11 columnas con scroll lateral). */
+  .sc-cards{display:none;gap:10px;flex-direction:column;padding:4px 12px 12px}
+  .sc-card{border:1px solid var(--line,#e5e2da);border-radius:12px;padding:12px 14px;background:#fff}
+  .sc-card h3{margin:0 0 8px;font-size:15px}
+  .sc-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;margin-bottom:10px}
+  .sc-top .l{font-size:12px;color:var(--ink-soft,#6b6b6b)}
+  .sc-top .v{font-size:22px;font-weight:700}
+  .sc-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px}
+  .sc-grid .l{font-size:12px;color:var(--ink-soft,#6b6b6b)}
+  .sc-grid .v{font-size:15px;font-weight:600}
+  @media (max-width:760px){.sc-tabla{display:none}.sc-cards{display:flex}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Scorecard de Pret a Home · Tienda Nube: una fila (o tarjeta, en el celular) por día, semana o mes. Es el mismo scorecard del Panel de
+// control (mismos cálculos, en ventas-lib.js) pero solo de esta tienda; lee por funciones que devuelven únicamente Pret + Tienda Nube.
+import { $, $$, guard, navMarketing, peso0, hoy } from '../proveedores/app.js';
+const perfil = await guard(['admin', 'dueno', 'marketing']);
+navMarketing(perfil, 'scorecard');
+globalThis.SCORECARD_MKT = true;                    // ventas-lib lee por mkt_scorecard_dias / mkt_scorecard_ads (solo Pret · Tienda Nube)
+const { ref, DAY, POR_PAGINA, ADS_DE, PEND, sumar, celdasSc, cabSc, conPct, periodosSc, ddmm, largo } = await import('../proveedores/ventas-lib.js');
+
+const MARCAS = ['pret'], CANAL = 'tn';
+const sc = { gran: 'dia', pag: 0 };
+const hoyAR = hoy();
+
+// Tarjeta de un período (celular). Muestra primero lo que se mira siempre: ventas y rentabilidad con ads.
+function tarjeta(et, t) {
+  const ads = ADS_DE[CANAL].map(([p, n]) => [n, t.ads[p] == null ? PEND : peso0(t.ads[p])]);
+  const celdas = [
+    ['Facturación neta', t.neta == null ? PEND : peso0(t.neta)], ['Órdenes', t.ordenes == null ? PEND : t.ordenes.toLocaleString('es-AR')],
+    ['Costo de productos', t.costo == null ? PEND : peso0(t.costo)], ['Costo de envío', t.envio == null ? PEND : peso0(t.envio)],
+    ['Rentab. s/ads', conPct(t.rentS, t.ventas)], ...ads,
+    ['ROAS', t.roas == null ? (t.inversion > 0 ? PEND : '<span class="chip">Sin inversión</span>') : t.roas.toFixed(2).replace('.', ',') + 'x'],
+  ];
+  const rc = t.rentS == null ? PEND : t.inversion == null ? '<span class="chip">Sin inversión</span>' : conPct(t.rentC, t.ventas);
+  return `<div class="sc-card"><h3>${et}</h3>
+    <div class="sc-top"><div><div class="l">Ventas</div><div class="v num">${t.ventas == null ? PEND : peso0(t.ventas)}</div></div><div style="text-align:right"><div class="l">Rentab. c/ads</div><div class="v num">${rc}</div></div></div>
+    <div class="sc-grid">${celdas.map(([l, v]) => `<div><div class="l">${l}</div><div class="v num">${v}</div></div>`).join('')}</div></div>`;
+}
+
+function pintar() {
+  if (!ref) { $('#app').innerHTML = '<div class="cabecera"><div><h1>Scorecard</h1></div></div><div class="card"><p class="muted">Todavía no hay ventas cargadas en el scorecard.</p></div>'; return; }
+  const atraso = Math.round((Date.parse(hoyAR) - Date.parse(ref)) / DAY);
+  const segGran = `<div class="seg" role="group" aria-label="Agrupar por">${[['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes']].map(([v, t]) => `<button type="button" data-gran="${v}" aria-pressed="${sc.gran === v}">${t}</button>`).join('')}</div>`;
+
+  const periodos = periodosSc(MARCAS, CANAL, sc.gran), paginas = Math.max(1, Math.ceil(periodos.length / POR_PAGINA));
+  sc.pag = Math.min(sc.pag, paginas - 1);
+  const visibles = periodos.slice(sc.pag * POR_PAGINA, (sc.pag + 1) * POR_PAGINA).map((p) => [p.et, sumar(p.dias, MARCAS, CANAL)]);
+  const filas = visibles.map(([et, t]) => `<tr><th scope="row" class="num" style="white-space:nowrap;font-weight:500">${et}</th>${celdasSc(t, CANAL)}</tr>`).join('');
+  const cards = visibles.map(([et, t]) => tarjeta(et, t)).join('');
+  const unidad = { dia: 'días', semana: 'semanas', mes: 'meses' }[sc.gran];
+  const pager = `<div class="row between" style="padding:12px 16px 4px"><button class="btn sm" type="button" id="scMas" ${sc.pag <= 0 ? 'disabled' : ''}>← Recientes</button>
+      <span class="small muted">Pág. ${sc.pag + 1} de ${paginas} · ${periodos.length} ${unidad}</span>
+      <button class="btn sm" type="button" id="scMenos" ${sc.pag >= paginas - 1 ? 'disabled' : ''}>Antiguos →</button></div>`;
+
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Scorecard</h1><p>Pret a Home · Tienda Nube · ${largo(ref)}</p></div>
+    <span class="row small muted" style="gap:6px"><span class="dot" style="background:${atraso <= 1 ? 'var(--ok)' : '#B54708'}"></span>Datos hasta el ${ddmm(ref)}${atraso > 1 ? ` · ${atraso} días de atraso` : ''}</span></div>
+  <section class="card tabla" style="margin-top:16px"><div class="cab"><div><h2>Scorecard de la tienda</h2><span class="muted">Por día, semana (lunes a domingo) o mes</span></div>
+      <div class="row wrapRow" style="gap:8px">${segGran}</div></div>
+    <div class="sc-tabla scroll"><table style="min-width:1000px"><thead>${cabSc(CANAL, { dia: 'Fecha', semana: 'Semana', mes: 'Mes' }[sc.gran])}</thead><tbody>${filas || '<tr><td colspan="10" class="muted">Sin datos todavía.</td></tr>'}</tbody></table></div>
+    <div class="sc-cards">${cards || '<p class="muted">Sin datos todavía.</p>'}</div>
+    ${pager}</section>
+  <p class="muted small" style="line-height:1.6">Ventas = lo que pagaron los clientes en órdenes pagas. Facturación neta = lo que queda después de las comisiones de Pago Nube. Rentab. s/ads = neta − costo de productos − envío; Rentab. c/ads = lo anterior − lo invertido en Meta Ads y Google Ads. ROAS = ventas ÷ inversión en ads.</p>`;
+  $$('[data-gran]').forEach((b) => (b.onclick = () => { sc.gran = b.dataset.gran; sc.pag = 0; pintar(); }));
+  $('#scMas').onclick = () => { sc.pag -= 1; pintar(); };
+  $('#scMenos').onclick = () => { sc.pag += 1; pintar(); };
+}
+pintar();
+</script>
+</body>
+</html>
