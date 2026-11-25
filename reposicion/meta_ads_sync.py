@@ -34,6 +34,10 @@ DOMINIO_TIENDA = "pretahome"
 
 # ── Meta ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+class DemasiadosDatos(RuntimeError):
+    """Meta pide achicar el pedido (rango de fechas más corto)."""
+
+
 def _cabeceras():
     token = os.environ.get("META_ADS_TOKEN", "").strip()
     if not token:
@@ -47,6 +51,8 @@ def _pedir(url, params=None, reintentos=4):
         r = requests.get(url, headers=_cabeceras(), params=params, timeout=120)
         if r.status_code == 200:
             return r.json()
+        if "reduce the amount of data" in r.text:
+            raise DemasiadosDatos(r.text[:200])
         try:
             codigo = r.json().get("error", {}).get("code")
         except ValueError:
@@ -70,9 +76,26 @@ def paginar(ruta, params):
 
 
 def insights(desde, hasta, extra=None):
+    """Reporte diario por anuncio entre dos fechas. Si Meta dice que es demasiado, parte el rango en dos y junta los resultados."""
     params = {"level": "ad", "time_increment": 1, "fields": CAMPOS, "limit": 500,
               "time_range": '{"since":"%s","until":"%s"}' % (desde, hasta), **(extra or {})}
-    return paginar(f"{CUENTA}/insights", params)
+    try:
+        return paginar(f"{CUENTA}/insights", params)
+    except DemasiadosDatos:
+        if desde >= hasta:
+            raise
+        mitad = desde + (hasta - desde) // 2
+        return insights(desde, mitad, extra) + insights(mitad + timedelta(days=1), hasta, extra)
+
+
+def insights_en_tramos(desde, hasta, extra=None, dias=7):
+    """Igual que `insights` pero pidiendo de a `dias` días: el desglose por producto es pesado y un rango largo lo rechaza."""
+    out, ini = [], desde
+    while ini <= hasta:
+        fin = min(hasta, ini + timedelta(days=dias - 1))
+        out.extend(insights(ini, fin, extra))
+        ini = fin + timedelta(days=1)
+    return out
 
 
 def creativos(ad_ids):
@@ -218,7 +241,7 @@ def main():
 
     core.tnlog("Gasto de catálogo por producto…")
     t0 = time.time()
-    filas_prod = insights(desde, hoy, {"breakdowns": "product_id"})
+    filas_prod = insights_en_tramos(desde, hoy, {"breakdowns": "product_id"})
     core.tnlog(f"  {len(filas_prod)} filas del desglose por producto en {time.time() - t0:.0f} s")
     desglose = desglose_por_anuncio(filas_prod)
     prods = db.select(config, "mkt_producto", {"select": "product_id,variantes", "order": "product_id"})

@@ -88,6 +88,27 @@ def test_desglose_por_anuncio_marca_los_de_catalogo():
     assert desglose_por_anuncio(filas) == {("2026-11-20", "9"): {"gasto": 5.5, "impresiones": 0, "clics": 0, "compras": 0, "valor": 0.0}}
 
 
+def test_insights_parte_el_rango_si_meta_pide_menos_datos():
+    import json
+    from datetime import date
+    from reposicion import meta_ads_sync as m
+    original = m.paginar
+
+    def falso(ruta, params):
+        r = json.loads(params["time_range"])
+        d0, d1 = date.fromisoformat(r["since"]), date.fromisoformat(r["until"])
+        if (d1 - d0).days + 1 > 3:
+            raise m.DemasiadosDatos("x")
+        return [{"desde": d0, "hasta": d1}]
+    m.paginar = falso
+    try:
+        filas = m.insights_en_tramos(date(2026, 10, 21), date(2026, 11, 24))
+    finally:
+        m.paginar = original
+    assert sum((f["hasta"] - f["desde"]).days + 1 for f in filas) == 35               # cubre los 35 días, sin repetir ni saltear
+    assert sorted(f["desde"] for f in filas) == [f["desde"] for f in sorted(filas, key=lambda f: f["desde"])]
+
+
 if __name__ == "__main__":
     for nombre, fn in list(globals().items()):
         if nombre.startswith("test_"):
