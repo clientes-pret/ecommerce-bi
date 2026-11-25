@@ -16,7 +16,7 @@
 // semáforo, categoría, marca, stock, homepage, alerta, texto) y se ordena por cualquier columna. "En homepage" es un filtro
 // aparte del semáforo. Fase 1: solo lectura; la selección masiva y las estrategias llegan en la fase de precios.
 import { $, $$, esc, guard, navMarketing, qs } from '../proveedores/app.js';
-import { SEM, dotSem, chipSem, chipHome, chipMargen, linkTienda, n0, pct, peso, hace, cargarConfig, cargarTablero, sinDatos, tono, cargarAdsProducto } from './mkt-lib.js';
+import { SEM, dotSem, chipSem, chipHome, chipMargen, linkTienda, n0, pct, peso, hace, cargarConfig, cargarTablero, sinDatos, tono, cargarAdsProducto, cargarAdsMeta, roas, fmtRoas } from './mkt-lib.js';
 
 const perfil = await guard(['admin', 'dueno', 'marketing']);
 navMarketing(perfil, 'publicaciones');
@@ -27,7 +27,10 @@ catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Publicaciones<
 
 // Visitas y compras que llegan desde anuncios (null si todavía no está la migración de anuncios: la vista "Anuncios" no aparece).
 const ads = await cargarAdsProducto(7);
+const gastoMeta = await cargarAdsMeta(7);      // null hasta que se aplique la migración del gasto de Meta
 for (const r of rows) {
+  const gm = gastoMeta?.get(r.product_id);
+  r.gm = gm?.g ?? 0; r.roas = roas(gm);
   const a = ads?.get(r.product_id);
   r.vm = a?.vm ?? 0; r.cm = a?.cm ?? 0; r.vg = a?.vg ?? 0; r.cg = a?.cg ?? 0; r.va = r.vm + r.vg; r.ca = r.cm + r.cg;
 }
@@ -43,7 +46,7 @@ const ALERTAS = {
 // Cómo se ordena cada columna (null siempre al final).
 const COLS = {
   nombre: (r) => r.nombre.toLowerCase(), v24: (r) => r.visitas_24h, v7: (r) => r.visitas_7d, conv: (r) => r.conv_7d, stock: (r) => r.stock,
-  vm: (r) => r.vm, cm: (r) => r.cm, vg: (r) => r.vg, cg: (r) => r.cg, va: (r) => r.va, pva: (r) => (r.visitas_7d > 0 ? r.va / r.visitas_7d : null),
+  vm: (r) => r.vm, cm: (r) => r.cm, vg: (r) => r.vg, cg: (r) => r.cg, va: (r) => r.va, gm: (r) => r.gm, roas: (r) => r.roas, pva: (r) => (r.visitas_7d > 0 ? r.va / r.visitas_7d : null),
   margen: (r) => r.margen, precio: (r) => r.precio_final, costo: (r) => r.costo, ganancia: (r) => r.ganancia, roi: (r) => r.roi,
 };
 if (ads) ALERTAS.adssin = ['Anuncios sin compras', (r) => r.va >= 100 && r.ca === 0];
@@ -77,7 +80,7 @@ function fila(r) {
   if (st.tab === 'ads') {
     const pva = r.visitas_7d > 0 ? (r.va / r.visitas_7d) * 100 : null;
     const sin = r.va >= 100 && r.ca === 0 ? '<div><span class="chip warn" title="Recibe visitas de anuncios pero nadie compró">Sin compras</span></div>' : '';
-    return `<tr class="click" data-id="${r.product_id}">${prod}<td class="r">${n0(r.vm)} / ${n0(r.cm)}</td><td class="r">${n0(r.vg)} / ${n0(r.cg)}</td><td class="r">${n0(r.va)}${sin}</td><td class="r">${pva == null ? '—' : pct(pva, 0)}</td></tr>`;
+    return `<tr class="click" data-id="${r.product_id}">${prod}<td class="r">${n0(r.vm)} / ${n0(r.cm)}</td><td class="r">${n0(r.vg)} / ${n0(r.cg)}</td><td class="r">${n0(r.va)}${sin}</td><td class="r">${pva == null ? '—' : pct(pva, 0)}</td>${gastoMeta ? `<td class="r">${r.gm > 0 ? peso(r.gm) : '—'}</td><td class="r">${fmtRoas(r.roas)}</td>` : ''}</tr>`;
   }
   if (st.tab === 'rent') {
     return `<tr class="click" data-id="${r.product_id}">${prod}<td class="r">${peso(r.precio_final)}${r.precio_lista > r.precio_final ? `<div class="muted small"><s>${peso(r.precio_lista)}</s></div>` : ''}</td>
@@ -92,7 +95,7 @@ function pintarTabla() {
   st.pag = Math.min(st.pag, paginas - 1);
   $('#cuenta').textContent = `${n0(l.length)} de ${n0(rows.length)} publicaciones`;
   $('#thead').innerHTML = `<tr>${th('nombre', 'Producto', false)}${st.tab === 'ads'
-    ? th('vm', 'Meta<div class="muted small" style="font-weight:400">visitas / compras</div>') + th('vg', 'Google Ads<div class="muted small" style="font-weight:400">visitas / compras</div>') + th('va', 'Desde anuncios<div class="muted small" style="font-weight:400">visitas, 7 días</div>') + th('pva', '% de las visitas')
+    ? th('vm', 'Meta<div class="muted small" style="font-weight:400">visitas / compras</div>') + th('vg', 'Google Ads<div class="muted small" style="font-weight:400">visitas / compras</div>') + th('va', 'Desde anuncios<div class="muted small" style="font-weight:400">visitas, 7 días</div>') + th('pva', '% de las visitas') + (gastoMeta ? th('gm', 'Gasto en Meta<div class="muted small" style="font-weight:400">7 días</div>') + th('roas', 'ROAS Meta<div class="muted small" style="font-weight:400">ventas ÷ gasto</div>') : '')
     : st.tab === 'rent'
     ? th('precio', 'Precio final') + th('costo', 'Costo con IVA') + th('ganancia', 'Ganancia') + th('margen', 'Margen') + th('roi', 'ROI')
     : th('v24', 'Últimas 24 h<div class="muted small" style="font-weight:400">visitas / unidades</div>') + th('v7', '7 días<div class="muted small" style="font-weight:400">visitas / unidades</div>') + th('conv', 'Conv. 7 d') + th('stock', 'Stock') + th('margen', 'Margen')}</tr>`;

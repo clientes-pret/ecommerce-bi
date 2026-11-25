@@ -15,7 +15,7 @@
 // Ficha de un producto: todo lo que se sabe de su página (visitas, ventas, conversión, stock, precio, margen), la evolución en
 // gráficos, sus variantes y lo que el equipo va haciendo (tareas). Fase 1: el cambio de precio llega en la fase de precios.
 import { sb, $, $$, esc, guard, navMarketing, qs, fechaHora } from '../proveedores/app.js';
-import { conSinStock, chipSem, chipHome, chipMargen, linkTienda, urlTienda, n0, pct, peso, hace, cargarConfig, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumarDias, ddmm, sumar, alCambiarAncho, TIPOS, ESTADOS, nombreEstado } from './mkt-lib.js';
+import { cargarAdsMeta, roas, fmtRoas, conSinStock, chipSem, chipHome, chipMargen, linkTienda, urlTienda, n0, pct, peso, hace, cargarConfig, sinDatos, chart, panelGrafico, rangoDias, hoyAR, sumarDias, ddmm, sumar, alCambiarAncho, TIPOS, ESTADOS, nombreEstado } from './mkt-lib.js';
 
 const perfil = await guard(['admin', 'dueno', 'marketing']);
 navMarketing(perfil, 'publicaciones');
@@ -23,7 +23,7 @@ const id = Number(qs('id'));
 if (!id) { location.replace('publicaciones.html'); throw new Error('sin producto'); }
 
 const hoy = hoyAR();
-let fila, prod, dias, tareas, cfg, fuentes, rango = 30, pestana = location.hash === '#tareas' ? 'tareas' : 'metricas';
+let fila, prod, dias, tareas, cfg, fuentes, metaG, rango = 30, pestana = location.hash === '#tareas' ? 'tareas' : 'metricas';
 async function cargar() {
   const r = await Promise.all([
     sb.rpc('mkt_tablero', { p_product: id }),
@@ -39,6 +39,8 @@ async function cargar() {
   // Visitas y compras desde anuncios (null si todavía no está la migración de anuncios: esa parte no aparece).
   const fu = await sb.from('mkt_producto_fuente_dia').select('*').eq('product_id', id).gte('fecha', sumarDias(hoy, -89)).order('fecha');
   fuentes = fu.error ? null : fu.data;
+  const mg = await cargarAdsMeta(7);               // gasto de Meta de este producto (null si todavía no está la migración)
+  metaG = mg ? (mg.get(id) || { g: 0, c: 0, v: 0 }) : null;
 }
 try { await cargar(); } catch (e) { $('#app').innerHTML = `<div class="cabecera"><div><h1>Producto</h1></div></div>` + sinDatos(e); throw e; }
 
@@ -63,6 +65,13 @@ function kpiAds() {
   if (!fuentes) return '';
   const m = totalAds('meta'), g = totalAds('google');
   return kpi('Visitas desde anuncios · 7 días', n0(m.v + g.v), `Meta ${n0(m.v)} / ${n0(m.c)} · Google ${n0(g.v)} / ${n0(g.c)}<br>visitas / compras`);
+}
+// Gasto de Meta de los últimos 7 días completos y lo que Meta dice haber vendido con ese gasto (ROAS = ventas ÷ gasto).
+function kpiGastoMeta() {
+  if (!metaG) return '';
+  return kpi('Gasto en Meta · 7 días', metaG.g > 0 ? peso(metaG.g) : '—', metaG.g > 0
+    ? `ROAS ${fmtRoas(roas(metaG))} · Meta atribuye ${n0(metaG.c)} compras y ${peso(metaG.v)}${metaG.c ? `<br>${peso(metaG.g / metaG.c)} por compra` : ''}`
+    : 'Este producto no tuvo gasto en anuncios de Meta');
 }
 
 function graficos() {
@@ -139,6 +148,7 @@ function pintar() {
     ${kpi('Stock', n0(f.stock), f.stock != null && f.stock < (cfg.stock_bajo ?? 40) ? '<span class="chip warn">Stock bajo</span>' : 'unidades')}
     ${kpi('Precio final', peso(f.precio_final), f.precio_lista > f.precio_final ? `lista <s>${peso(f.precio_lista)}</s>` : 'sin descuento')}
     ${kpiAds()}
+    ${kpiGastoMeta()}
     ${kpi('Ganancia · margen · ROI', f.margen == null ? '<span class="chip">Sin costo</span>' : `${chipMargen(f, cfg)}`, f.margen == null ? 'falta cargar el costo en Tienda Nube' : `${peso(f.ganancia)} por unidad · ROI ${pct(f.roi, 0)}`)}
   </div>
   ${f.en_home ? `<div class="card"><h2 style="margin:0 0 4px">🏠 En la homepage</h2><p class="muted" style="margin:0">Está en la homepage de la tienda desde el ${esc(ddmm(f.home_desde))}.</p></div>` : ''}

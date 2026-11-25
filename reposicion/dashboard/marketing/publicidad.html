@@ -16,19 +16,23 @@
 // sesión y la página a la que entró): sesiones y compras por página de destino, y el gasto y los clics de Google Ads por campaña.
 // El gasto de Meta por producto y por anuncio llega en otra etapa (necesita un permiso de lectura de la cuenta publicitaria).
 import { sb, $, $$, esc, guard, navMarketing, leerTodo } from '../proveedores/app.js';
-import { n0, pct, peso, hace, sinDatos, tipoPagina, urlSitio, FUENTES } from './mkt-lib.js';
+import { n0, pct, peso, hace, sinDatos, tipoPagina, urlSitio, FUENTES, fmtRoas } from './mkt-lib.js';
 
 const perfil = await guard(['admin', 'dueno', 'marketing']);
 navMarketing(perfil, 'publicidad');
 
 const st = { dias: 7, tipo: '', todas: false };
-let paginas = [], google = [], productos = new Map();
+let paginas = [], google = [], productos = new Map(), metaRes = null, metaPag = [];
 
 async function cargar() {
   const [p, g] = await Promise.all([sb.rpc('mkt_ads_paginas', { p_dias: st.dias }), sb.rpc('mkt_ads_google', { p_dias: st.dias })]);
   if (p.error) throw p.error;
   if (g.error) throw g.error;
   paginas = p.data; google = g.data;
+  // Gasto de Meta (null si todavía no está la migración o no se cargó nada: la pantalla sigue andando sin esa parte).
+  const [mr, mp] = await Promise.all([sb.rpc('mkt_ads_meta_resumen', { p_dias: st.dias }), sb.rpc('mkt_ads_meta_paginas', { p_dias: st.dias })]);
+  metaRes = !mr.error && mr.data?.[0] && Number(mr.data[0].gasto_total) > 0 ? mr.data[0] : null;
+  metaPag = mp.error ? [] : mp.data;
 }
 try {
   await cargar();
@@ -44,6 +48,11 @@ function porPagina() {
     if (r.fuente === 'meta') { x.sm += Number(r.sesiones); x.cm += Number(r.compras); } else { x.sg += Number(r.sesiones); x.cg += Number(r.compras); }
     m.set(r.pagina, x);
   }
+  for (const r of metaPag) {                                   // el gasto de Meta por página de destino (puede haber páginas que GA4 no vio)
+    const x = m.get(r.pagina) || { pagina: r.pagina, sm: 0, cm: 0, sg: 0, cg: 0 };
+    x.gm = Number(r.gasto);
+    m.set(r.pagina, x);
+  }
   return [...m.values()].map((x) => ({ ...x, st: x.sm + x.sg, ct: x.cm + x.cg, tipo: tipoPagina(x.pagina) })).sort((a, b) => b.st - a.st || a.pagina.localeCompare(b.pagina));
 }
 
@@ -52,15 +61,15 @@ const nombrePagina = (x) => { const p = productos.get(x.pagina); return p ? { tx
 
 function tablaPaginas(filas) {
   const lim = st.todas ? filas.length : 30;
-  return `<div class="scroll"><table><thead><tr><th>Página de destino</th><th>Tipo</th><th class="r">Meta<div class="muted small" style="font-weight:400">sesiones / compras</div></th><th class="r">Google Ads<div class="muted small" style="font-weight:400">sesiones / compras</div></th><th class="r">Total sesiones</th><th class="r">Conv.</th></tr></thead><tbody>${
+  return `<div class="scroll"><table><thead><tr><th>Página de destino</th><th>Tipo</th><th class="r">Meta<div class="muted small" style="font-weight:400">sesiones / compras</div></th><th class="r">Google Ads<div class="muted small" style="font-weight:400">sesiones / compras</div></th><th class="r">Gasto en Meta<div class="muted small" style="font-weight:400">lo que no es de catálogo</div></th><th class="r">Total sesiones</th><th class="r">Conv.</th></tr></thead><tbody>${
     filas.slice(0, lim).map((x) => {
       const n = nombrePagina(x), conv = x.st ? (x.ct / x.st) * 100 : null;
       const sin = x.st >= 100 && x.ct === 0 ? ' <span class="chip warn" title="Recibe mucho tráfico de anuncios y nadie compró">Sin compras</span>' : '';
       return `<tr ${n.ficha ? `class="click" data-ficha="${n.ficha}"` : ''}><td><div style="min-width:220px">${n.ficha ? `<a class="prov" href="${n.ficha}">${esc(n.txt)}</a>` : `<b>${esc(n.txt)}</b>`}
         <a href="${esc(urlSitio(x.pagina))}" target="_blank" rel="noopener" title="Abrir esta página en la tienda" onclick="event.stopPropagation()">↗</a>${sin}
         <div class="muted small">${esc(x.pagina)}</div></div></td><td><span class="chip ${x.tipo[2]}">${x.tipo[1]}</span></td>
-        <td class="r">${n0(x.sm)} / ${n0(x.cm)}</td><td class="r">${n0(x.sg)} / ${n0(x.cg)}</td><td class="r">${n0(x.st)}</td><td class="r">${conv == null ? '—' : pct(conv, 1)}</td></tr>`;
-    }).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Todavía no hay datos de anuncios en este período.</td></tr>'}</tbody></table></div>
+        <td class="r">${n0(x.sm)} / ${n0(x.cm)}</td><td class="r">${n0(x.sg)} / ${n0(x.cg)}</td><td class="r">${x.gm ? peso(x.gm) : '—'}</td><td class="r">${n0(x.st)}</td><td class="r">${conv == null ? '—' : pct(conv, 1)}</td></tr>`;
+    }).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Todavía no hay datos de anuncios en este período.</td></tr>'}</tbody></table></div>
     ${filas.length > 30 ? `<div class="mk-pie"><span>${st.todas ? `Mostrando las ${n0(filas.length)} páginas` : `Mostrando las 30 con más tráfico de ${n0(filas.length)}`}</span><button class="btn sm" id="vermas">${st.todas ? 'Ver menos' : 'Ver todas'}</button></div>` : ''}`;
 }
 
@@ -77,7 +86,8 @@ function pintar() {
     ${kpi('Meta · sesiones', n0(suma('sm')), `${n0(suma('cm'))} compras · conv. ${conCompras(suma('cm'), suma('sm'))}`)}
     ${kpi('Google Ads · sesiones', n0(suma('sg')), `${n0(suma('cg'))} compras · conv. ${conCompras(suma('cg'), suma('sg'))}`)}
     ${kpi('Google Ads · gasto', peso(gasto), `${n0(clics)} clics${clics ? ` · ${peso(gasto / clics)} por clic` : ''}`)}
-    <div class="cc-card" style="border-style:dashed"><div class="cc-label">Meta · gasto</div><div class="cc-valor" style="font-size:18px;margin-top:10px">Falta conectar</div><div class="cc-sub">El gasto por producto y por anuncio necesita un permiso de lectura de la cuenta de Meta.</div></div>
+    ${metaRes ? kpi('Meta · gasto', peso(metaRes.gasto_total), `ROAS ${fmtRoas(Number(metaRes.gasto_total) > 0 ? Number(metaRes.valor) / Number(metaRes.gasto_total) : null)} · Meta atribuye ${n0(metaRes.compras)} compras<br>catálogo ${peso(metaRes.gasto_catalogo)} · páginas ${peso(metaRes.gasto_paginas)}${Number(metaRes.gasto_sin_destino) > 0 ? ` · sin destino ${peso(metaRes.gasto_sin_destino)}` : ''}`)
+      : '<div class="cc-card" style="border-style:dashed"><div class="cc-label">Meta · gasto</div><div class="cc-valor" style="font-size:18px;margin-top:10px">Sin datos todavía</div><div class="cc-sub">Se carga solo cada pocas horas desde la cuenta publicitaria de Meta.</div></div>'}
   </div>
   <div class="card tabla"><div class="cab"><div><h2>Páginas de destino</h2><span class="muted">La URL a la que entra la gente desde un anuncio. Las compras son las de esas sesiones (GA4).</span></div>
     <div class="seg" role="group" aria-label="Tipo de página">${tipos.map(([k, t]) => `<button data-t="${k}" aria-pressed="${st.tipo === k}">${t}</button>`).join('')}</div></div>${tablaPaginas(filas)}</div>

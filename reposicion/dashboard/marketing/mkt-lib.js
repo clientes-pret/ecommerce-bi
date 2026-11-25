@@ -141,6 +141,17 @@ export async function cargarAdsProducto(dias = 7) {
   if (error) return null;
   return new Map(data.map((r) => [r.product_id, { vm: Number(r.visitas_meta), cm: Number(r.compras_meta), vg: Number(r.visitas_google), cg: Number(r.compras_google) }]));
 }
+// Gasto de Meta por producto en los últimos `dias` días completos: {product_id → {g: gasto, c: compras, v: ventas que Meta atribuye}}.
+// Incluye el gasto de catálogo repartido por producto y el de los anuncios que llevan a la página del producto. Devuelve null si todavía
+// no está la migración del gasto de Meta (las pantallas siguen andando sin esa parte).
+export async function cargarAdsMeta(dias = 7) {
+  const { data, error } = await sb.rpc('mkt_ads_meta_producto', { p_dias: dias });
+  if (error) return null;
+  return new Map(data.map((r) => [r.product_id, { g: Number(r.gasto), c: Number(r.compras), v: Number(r.valor) }]));
+}
+// ROAS = ventas atribuidas por Meta ÷ gasto (null si no hay gasto).
+export const roas = (a) => (a && a.g > 0 ? a.v / a.g : null);
+export const fmtRoas = (n) => (n == null ? '—' : Number(n).toFixed(1).replace('.', ',') + 'x');
 // Qué es una página de destino: un producto (/productos/<handle>), el inicio o una categoría/colección.
 export function tipoPagina(ruta) {
   if (ruta === '/') return ['inicio', 'Inicio', 'info'];
