@@ -31,11 +31,13 @@ Los últimos días se recalculan cada vez (devoluciones y reclamos cambian días
 Uso: python3 -m reposicion.scorecard_ml_sync                       (simula: últimos 4 días, no guarda)
      python3 -m reposicion.scorecard_ml_sync --aplicar             (guarda)
      python3 -m reposicion.scorecard_ml_sync --desde 2026-10-06 --aplicar   (carga histórica)
+     python3 -m reposicion.scorecard_ml_sync --solo-flex --desde 2026-11-01   (solo Flex: sirve para ver zonas faltantes)
 Pruebas: python3 -m reposicion.tests.test_scorecard_ml
 """
 
 import argparse
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
@@ -261,6 +263,10 @@ def costos_por_sku(config, key):
     return costos
 
 
+class _SoloFlex(Exception):
+    """Corta el cálculo de ventas cuando se pidió solo Flex."""
+
+
 def documento(clave, t):
     """Campos del día con las mismas claves que usa la rutina del Scorecard."""
     doc = {
@@ -277,12 +283,14 @@ def main():
     ap.add_argument("--desde", help="YYYY-MM-DD (por defecto, los últimos --dias días hasta ayer)")
     ap.add_argument("--dias", type=int, default=4)
     ap.add_argument("--aplicar", action="store_true", help="guardar en Supabase (sin esto solo muestra)")
+    ap.add_argument("--solo-flex", action="store_true", help="calcular solo los costos Flex")
     args = ap.parse_args()
     config = db.load_config()
     hasta = datetime.now(AR).date() - timedelta(days=1)       # el día de hoy está a medias: se carga mañana
     desde = date.fromisoformat(args.desde) if args.desde else hasta - timedelta(days=args.dias - 1)
     errores = []
-    actualizar_costos_ecomapp(config)
+    if not args.solo_flex:
+        actualizar_costos_ecomapp(config)
     zonas = None                                              # tabla de zonas Flex: se arma una sola vez
     for key, (clave, _, _) in CUENTAS.items():
         cfg = config["channels"].get(key, {})
@@ -291,6 +299,8 @@ def main():
         ordenes = None
         try:
             ordenes = traer_ordenes(key, cfg, desde, hasta)
+            if args.solo_flex:
+                raise _SoloFlex
             token = core.ml_ensure_token(key, cfg)
             pagos = traer_pagos(token, [o for o in ordenes if desde <= dia_cierre(o) <= hasta])
             dias, avisos = calcular(ordenes, pagos, costos_por_sku(config, key), desde, hasta)
@@ -304,6 +314,8 @@ def main():
                        + (f" · ⚠ {avisos['pagos_sin_dato']} pagos de MercadoPago sin leer" if avisos["pagos_sin_dato"] else "")
                        + (f" · ⚠ {len(sin)} SKUs sin costo ({sum(sin.values()):.0f} u.): "
                           + ", ".join(sorted(sin, key=sin.get, reverse=True)[:8]) if sin else ""))
+        except _SoloFlex:
+            pass
         except Exception as e:
             errores.append(f"{key}: {e}")
             core.tnlog(f"  ⚠ {key}: {e}")
@@ -313,16 +325,21 @@ def main():
                 marca = "pret" if key == "ml_pret" else "lavan"
                 por_dia = scorecard_flex.envios_por_dia(ordenes, cuenta, dia_cierre, desde, hasta)
                 envios = scorecard_flex.traer_envios(core.ml_ensure_token(key, cfg), list(por_dia))
-                flex = scorecard_flex.calcular_flex(por_dia, envios, zonas, desde, hasta)
+                faltantes = Counter()
+                flex = scorecard_flex.calcular_flex(por_dia, envios, zonas, desde, hasta, faltantes)
                 if args.aplicar:
                     scorecard_flex.guardar(config, marca, flex)
                 core.tnlog(f"  ✓ Flex {cfg.get('label', key)}: " + " · ".join(
                     f"{f[5:]} {t['envios']} envíos {t['costo']:,.0f}" + (f" ({t['sin_zona']} sin zona)" if t["sin_zona"] else "")
                     + ("" if t["completo"] else " INCOMPLETO, no se guarda") for f, t in sorted(flex.items()))
                     + ("" if args.aplicar else " (simulación, no se guardó)"))
+                for linea in scorecard_flex.texto_faltantes(faltantes):
+                    core.tnlog(f"    Flex sin zona {key}: {linea}")
         except Exception as e:
             errores.append(f"{key} flex: {e}")
             core.tnlog(f"  ⚠ {key} flex: {e}")
+        if args.solo_flex:
+            continue
         try:                                                     # la pauta va aparte: si falla no frena las ventas
             adv, clave_ads = ADVERTISERS[key]
             ads = traer_ads(core.ml_ensure_token(key, cfg), adv, desde, hasta)

@@ -3,6 +3,7 @@
 Correr:  python3 -m reposicion.tests.test_scorecard_ml
 """
 
+from collections import Counter
 from datetime import date
 
 from unittest import mock
@@ -153,7 +154,11 @@ def test_flex_un_envio_por_carrito_zona_por_codigo_postal_y_solo_self_service():
 
     envios = {10: flex("1714"), 11: flex("C1425ABC"), 12: flex("5000"), 13: flex("1714", tipo="cross_docking"),
               14: flex("1714", estado="cancelled"), 16: None}
-    dias = scorecard_flex.calcular_flex(por_dia, envios, {"1714": 4500.0}, D, hasta)
+    envios[12]["receiver_address"].update({"city": {"name": "Córdoba"}, "state": {"name": "Córdoba"}, "street_name": "no va"})
+    faltantes = Counter()
+    dias = scorecard_flex.calcular_flex(por_dia, envios, {"1714": 4500.0}, D, hasta, faltantes)
+    assert faltantes == {("5000", "Córdoba"): 1}
+    assert scorecard_flex.texto_faltantes(faltantes) == ["5000 [Córdoba] ×1"]
     assert dias["2026-10-22"] == {"envios": 3, "costo": 4500.0 + 2800.0, "sin_zona": 1, "completo": True}
     assert dias["2026-10-23"] == {"envios": 0, "costo": 0.0, "sin_zona": 0, "completo": False}
     with mock.patch.object(scorecard_flex.db, "upsert") as up:

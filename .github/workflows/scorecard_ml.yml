@@ -8,6 +8,14 @@ on:
       desde:
         description: "Recalcular desde (YYYY-MM-DD)"
         required: true
+      solo_flex:
+        description: "Calcular solo los costos Flex"
+        type: boolean
+        default: false
+      aplicar:
+        description: "Guardar (destildado = solo mostrar en el registro)"
+        type: boolean
+        default: true
 
 jobs:
   scorecard_ml:
@@ -19,10 +27,12 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r reposicion/requirements.txt
-      - run: python3 -m reposicion.scorecard_ml_sync --aplicar --desde "$DESDE"
+      - run: python3 -m reposicion.scorecard_ml_sync --desde "$DESDE" $([ "$APLICAR" = true ] && echo --aplicar) $([ "$SOLO_FLEX" = true ] && echo --solo-flex)
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
           ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}
           TN_PRET_TOKEN: ${{ secrets.TN_PRET_TOKEN }}
           TN_LAVAN_TOKEN: ${{ secrets.TN_LAVAN_TOKEN }}
           DESDE: ${{ github.event.inputs.desde }}
+          APLICAR: ${{ github.event.inputs.aplicar }}
+          SOLO_FLEX: ${{ github.event.inputs.solo_flex }}

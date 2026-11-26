@@ -70,8 +70,21 @@ def tarifa(cp, zonas):
     return None
 
 
-def calcular_flex(dias_envio, envios, zonas, desde, hasta):
-    """{fecha ISO: {envios, costo, sin_zona, completo}}. Un día con algún envío sin leer queda incompleto."""
+def localidad(destino):
+    """"Localidad, partido, provincia" del destino (sin calle ni datos del comprador)."""
+    nombres = [str((destino.get(k) or {}).get("name") or "").strip() for k in ("neighborhood", "city", "state")]
+    return ", ".join(dict.fromkeys(n for n in nombres if n))
+
+
+def texto_faltantes(faltantes, por_linea=8):
+    """Líneas para el log: "código [localidad] ×envíos", de más a menos envíos."""
+    partes = [f"{cp or '(sin código)'} [{loc}] ×{n}" for (cp, loc), n in sorted(faltantes.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return [" ; ".join(partes[i:i + por_linea]) for i in range(0, len(partes), por_linea)]
+
+
+def calcular_flex(dias_envio, envios, zonas, desde, hasta, faltantes=None):
+    """{fecha ISO: {envios, costo, sin_zona, completo}}. Un día con algún envío sin leer queda incompleto.
+    En `faltantes` (un Counter) suma los envíos sin zona por (código postal, localidad), para completar la tabla."""
     dias = {}
     d = desde
     while d <= hasta:
@@ -86,9 +99,12 @@ def calcular_flex(dias_envio, envios, zonas, desde, hasta):
         if e.get("logistic_type") != "self_service" or e.get("status") == "cancelled":
             continue
         t["envios"] += 1
-        costo = tarifa((e.get("receiver_address") or {}).get("zip_code"), zonas)
+        destino = e.get("receiver_address") or {}
+        costo = tarifa(destino.get("zip_code"), zonas)
         if costo is None:
             t["sin_zona"] += 1
+            if faltantes is not None:
+                faltantes[(str(destino.get("zip_code") or "").strip(), localidad(destino))] += 1
         else:
             t["costo"] += costo
     return dias
