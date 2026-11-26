@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f1512">
+<title>Estación de impresión</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800&family=Barlow:wght@400;500;600;700&display=swap">
+<style>
+  /* Estación de impresión: queda abierta en la Mac de la Zebra (Chrome) y le manda las etiquetas de Mercado Libre
+     a la impresora por Zebra Browser Print (programa de Zebra que escucha en localhost:9100 / 9101).
+     Por ahora es el piloto (Paso 0): detectar la Zebra e imprimir una etiqueta de prueba o un archivo de ML. */
+  :root { --bg: #f6f7f4; --card: #fff; --ink: #17201b; --soft: #6b766f; --line: #e1e5df;
+    --ok: #1d9a5b; --ok-soft: #dcf3e6; --no: #d8443b; --no-soft: #fbe3e1; --warn: #f2b632; --warn-soft: #fff3d2;
+    --display: "Barlow Condensed", "Arial Narrow", sans-serif; --body: "Barlow", "Helvetica Neue", Arial, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; }
+  main { max-width: 640px; margin: 0 auto; padding: 28px 18px; display: grid; gap: 16px; }
+  h1 { margin: 0; font-family: var(--display); font-size: 40px; font-weight: 800; line-height: 1; }
+  p { margin: 0; color: var(--soft); line-height: 1.45; }
+  .estado { border-radius: 16px; padding: 16px 18px; display: grid; gap: 4px; background: var(--card); border: 2px solid var(--line); }
+  .estado b { font-family: var(--display); font-size: 28px; font-weight: 800; }
+  .estado.ok { background: var(--ok-soft); border-color: var(--ok); }
+  .estado.no { background: var(--no-soft); border-color: var(--no); }
+  .estado.espera { background: var(--warn-soft); border-color: var(--warn); }
+  button { font: inherit; font-weight: 700; border: none; border-radius: 14px; padding: 14px 16px; background: var(--ink); color: #fff; cursor: pointer; }
+  button.sec { background: transparent; color: var(--ink); border: 2px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  .fila { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  ol { margin: 0; padding-left: 20px; color: var(--soft); line-height: 1.6; }
+  #log { font-size: 14px; display: grid; gap: 6px; }
+  #log div { background: var(--card); border-radius: 10px; padding: 8px 12px; }
+  #log .error { color: var(--no); }
+  code { background: #eef0ec; border-radius: 6px; padding: 1px 6px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <div><h1>Estación de impresión</h1><p>Prueba de la Zebra desde la app. Abrila en Chrome, en la Mac conectada a la impresora.</p></div>
+  <div class="estado espera" id="estado"><b>Buscando la Zebra…</b><span id="estadoTxt"></span></div>
+  <div class="fila">
+    <button type="button" id="btnPrueba" disabled>Imprimir etiqueta de prueba</button>
+    <button type="button" class="sec" id="btnArchivo" disabled>Imprimir archivo de ML…</button>
+  </div>
+  <input type="file" id="archivo" accept=".txt,.zpl,.prn,text/plain" hidden>
+  <button type="button" class="sec" id="btnBuscar">Volver a buscar la impresora</button>
+  <div id="log"></div>
+  <div class="estado">
+    <b style="font-size:22px">Si no encuentra la Zebra</b>
+    <ol>
+      <li>Instalá <b>Zebra Browser Print</b> para Mac (gratis, en la página de Zebra) y abrilo.</li>
+      <li>En su menú (arriba a la derecha) revisá que la Zebra figure como impresora predeterminada.</li>
+      <li>La primera vez, Browser Print pregunta si esta página puede usar la impresora: tocá <b>Aceptar</b>. Chrome también puede pedir permiso para "dispositivos de la red local": <b>Permitir</b>.</li>
+      <li>Tocá "Volver a buscar la impresora".</li>
+    </ol>
+  </div>
+</main>
+<script>
+// Browser Print atiende en http://localhost:9100 y https://localhost:9101. Se habla con texto plano para que el
+// navegador no haga la consulta previa (CORS preflight), igual que el SDK oficial de Zebra.
+const BASES = ["http://localhost:9100", "https://localhost:9101"];
+let base = null, zebra = null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const hora = () => new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+function estado(clase, titulo, txt) {
+  $("estado").className = `estado ${clase}`;
+  $("estado").querySelector("b").textContent = titulo;
+  $("estadoTxt").textContent = txt || "";
+  $("btnPrueba").disabled = $("btnArchivo").disabled = clase !== "ok";
+}
+function anotar(txt, error) {
+  $("log").insertAdjacentHTML("afterbegin", `<div class="${error ? "error" : ""}">${hora()} · ${esc(txt)}</div>`);
+}
+
+async function pedir(url, opciones = {}) {
+  const r = await fetch(url, { ...opciones, headers: { "Content-Type": "text/plain;charset=UTF-8" } });
+  const texto = await r.text();
+  if (!r.ok) throw new Error(`${r.status} ${texto}`.trim());
+  return texto;
+}
+
+async function buscar() {
+  estado("espera", "Buscando la Zebra…", "");
+  for (const b of BASES) {
+    try {
+      const txt = await pedir(`${b}/default?type=printer`);
+      const d = txt ? JSON.parse(txt) : null;
+      if (d && d.name) { base = b; zebra = d; break; }
+      // Sin predeterminada: tomar la primera disponible
+      const lista = JSON.parse(await pedir(`${b}/available`));
+      const p = (lista.printer || [])[0];
+      if (p) { base = b; zebra = p; break; }
+      base = b; zebra = null;
+    } catch (err) { console.warn(b, err); }
+  }
+  if (zebra) { estado("ok", "Impresora lista", `${zebra.name} · ${zebra.connection || ""}`); anotar(`Encontrada: ${zebra.name} (${base})`); }
+  else if (base) estado("no", "Browser Print anda, pero no ve la Zebra", "Revisá el cable USB y que figure en el menú de Browser Print.");
+  else estado("no", "No encuentro Browser Print", "¿Está instalado y abierto en esta Mac? Mirá los pasos de abajo.");
+}
+
+async function imprimir(zpl, nombre) {
+  if (!zebra) return;
+  try {
+    await pedir(`${base}/write`, { method: "POST", body: JSON.stringify({ device: zebra, data: zpl }) });
+    anotar(`Impresa: ${nombre}`);
+  } catch (err) {
+    anotar(`No se pudo imprimir ${nombre}: ${err.message}`, true);
+    estado("no", "Error al imprimir", err.message);
+  }
+}
+
+// Etiqueta de prueba 10 × 15 cm (el tamaño de las de Mercado Libre) a 203 dpi.
+const PRUEBA = `^XA^CI28^PW812^LL1218
+^FO40,60^A0N,70,70^FDPrueba de impresion^FS
+^FO40,160^A0N,40,40^FDEstacion de impresion - Pret a Home^FS
+^FO40,230^A0N,34,34^FD${new Date().toLocaleString("es-AR")}^FS
+^FO40,320^GB730,4,4^FS
+^FO40,380^BQN,2,8^FDQA,prueba-estacion^FS
+^FO40,800^A0N,34,34^FDSi ves esto nitido y centrado, anda.^FS
+^XZ`;
+
+$("btnPrueba").onclick = () => imprimir(PRUEBA, "etiqueta de prueba");
+$("btnArchivo").onclick = () => $("archivo").click();
+$("archivo").onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const zpl = await f.text();
+  if (!zpl.includes("^XA")) { anotar(`${f.name} no parece una etiqueta Zebra (no tiene ^XA).`, true); return; }
+  await imprimir(zpl, f.name);
+  e.target.value = "";
+};
+$("btnBuscar").onclick = buscar;
+buscar();
+</script>
+</body>
+</html>
