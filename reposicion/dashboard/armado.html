@@ -439,8 +439,9 @@
 
 <!-- Tarjetas -->
 <section class="vista" id="vCartas" hidden>
-  <div class="bar"><b id="cTitulo"></b><small id="cPaso"></small></div>
+  <div class="bar"><button class="atras" type="button" id="cAtras">‹ <span id="cTitulo"></span></button><small id="cPaso"></small></div>
   <div class="dots" id="cDots"></div>
+  <div class="avisos" id="cAvisos" hidden></div>
   <div class="aviso amarillo" id="parecido" hidden></div>
   <div class="deck" id="deck"></div>
   <div class="acciones">
@@ -521,6 +522,9 @@ function mostrar(id) {
   for (const v of ["vInicio", "vScan", "vQuien", "vPanel", "vCartas", "vBusq", "vProf", "vDespElegir", "vDesp"]) $(v).hidden = v !== id;
   if (id === "vScan") iniciarCamara();
   else if (id === "vDesp") iniciarCamara("videoDesp", leerDespacho);
+  // Mientras se arma un pedido de Empaquetado la cámara no se apaga: solo deja de leer, así la etiqueta
+  // siguiente se lee al instante (prenderla de nuevo tarda).
+  else if ((id === "vPanel" || id === "vCartas") && camVideoId === "video" && !camHandler) pausarLectura();
   else detenerCamara();
   if (id !== "vBusq") detenerBusqueda();
   if (id !== "vProf") detenerProfunda();
@@ -604,6 +608,7 @@ $("btnDespacho").onclick = () => abrirDespacho();
 // Dos usos: Empaquetado (una lectura y se apaga la cámara) y Despacho (sigue abierta y entrega cada
 // lectura a camHandler, para escanear paquete tras paquete sin tocar nada).
 let stream = null, loopId = null, detector = null, leyendo = false;
+const cerrado = { codigo: "", at: 0 }; // último pedido cerrado completo (para no releer su etiqueta al volver solo)
 let camVideoId = "video", camHandler = null;
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -618,12 +623,19 @@ function mensajeCamara(txt, error = false) {
 function botonCamara(visible) { (camHandler ? $("dReintentarCam") : $("btnCamara")).hidden = !visible; }
 
 async function iniciarCamara(videoId = "video", handler = null) {
-  camVideoId = videoId; camHandler = handler;
   if (!navigator.mediaDevices?.getUserMedia) {
+    camVideoId = videoId; camHandler = handler;
     mensajeCamara("Este navegador no permite usar la cámara. Escribí el número de venta.", true);
     return;
   }
-  if (stream) return;
+  if (stream && camVideoId !== videoId) detenerCamara();
+  camVideoId = videoId; camHandler = handler;
+  if (stream) {
+    const v = $(camVideoId);
+    if (v.paused) v.play().catch(() => {});
+    if (!loopId) { leyendo = false; loopId = setInterval(leerCuadro, 180); }
+    return;
+  }
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
     const v = $(camVideoId);
@@ -641,6 +653,8 @@ async function iniciarCamara(videoId = "video", handler = null) {
     mensajeCamara("No se pudo abrir la cámara. Dale permiso al navegador o escribí el número de venta.", true);
   }
 }
+
+function pausarLectura() { clearInterval(loopId); loopId = null; }
 
 function detenerCamara() {
   clearInterval(loopId); loopId = null;
@@ -667,6 +681,8 @@ async function leerCuadro() {
     }
     if (texto && camHandler) {
       camHandler(texto); // Despacho: la cámara sigue abierta para el próximo paquete
+    } else if (texto && texto === cerrado.codigo && Date.now() - cerrado.at < 10_000) {
+      // la etiqueta del pedido que se acaba de cerrar: se ignora unos segundos
     } else if (texto) {
       pitido(); vibrar(60);
       await buscar(texto);
@@ -736,7 +752,9 @@ function avisosHTML(avisos) {
 function resumenInicial(p) {
   pedido = p;
   const hayRojo = p.avisos.some((a) => a.nivel === "rojo");
-  if (hayRojo) { pitido(220, 0.35); vibrar([120, 80, 120]); }
+  // Sin avisos rojos (cancelado) se va directo a controlar producto por producto: un toque menos.
+  if (!hayRojo) return empezar();
+  pitido(220, 0.35); vibrar([120, 80, 120]);
   const u = unidades(p.items);
   panel(`
     <div class="bar"><b>Pedido encontrado</b><small>${esc(p.envio_tipo || "")}</small></div>
@@ -769,6 +787,9 @@ function empezar() {
   lineas = pedido.items.map((i) => ({ ...i, estado: null, confirmado_at: null }));
   cola = lineas.map((_, i) => i);
   $("cTitulo").textContent = `#${pedido.pedido}`;
+  const amarillos = pedido.avisos.filter((a) => a.nivel !== "rojo");
+  $("cAvisos").hidden = !amarillos.length;
+  $("cAvisos").innerHTML = amarillos.map((a) => `<div class="aviso ${a.nivel}">${esc(a.texto)}</div>`).join("");
   mostrar("vCartas");
   pintarCarta();
 }
@@ -860,6 +881,7 @@ async function decidir(que) {
 }
 
 $("btnOk").onclick = () => decidir("ok");
+$("cAtras").onclick = () => mostrar("vScan");
 $("btnNo").onclick = () => decidir("no");
 
 for (const b of document.querySelectorAll("#velo [data-motivo]")) {
@@ -933,6 +955,13 @@ async function guardar() {
     estado.innerHTML = `<p>Guardado${quien ? ` · armó ${esc(quien)}` : ""}.${tn?.estado === "marcado" ? (tn.retiro ? " Marcado como listo para retirar en Tiendanube." : " Marcado como empaquetado en Tiendanube.") : ""}</p>` +
       (tn?.estado === "error" ? `<div class="aviso amarillo">No se pudo marcar en Tiendanube. Marcalo a mano en el admin.</div>` : "");
     $("btnSiguiente").disabled = false;
+    if (!lineas.some((l) => l.estado === "no_hay")) {
+      // Completo y guardado: vuelve solo a escanear el siguiente (con faltante se queda, para no cerrar la caja)
+      cerrado.codigo = codigoLeido; cerrado.at = Date.now();
+      $("btnSiguiente").textContent = "Volviendo a la cámara…";
+      const este = pedido;
+      setTimeout(() => { if (pedido === este && !$("vPanel").hidden) mostrar("vScan"); }, 1500);
+    }
   } catch (err) {
     console.error(err);
     estado.innerHTML = `<div class="aviso rojo">No se pudo guardar el control. Revisá la conexión.</div>
