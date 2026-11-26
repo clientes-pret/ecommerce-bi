@@ -31,7 +31,7 @@ export const chipEstado = (e) => `<span class="chip ${ESTADO[e]?.[1] || ''}">${e
 
 // Las rutas se resuelven contra esta carpeta (proveedores/) para que anden igual desde operaciones/.
 const aca = (p) => new URL(p, import.meta.url).href;
-export const rutaPara = (rol) => aca(rol === 'deposito' ? 'recibir.html' : rol === 'marketing' ? '../marketing/dashboard.html' : 'admin.html');
+export const rutaPara = (rol) => aca(rol === 'deposito' ? 'recibir.html' : rol === 'marketing' ? '../marketing/dashboard.html' : rol === 'mercadolibre' ? '../operaciones/mercadolibre.html' : 'admin.html');
 
 // Verifica sesión y rol. Si no corresponde, redirige. Devuelve el perfil.
 export async function guard(roles) {
@@ -182,16 +182,18 @@ function centrarActiva(el) {
   if (links && on) links.scrollLeft = Math.max(0, on.offsetLeft - 24);
 }
 
-// Menú de la plataforma Operaciones Pret a Home (empaquetado y stock perdido). Misma sesión y mismo estilo que el panel de control.
+// Menú de la plataforma Operaciones Pret a Home. Misma sesión y mismo estilo que el panel de control.
+// El rol "mercadolibre" solo ve su pantalla: sin links a las demás ni a otras plataformas.
 export function navOperaciones(perfil, activa) {
+  const soloMl = perfil.rol === 'mercadolibre';
   const it = (href, txt, k) => `<a href="${href}" class="${activa === k ? 'on' : ''}"${activa === k ? ' aria-current="page"' : ''}>${txt}</a>`;
   const el = document.createElement('nav');
   el.className = 'side';
   el.setAttribute('aria-label', 'Operaciones Pret a Home');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Operaciones</div></div>' +
-    '<div class="links">' + it('empaquetado.html', 'Empaquetado', 'empaquetado') + it('perdido.html', 'Stock perdido', 'perdido') +
-      it('devoluciones.html', 'Devoluciones', 'devoluciones') +
-    '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel') + '<span class="sp"></span></div>' +
+    '<div class="links">' + it('mercadolibre.html', 'Mercado Libre', 'mercadolibre') + (soloMl ? '' : it('empaquetado.html', 'Empaquetado', 'empaquetado') +
+      it('perdido.html', 'Stock perdido', 'perdido') + it('devoluciones.html', 'Devoluciones', 'devoluciones') +
+      '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel')) + '<span class="sp"></span></div>' +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
   document.body.prepend(el);

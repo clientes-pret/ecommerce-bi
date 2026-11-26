@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mercado Libre · Control diario</title>
+  <link rel="icon" href="../proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="../proveedores/estilo.css?v=12">
+  <style>
+    .cuentas { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 16px; margin-bottom: 16px; }
+    .cuentas .card { margin: 0; padding: 16px 0 6px; border-top: 4px solid var(--pret); } .cuentas .card.lavan { border-top-color: var(--lavan); }
+    .cuentas h2 { margin: 0; padding: 0 18px; } .cuentas .sub { padding: 2px 18px 8px; }
+    .ind { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 18px; border-top: 1px solid var(--line-soft); align-items: center; }
+    .ind .n { font-weight: 600; } .ind .d { font-size: 13px; color: var(--muted); grid-column: 1; }
+    .ind .v { grid-column: 2; grid-row: 1 / span 2; text-align: right; }
+    .ind .v .chip { font-size: 15px; padding: 6px 12px; }
+    .tareas { list-style: none; margin: 0; padding: 0; }
+    .tareas li { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 12px 24px; border-top: 1px solid var(--line-soft); }
+    .tareas li .que { flex: 1 1 320px; min-width: 0; }
+    .tabs .btn[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+    .nota-rev { display: flex; gap: 8px; margin-top: 8px; } .nota-rev input { min-width: 180px; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+// Control diario de Mercado Libre (Pret a Home y Casa Laván): lo que hay que hacer hoy, el semáforo de cada cuenta y el
+// detalle de reclamos, envíos Flex/Colecta y peso y medidas. Los datos los deja reposicion/ml_control_sync.py cada pocas
+// horas (tablas mlc_*). Acá no se toca nada de Mercado Libre: lo único que se escribe es la marca "revisado".
+import { sb, $, $$, esc, guard, navOperaciones, leerTodo } from '../proveedores/app.js';
+const perfil = await guard(['admin', 'dueno', 'mercadolibre']);
+navOperaciones(perfil, 'mercadolibre');
+
+const AR = { timeZone: 'America/Argentina/Buenos_Aires' };
+const CUENTAS = { pret: 'Pret a Home', lavan: 'Casa Laván' };
+const LOGISTICA = { self_service: 'Flex', cross_docking: 'Colecta', xd_drop_off: 'Punto de despacho', drop_off: 'Correo' };
+const DEMORAS = { handling_delayed: 'se despachó tarde', shipping_delayed: 'se entregó tarde', sla_delayed: 'fuera de plazo',
+  shipping_delayed_cancellation: 'en riesgo de cancelación', shipping_delayed_original_promise: 'pasó la fecha prometida', SHIPPING_PREDICTED_DELAY: 'ML preveía la demora' };
+const ENVIO = { delivered: 'Entregado', shipped: 'En camino', ready_to_ship: 'Sin despachar', pending: 'Pendiente', cancelled: 'Cancelado', not_delivered: 'No entregado', handling: 'En preparación' };
+const TABS = [['hoy', 'Hoy'], ['reclamos', 'Reclamos'], ['envios', 'Flex y Colecta'], ['medidas', 'Peso y medidas']];
+
+const diaDe = (iso) => new Date(iso).toLocaleDateString('en-CA', AR);
+const corta = (iso) => (iso ? new Date(iso).toLocaleDateString('es-AR', { ...AR, day: '2-digit', month: '2-digit' }) : '—');
+const conHora = (iso) => (iso ? new Date(iso).toLocaleString('es-AR', { ...AR, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '—');
+const diaCorto = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+const nf = (n, dec = 0) => (n == null ? '—' : Number(n).toLocaleString('es-AR', { minimumFractionDigits: dec, maximumFractionDigits: dec }));
+const venta = (id) => (id ? `<a href="https://www.mercadolibre.com.ar/ventas/${encodeURIComponent(id)}/detalle" target="_blank" rel="noopener">Ver venta ↗</a>` : '');
+const corregir = (a, txt = 'Corregir en ML ↗') => `<a class="btn sm" href="${esc(a.link)}" target="_blank" rel="noopener">${txt}</a>`;
+const chip = (clase, txt) => `<span class="chip ${clase}">${txt}</span>`;
+const hace = (dias) => new Date(Date.now() - dias * 864e5).toISOString();
+
+// ---- Datos ----
+let D;
+async function cargar() {
+  const [resumen, reclamos, envios, alertas, riesgo, revisiones, config] = await Promise.all([
+    leerTodo('mlc_resumen_dia', '*', ['fecha', 'cuenta'], (q) => q.gte('fecha', diaDe(hace(30)))),
+    leerTodo('mlc_reclamos', '*', ['id'], (q) => q.or(`estado.eq.opened,creado.gte.${hace(60)}`)),
+    leerTodo('mlc_envios', '*', ['id'], (q) => q.neq('logistica', 'fulfillment').gte('limite', hace(15))),
+    leerTodo('mlc_alertas', '*', ['id']),
+    leerTodo('mlc_riesgo', '*', ['item_id']),
+    leerTodo('mlc_revisiones', '*', ['id']),
+    leerTodo('mlc_config', '*', ['clave']),
+  ]);
+  D = { resumen, reclamos, envios, alertas, riesgo, revisiones, cfg: Object.fromEntries(config.map((c) => [c.clave, Number(c.valor)])) };
+}
+
+let tab = location.hash.slice(1), cuenta = 'todas', verRevisadas = false, tipoRiesgo = 'todos', pagRiesgo = 1, todosProductos = false;
+if (!TABS.some(([k]) => k === tab)) tab = 'hoy';
+const mias = (xs) => (cuenta === 'todas' ? xs : xs.filter((x) => x.cuenta === cuenta));
+const cuentasVistas = () => (cuenta === 'todas' ? Object.keys(CUENTAS) : [cuenta]);
+const historia = (c) => D.resumen.filter((r) => r.cuenta === c).sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+// ---- Semáforo ----
+function colorTasa(v, limite) { if (v == null) return ''; return v >= limite ? 'bad' : v >= limite * D.cfg.aviso / 100 ? 'warn' : 'ok'; }
+function colorExpo(pct) { if (pct == null) return ''; return pct >= D.cfg.exposicion_buena ? 'ok' : pct >= D.cfg.exposicion_mala ? 'warn' : 'bad'; }
+const aTiempo = (total, dem) => (total ? (100 * (total - dem)) / total : null);
+function cambio(hoy, antes, dec, sufijo = '') {
+  if (hoy == null || antes == null) return '';
+  const d = Number(hoy) - Number(antes);
+  if (Math.abs(d) < 0.5 / 10 ** dec) return ' · igual que ayer';
+  return ` · ${d > 0 ? '▲' : '▼'} ${nf(Math.abs(d), dec)}${sufijo} vs. ayer`;
+}
+
+function tarjetaCuenta(c) {
+  const [r, ant] = historia(c);
+  if (!r) return `<section class="card ${c}"><h2>${CUENTAS[c]}</h2><p class="muted sub">Todavía no hay datos de esta cuenta.</p></section>`;
+  // "vs. ayer" solo si la foto anterior es realmente la de ayer.
+  const ayer = ant && ant.fecha === diaDe(new Date(new Date(r.fecha + 'T12:00:00').getTime() - 864e5)) ? ant : null;
+  const ind = (nombre, detalle, valor, color) => `<div class="ind"><span class="n">${nombre}</span><span class="v">${chip(color, valor)}</span><span class="d">${detalle}</span></div>`;
+  const expo = (nombre, total, dem) => {
+    const p = aTiempo(total, dem);
+    return ind(`${nombre} a tiempo esta semana`, total == null ? 'sin dato' : total ? `${nf(dem)} demorado${dem === 1 ? '' : 's'} de ${nf(total)} envíos desde el lunes` : 'todavía no venció ningún envío esta semana',
+      p == null ? '—' : nf(p, 1) + ' %', colorExpo(p));
+  };
+  const tasa = (nombre, campo, limite) => ind(nombre, `${nf(r[campo + '_60d'])} en 60 días · límite ${nf(D.cfg[limite], 1)} %${cambio(r[campo + '_tasa'], ayer?.[campo + '_tasa'], 2)}`,
+    r[campo + '_tasa'] == null ? '—' : nf(r[campo + '_tasa'], 2) + ' %', colorTasa(r[campo + '_tasa'], D.cfg[limite]));
+  const prot = r.protegida ? `<div class="sub small">${chip('warn', 'Cuenta protegida')} Mercado Libre no está contando estos valores${r.proteccion_hasta ? ` hasta el ${conHora(r.proteccion_hasta)}` : ''}; acá se ven los reales.</div>` : '';
+  return `<section class="card ${c}"><h2>${CUENTAS[c]}</h2><div class="sub small muted">Datos del ${conHora(r.actualizado_at)}</div>${prot}
+    ${ind('Publicaciones frenadas por medidas', 'esperando que se corrija el paquete' + cambio(r.alertas_pendientes, ayer?.alertas_pendientes, 0), nf(r.alertas_pendientes), r.alertas_pendientes == null ? '' : r.alertas_pendientes ? 'bad' : 'ok')}
+    ${ind('Alertas de peso y medidas', 'en los últimos 30 días' + cambio(r.alertas_30d, ayer?.alertas_30d, 0), nf(r.alertas_30d), r.alertas_30d == null ? '' : r.alertas_30d ? 'warn' : 'ok')}
+    ${tasa('Reclamos', 'reclamos', 'limite_reclamos')}
+    ${ind('Reclamos abiertos', `${nf(r.reclamos_afectan)} afectan la reputación · ${nf(r.reclamos_responder)} esperan respuesta${cambio(r.reclamos_abiertos, ayer?.reclamos_abiertos, 0)}`, nf(r.reclamos_abiertos), r.reclamos_responder ? 'warn' : r.reclamos_abiertos == null ? '' : 'ok')}
+    ${expo('Flex', r.flex_semana, r.flex_demorados)}
+    ${expo('Colecta', r.colecta_semana, r.colecta_demorados)}
+    ${tasa('Envíos con demora', 'demoras', 'limite_demoras')}
+    ${tasa('Cancelaciones', 'cancel', 'limite_cancel')}
+  </section>`;
+}
+
+// ---- Alertas de medidas agrupadas por publicación ----
+function alertasPorItem() {
+  const m = new Map();
+  for (const a of mias(D.alertas).slice().sort((x, y) => new Date(y.fecha) - new Date(x.fecha))) {
+    const g = m.get(a.item_id);
+    if (g) { g.veces++; if (a.reincidencia) g.reincidencia = true; } else m.set(a.item_id, { ...a, veces: 1 });
+  }
+  return [...m.values()];
+}
+const ultimaRevision = (item) => D.revisiones.filter((r) => r.item_id === item).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+function estadoPub(a) {
+  if (a.pendiente) return chip('bad', 'Frenada');
+  if (a.estado_item === 'active') return chip('ok', 'Activa');
+  if (a.estado_item === 'paused') return chip('', (a.subestado_item || []).includes('out_of_stock') ? 'Pausada sin stock' : 'Pausada');
+  if (a.estado_item === 'under_review') return chip('warn', 'En revisión');
+  return chip('', a.estado_item === 'closed' ? 'Finalizada' : esc(a.estado_item || 'sin dato'));
+}
+function celdaRevision(item, cta, desde) {
+  const r = ultimaRevision(item);
+  const vigente = r && (!desde || new Date(r.created_at) > new Date(desde));
+  const previa = r ? `<div class="small muted">${vigente ? '✓ ' : 'Antes: '}${esc(r.autor_nombre || '')} · ${conHora(r.created_at)}${r.nota ? ` · “${esc(r.nota)}”` : ''}
+    ${r.autor === perfil.id || perfil.rol !== 'mercadolibre' ? ` · <a href="#" data-borrar="${r.id}">deshacer</a>` : ''}</div>` : '';
+  return previa + (vigente ? '' : `<button type="button" class="btn sm" data-revisar="${esc(item)}" data-cta="${cta}">Marcar revisado</button>`);
+}
+const revisada = (item, desde) => { const r = ultimaRevision(item); return !!r && (!desde || new Date(r.created_at) > new Date(desde)); };
+
+// ---- Hoy ----
+function vistaHoy() {
+  const frenadas = mias(D.alertas).filter((a) => a.pendiente);
+  const aResponder = mias(D.reclamos).filter((r) => r.estado === 'opened' && r.vence).sort((a, b) => new Date(a.vence) - new Date(b.vence));
+  const sinRevisar = alertasPorItem().filter((a) => !a.pendiente && new Date(a.fecha) > new Date(hace(30)) && !revisada(a.item_id, a.fecha));
+  const hoy = diaDe(new Date().toISOString());
+  const tareas = [
+    ...frenadas.map((a) => `<li>${chip('bad', 'Medidas')}<div class="que"><b>${esc(a.titulo || a.item_id)}</b><div class="small muted">${CUENTAS[a.cuenta]} · ${esc(a.item_id)} · alerta del ${corta(a.fecha)}${a.reincidencia ? ' · reincidencia' : ''} · declarado ${esc(a.declarado || '—')}</div></div>${corregir(a)}</li>`),
+    ...aResponder.map((r) => {
+      const vencido = new Date(r.vence) < new Date(), esHoy = diaDe(r.vence) === hoy;
+      return `<li>${chip(vencido || esHoy ? 'bad' : 'warn', vencido ? 'Vencido' : esHoy ? 'Vence hoy' : 'Vence ' + corta(r.vence))}<div class="que"><b>${esc(r.titulo || 'Reclamo ' + r.id)}</b><div class="small muted">${CUENTAS[r.cuenta]} · ${esc(r.motivo || '')} · responder antes del ${conHora(r.vence)}${r.afecta === 'affected' ? ' · afecta la reputación' : ''}</div></div>${venta(r.order_id)}</li>`;
+    }),
+    ...(sinRevisar.length ? [`<li>${chip('warn', 'Medidas')}<div class="que"><b>${sinRevisar.length} publicaci${sinRevisar.length === 1 ? 'ón' : 'ones'} con alerta en los últimos 30 días sin revisar</b><div class="small muted">Mercado Libre ya no las tiene frenadas, pero conviene confirmar que el paquete quedó bien cargado.</div></div><button type="button" class="btn sm" data-ir="medidas">Ver</button></li>`] : []),
+  ];
+  const tablaHist = (c) => {
+    const filas = historia(c).slice(0, 14);
+    if (!filas.length) return '';
+    const cel = (v, color, label) => `<td class="r num" data-label="${label}">${v === '—' ? v : chip(color, v)}</td>`;
+    return `<section class="card tabla"><div class="cab"><div><h2>Cómo viene · ${CUENTAS[c]}</h2><span class="muted">La foto de cada día (la última actualización de ese día)</span></div></div>
+      <div class="scroll"><table class="apilar c3" style="min-width:860px"><thead><tr><th scope="col">Día</th><th scope="col" class="r">Frenadas por medidas</th><th scope="col" class="r">Alertas 30 días</th><th scope="col" class="r">Reclamos</th>
+        <th scope="col" class="r">Sin responder</th><th scope="col" class="r">Flex a tiempo</th><th scope="col" class="r">Colecta a tiempo</th><th scope="col" class="r">Demoras</th><th scope="col" class="r">Cancelaciones</th></tr></thead>
+      <tbody>${filas.map((r) => { const fx = aTiempo(r.flex_semana, r.flex_demorados), co = aTiempo(r.colecta_semana, r.colecta_demorados); const p = (v, d) => (v == null ? '—' : nf(v, d) + ' %');
+        return `<tr><th scope="row" class="tit">${diaCorto(r.fecha)}</th>${cel(nf(r.alertas_pendientes), r.alertas_pendientes ? 'bad' : 'ok', 'Frenadas')}${cel(nf(r.alertas_30d), r.alertas_30d ? 'warn' : 'ok', 'Alertas 30 d')}
+          ${cel(p(r.reclamos_tasa, 2), colorTasa(r.reclamos_tasa, D.cfg.limite_reclamos), 'Reclamos')}${cel(nf(r.reclamos_responder), r.reclamos_responder ? 'warn' : 'ok', 'Sin responder')}
+          ${cel(p(fx, 1), colorExpo(fx), 'Flex')}${cel(p(co, 1), colorExpo(co), 'Colecta')}${cel(p(r.demoras_tasa, 2), colorTasa(r.demoras_tasa, D.cfg.limite_demoras), 'Demoras')}
+          ${cel(p(r.cancel_tasa, 2), colorTasa(r.cancel_tasa, D.cfg.limite_cancel), 'Cancelac.')}</tr>`; }).join('')}</tbody></table></div></section>`;
+  };
+  return `<div class="cuentas">${cuentasVistas().map(tarjetaCuenta).join('')}</div>
+    <section class="card tabla"><div class="cab"><div><h2>Para hacer hoy</h2><span class="muted">${tareas.length ? `${frenadas.length} publicaci${frenadas.length === 1 ? 'ón frenada' : 'ones frenadas'} · ${aResponder.length} reclamo${aResponder.length === 1 ? '' : 's'} esperando respuesta` : ''}</span></div></div>
+      ${tareas.length ? `<ul class="tareas">${tareas.join('')}</ul>` : '<p class="muted" style="padding:0 24px 12px">No hay publicaciones frenadas ni reclamos esperando respuesta.</p>'}</section>
+    ${cuentasVistas().map(tablaHist).join('')}
+    <p class="muted small" style="line-height:1.6">Verde, amarillo y rojo de reclamos, cancelaciones y demoras comparan contra los límites cargados (amarillo desde el ${nf(D.cfg.aviso)} % del límite).
+      Flex y Colecta: ${nf(D.cfg.exposicion_buena)} % o más a tiempo en la semana, verde; menos de ${nf(D.cfg.exposicion_mala)} %, rojo. El porcentaje semanal se calcula acá envío por envío y puede diferir un poco del que muestra Mercado Libre.</p>`;
+}
+
+// ---- Reclamos ----
+function vistaReclamos() {
+  const reales = mias(D.reclamos).filter((r) => ['mediations', 'returns'].includes(r.tipo));
+  const abiertos = reales.filter((r) => r.estado === 'opened').sort((a, b) => (a.vence ? new Date(a.vence) : 8e15) - (b.vence ? new Date(b.vence) : 8e15) || new Date(b.creado) - new Date(a.creado));
+  const ult60 = reales.filter((r) => new Date(r.creado) > new Date(hace(60)));
+  const agrupar = (xs, clave) => { const m = new Map(); for (const x of xs) { const k = clave(x); (m.get(k) || m.set(k, []).get(k)).push(x); } return [...m.entries()].sort((a, b) => b[1].length - a[1].length); };
+  const masComun = (xs) => agrupar(xs, (x) => x.motivo || 'Sin motivo')[0];
+  const productos = agrupar(ult60.filter((r) => r.titulo), (r) => r.sku || r.titulo);
+  const motivos = agrupar(ult60, (r) => r.motivo || 'Sin motivo');
+  const etapa = (r) => (r.etapa === 'dispute' ? 'Mediación' : r.tipo === 'returns' ? 'Devolución' : 'Reclamo');
+  const afecta = (r) => (r.afecta === 'affected' ? chip('bad', 'Afecta') : r.afecta === 'not_affected' ? chip('ok', 'No afecta') : chip('', '—'));
+  return `<section class="card tabla"><div class="cab"><div><h2>Abiertos (${abiertos.length})</h2><span class="muted">Primero los que esperan respuesta, por vencimiento</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:900px"><thead><tr><th scope="col">Responder antes de</th><th scope="col">Producto</th><th scope="col">Motivo</th><th scope="col">Etapa</th><th scope="col">Reputación</th><th scope="col">Abierto</th><th scope="col"></th></tr></thead>
+    <tbody>${abiertos.map((r) => `<tr><td class="num" data-label="Responder antes de">${r.vence ? chip(new Date(r.vence) < new Date() || diaDe(r.vence) === diaDe(new Date().toISOString()) ? 'bad' : 'warn', conHora(r.vence)) : '<span class="muted">No depende de nosotros</span>'}</td>
+      <td class="tit"><b>${esc(r.titulo || 'Sin producto identificado')}</b><div class="small muted">${CUENTAS[r.cuenta]}${r.sku ? ' · ' + esc(r.sku) : ''}</div></td>
+      <td data-label="Motivo">${esc(r.motivo || '—')}</td><td data-label="Etapa">${etapa(r)}</td><td data-label="Reputación">${afecta(r)}</td><td class="num" data-label="Abierto">${corta(r.creado)}</td><td>${venta(r.order_id)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No hay reclamos abiertos.</td></tr>'}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>Productos que más reclamos generan</h2><span class="muted">Últimos 60 días: ${ult60.length} reclamos y devoluciones</span></div></div>
+    <div class="scroll"><table class="apilar c3" style="min-width:760px"><thead><tr><th scope="col">Producto</th><th scope="col" class="r">Reclamos</th><th scope="col" class="r">Afectan reputación</th><th scope="col">Motivo principal</th></tr></thead>
+    <tbody>${productos.slice(0, todosProductos ? 500 : 15).map(([, xs]) => { const [mot, de] = masComun(xs); return `<tr><td class="tit"><b>${esc(xs[0].titulo)}</b><div class="small muted">${[...new Set(xs.map((x) => CUENTAS[x.cuenta]))].join(' y ')}${xs[0].sku ? ' · ' + esc(xs[0].sku) : ''}</div></td>
+      <td class="r num" data-label="Reclamos">${xs.length}</td><td class="r num" data-label="Afectan">${xs.filter((x) => x.afecta === 'affected').length}</td><td data-label="Motivo principal" class="full">${esc(mot)} (${de.length} de ${xs.length})</td></tr>`; }).join('') || '<tr><td colspan="4" class="muted">Sin reclamos en el período.</td></tr>'}</tbody></table></div>
+    ${productos.length > 15 ? `<div style="padding:8px 24px"><button type="button" class="btn sm" id="mas-prod">${todosProductos ? 'Ver solo los 15 primeros' : `Ver los ${productos.length} productos`}</button></div>` : ''}</section>
+  <section class="card tabla"><div class="cab"><div><h2>Por motivo</h2><span class="muted">Últimos 60 días</span></div></div>
+    <div class="scroll"><table class="apilar c3" style="min-width:520px"><thead><tr><th scope="col">Motivo</th><th scope="col" class="r">Reclamos</th><th scope="col" class="r">Afectan reputación</th><th scope="col" class="r">Del total</th></tr></thead>
+    <tbody>${motivos.map(([k, xs]) => `<tr><th scope="row" class="tit">${esc(k)}</th><td class="r num" data-label="Reclamos">${xs.length}</td><td class="r num" data-label="Afectan">${xs.filter((x) => x.afecta === 'affected').length}</td><td class="r num" data-label="Del total">${nf((100 * xs.length) / ult60.length, 0)} %</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin reclamos.</td></tr>'}</tbody></table></div></section>`;
+}
+
+// ---- Flex y Colecta ----
+function vistaEnvios() {
+  const ahora = new Date();
+  // Cuentan los envíos que ya llegaron a su fecha límite, más los que ML ya marca demorados (misma regla que el resumen).
+  const vale = (e) => ['on_time', 'early', 'delayed'].includes(e.sla) && (e.sla === 'delayed' || (new Date(e.limite) <= ahora && e.estado !== 'cancelled'));
+  const envios = mias(D.envios).filter((e) => e.limite && vale(e) && new Date(e.limite) > new Date(hace(14)));
+  const dias = [...new Set(envios.map((e) => diaDe(e.limite)))].filter((d) => d <= diaDe(ahora.toISOString())).sort().reverse();
+  const celdas = (d, tipo, nombre) => {
+    const xs = envios.filter((e) => e.logistica === tipo && diaDe(e.limite) === d), dem = xs.filter((e) => e.sla === 'delayed').length, p = aTiempo(xs.length, dem);
+    return `<td class="r num" data-label="${nombre}: envíos">${xs.length}</td><td class="r num" data-label="Demorados">${dem}</td><td class="r num" data-label="A tiempo">${p == null ? '—' : chip(colorExpo(p), nf(p, 1) + ' %')}</td>`;
+  };
+  const tarde = envios.filter((e) => e.sla === 'delayed').sort((a, b) => new Date(b.limite) - new Date(a.limite));
+  return `${cuentasVistas().map((c) => {
+    const r = historia(c)[0];
+    const kpi = (nombre, total, dem) => { const p = aTiempo(total, dem); return `<div class="cc-card"><div class="cc-label">${CUENTAS[c]} · ${nombre} esta semana</div><div class="cc-valor num">${p == null ? '—' : nf(p, 1) + ' %'}</div><div class="cc-sub">${chip(colorExpo(p), p == null ? 'sin envíos vencidos' : p >= D.cfg.exposicion_buena ? 'Exposición excelente' : p >= D.cfg.exposicion_mala ? 'Exposición regular' : 'Exposición muy mala')} ${total ? `${nf(dem)} de ${nf(total)} demorados` : ''}</div></div>`; };
+    return r ? `<div class="centro-comando compacto">${kpi('Flex', r.flex_semana, r.flex_demorados)}${kpi('Colecta', r.colecta_semana, r.colecta_demorados)}</div>` : '';
+  }).join('')}
+  <section class="card tabla"><div class="cab"><div><h2>Día por día</h2><span class="muted">Según la fecha límite de cada envío, últimos 14 días</span></div></div>
+    <div class="scroll"><table class="apilar c3" style="min-width:760px"><thead><tr><th scope="col">Día</th><th scope="col" class="r">Flex</th><th scope="col" class="r">Demorados</th><th scope="col" class="r">A tiempo</th><th scope="col" class="r">Colecta</th><th scope="col" class="r">Demorados</th><th scope="col" class="r">A tiempo</th></tr></thead>
+    <tbody>${dias.map((d) => `<tr><th scope="row" class="tit">${diaCorto(d)}</th>${celdas(d, 'self_service', 'Flex')}${celdas(d, 'cross_docking', 'Colecta')}</tr>`).join('') || '<tr><td colspan="7" class="muted">Sin envíos.</td></tr>'}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>Envíos demorados (${tarde.length})</h2><span class="muted">Últimos 14 días</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:860px"><thead><tr><th scope="col">Fecha límite</th><th scope="col">Producto</th><th scope="col">Tipo</th><th scope="col">Qué pasó</th><th scope="col">Estado hoy</th><th scope="col"></th></tr></thead>
+    <tbody>${tarde.slice(0, 300).map((e) => `<tr><td class="num" data-label="Fecha límite">${conHora(e.limite)}</td><td class="tit"><b>${esc(e.titulo || 'Envío ' + e.id)}</b><div class="small muted">${CUENTAS[e.cuenta]}${e.sku ? ' · ' + esc(e.sku) : ''}</div></td>
+      <td data-label="Tipo">${LOGISTICA[e.logistica] || esc(e.logistica || '—')}</td><td data-label="Qué pasó">${esc((e.demoras || []).map((x) => DEMORAS[x] || x).join(', ') || 'fuera de plazo')}</td><td data-label="Estado hoy">${ENVIO[e.estado] || esc(e.estado || '—')}</td><td>${venta(e.order_id)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Ningún envío demorado. 👏</td></tr>'}</tbody></table></div></section>`;
+}
+
+// ---- Peso y medidas ----
+function vistaMedidas() {
+  const grupos = alertasPorItem();
+  const frenadas = grupos.filter((a) => a.pendiente);
+  const resto = grupos.filter((a) => !a.pendiente && new Date(a.fecha) > new Date(hace(90)) && (verRevisadas || !revisada(a.item_id, a.fecha)));
+  const riesgoTodo = mias(D.riesgo).filter((r) => (tipoRiesgo === 'todos' || r.tipo === tipoRiesgo) && (verRevisadas || !revisada(r.item_id))).sort((a, b) => b.vendidos - a.vendidos || a.item_id.localeCompare(b.item_id));
+  const paginas = Math.max(1, Math.ceil(riesgoTodo.length / 50)); pagRiesgo = Math.min(pagRiesgo, paginas);
+  const filaAlerta = (a) => `<tr><td class="num" data-label="Última alerta">${corta(a.fecha)}${a.veces > 1 ? `<div class="small muted">${a.veces} alertas</div>` : ''}</td>
+    <td class="tit"><b>${esc(a.titulo || a.item_id)}</b><div class="small muted">${CUENTAS[a.cuenta]} · ${esc(a.item_id)}${a.sku ? ' · ' + esc(a.sku) : ''}</div>${a.reincidencia ? chip('bad', 'Reincidencia') : ''}</td>
+    <td data-label="Estado">${estadoPub(a)}</td><td class="small num" data-label="Declarado">${esc(a.declarado || '—')}</td><td class="small num" data-label="Otro dato del paquete">${esc(a.paquete || '—')}</td>
+    <td class="full">${corregir(a, 'Ver en ML ↗')} ${celdaRevision(a.item_id, a.cuenta, a.fecha)}</td></tr>`;
+  const cabAlertas = '<thead><tr><th scope="col">Última alerta</th><th scope="col">Publicación</th><th scope="col">Estado</th><th scope="col">Declarado</th><th scope="col">Otro dato del paquete</th><th scope="col"></th></tr></thead>';
+  return `<section class="card tabla"><div class="cab"><div><h2>Frenadas ahora (${frenadas.length})</h2><span class="muted">Mercado Libre las tiene detenidas hasta que se corrijan los datos del paquete</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:900px">${cabAlertas}<tbody>${frenadas.map(filaAlerta).join('') || '<tr><td colspan="6" class="muted">Ninguna publicación frenada. 👏</td></tr>'}</tbody></table></div></section>
+  <div class="row wrapRow" style="margin:0 0 12px"><label style="display:inline-flex;gap:8px;align-items:center;margin:0"><input type="checkbox" id="ver-rev" ${verRevisadas ? 'checked' : ''}> Mostrar también las ya revisadas</label></div>
+  <section class="card tabla"><div class="cab"><div><h2>Alertas de los últimos 90 días (${resto.length})</h2><span class="muted">“Medidas y peso del paquete mayores a los declarados”</span></div></div>
+    <div class="scroll"><table class="apilar" style="min-width:900px">${cabAlertas}<tbody>${resto.map(filaAlerta).join('') || '<tr><td colspan="6" class="muted">Nada pendiente de revisar.</td></tr>'}</tbody></table></div></section>
+  <section class="card tabla"><div class="cab"><div><h2>Para revisar antes de que llegue la alerta (${riesgoTodo.length})</h2><span class="muted">Publicaciones activas que no son Full y cuyos datos de paquete no cierran. Primero las más vendidas</span></div>
+    <div class="seg" role="group" aria-label="Tipo">${[['todos', 'Todas'], ['ml_midio_mas', 'ML midió más'], ['datos_distintos', 'Datos que no coinciden']].map(([k, t]) => `<button type="button" data-riesgo="${k}" aria-pressed="${tipoRiesgo === k}">${t}</button>`).join('')}</div></div>
+    <div class="scroll"><table class="apilar" style="min-width:900px"><thead><tr><th scope="col">Publicación</th><th scope="col">Qué se ve</th><th scope="col">Declarado</th><th scope="col">Otro dato del paquete</th><th scope="col" class="r">Vendidas</th><th scope="col"></th></tr></thead>
+    <tbody>${riesgoTodo.slice((pagRiesgo - 1) * 50, pagRiesgo * 50).map((r) => `<tr><td class="tit"><b>${esc(r.titulo || r.item_id)}</b><div class="small muted">${CUENTAS[r.cuenta]} · ${esc(r.item_id)}${r.sku ? ' · ' + esc(r.sku) : ''}</div></td>
+      <td data-label="Qué se ve">${r.tipo === 'ml_midio_mas' ? chip('bad', 'ML midió más') + `<div class="small muted">${r.dif_peso > 1.25 ? `peso ×${nf(r.dif_peso, 2)}` : ''}${r.dif_peso > 1.25 && r.dif_volumen > 1.25 ? ' · ' : ''}${r.dif_volumen > 1.25 ? `volumen ×${nf(r.dif_volumen, 2)}` : ''}</div>` : chip('warn', 'No coinciden')}</td>
+      <td class="small num" data-label="Declarado">${esc(r.declarado || '—')}</td><td class="small num" data-label="Otro dato">${esc(r.otro || '—')}</td><td class="r num" data-label="Vendidas">${nf(r.vendidos)}</td>
+      <td class="full">${corregir(r, 'Ver en ML ↗')} ${celdaRevision(r.item_id, r.cuenta)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Nada para revisar.</td></tr>'}</tbody></table></div>
+    ${paginas > 1 ? `<div class="row pager" style="justify-content:space-between;padding:10px 24px"><span class="muted small">${riesgoTodo.length} publicaciones</span><div class="row" style="gap:8px"><button type="button" class="btn sm" data-pag="-1" ${pagRiesgo <= 1 ? 'disabled' : ''}>← Anterior</button><span class="small">Página ${pagRiesgo} de ${paginas}</span><button type="button" class="btn sm" data-pag="1" ${pagRiesgo >= paginas ? 'disabled' : ''}>Siguiente →</button></div></div>` : ''}</section>`;
+}
+
+// ---- Pantalla ----
+function pintar() {
+  const ultima = D.resumen.reduce((a, r) => (r.actualizado_at > a ? r.actualizado_at : a), '');
+  const horas = ultima ? (Date.now() - new Date(ultima)) / 36e5 : null;
+  const edad = horas == null ? 'Todavía no hay datos' : horas < 1 ? `Actualizado hace ${Math.max(1, Math.round(horas * 60))} min` : `Actualizado hace ${Math.round(horas)} h`;
+  const frenadas = mias(D.alertas).filter((a) => a.pendiente).length;
+  const responder = mias(D.reclamos).filter((r) => r.estado === 'opened' && r.vence).length;
+  const globo = { reclamos: responder, medidas: frenadas };
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Mercado Libre</h1><p>Control diario de reclamos, Flex y Colecta, y peso y medidas</p></div>
+      <div class="row">${chip(horas != null && horas < 8 ? '' : 'warn', edad)}<button type="button" class="btn sm" id="recargar">Recargar</button></div></div>
+    <div class="row wrapRow filtros" style="margin:14px 0 0"><div class="seg full" role="group" aria-label="Marca">${[['todas', 'Las dos marcas'], ['pret', 'Pret a Home'], ['lavan', 'Casa Laván']].map(([k, t]) => `<button type="button" data-marca="${k}" aria-pressed="${cuenta === k}">${t}</button>`).join('')}</div></div>
+    <div class="tabs">${TABS.map(([k, t]) => `<button type="button" class="btn sm" data-ir="${k}" aria-pressed="${tab === k}">${t}${globo[k] ? ' ' + chip('bad', globo[k]) : ''}</button>`).join('')}</div>
+    ${{ hoy: vistaHoy, reclamos: vistaReclamos, envios: vistaEnvios, medidas: vistaMedidas }[tab]()}`;
+  $('#recargar').onclick = async (e) => { e.target.disabled = true; await arrancar(); };
+  $$('[data-marca]').forEach((b) => (b.onclick = () => { cuenta = b.dataset.marca; pagRiesgo = 1; pintar(); }));
+  $$('[data-ir]').forEach((b) => (b.onclick = () => { tab = b.dataset.ir; history.replaceState(null, '', '#' + tab); pintar(); scrollTo(0, 0); }));
+  $$('[data-riesgo]').forEach((b) => (b.onclick = () => { tipoRiesgo = b.dataset.riesgo; pagRiesgo = 1; pintar(); }));
+  $$('[data-pag]').forEach((b) => (b.onclick = () => { pagRiesgo += +b.dataset.pag; pintar(); }));
+  if ($('#mas-prod')) $('#mas-prod').onclick = () => { todosProductos = !todosProductos; pintar(); };
+  if ($('#ver-rev')) $('#ver-rev').onchange = (e) => { verRevisadas = e.target.checked; pagRiesgo = 1; pintar(); };
+  $$('[data-revisar]').forEach((b) => (b.onclick = () => pedirNota(b)));
+  $$('[data-borrar]').forEach((a) => (a.onclick = async (e) => {
+    e.preventDefault();
+    const { error } = await sb.from('mlc_revisiones').delete().eq('id', +a.dataset.borrar);
+    if (error) return alert('No se pudo deshacer: ' + error.message);
+    D.revisiones = D.revisiones.filter((r) => r.id !== +a.dataset.borrar); pintar();
+  }));
+}
+
+function pedirNota(boton) {
+  const caja = document.createElement('form');
+  caja.className = 'nota-rev';
+  caja.innerHTML = '<input aria-label="Qué se hizo" placeholder="¿Qué se hizo? (opcional)" maxlength="200"><button class="btn sm primary">Guardar</button>';
+  boton.replaceWith(caja);
+  $('input', caja).focus();
+  caja.onsubmit = async (e) => {
+    e.preventDefault();
+    $('button', caja).disabled = true;
+    const { data, error } = await sb.from('mlc_revisiones')
+      .insert({ item_id: boton.dataset.revisar, cuenta: boton.dataset.cta, nota: $('input', caja).value.trim() || null }).select().single();
+    if (error) { $('button', caja).disabled = false; return alert('No se pudo guardar: ' + error.message); }
+    D.revisiones.push(data); pintar();
+  };
+}
+
+async function arrancar() {
+  try { await cargar(); } catch (e) { $('#app').innerHTML = `<p class="err">No se pudo cargar: ${esc(e.message)}</p>`; throw e; }
+  pintar();
+}
+arrancar();
+</script>
+</body>
+</html>
