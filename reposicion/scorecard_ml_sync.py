@@ -14,8 +14,8 @@ Por cada día y cuenta calcula y guarda en Supabase con scorecard_guardar_dia() 
                        La planilla suma además una "bonificación por envío" de Flex (~0,1 % del neto) que acá
                        no se incluye.
 - costo de productos = costo con IVA de cada SKU × cantidad: primero la lista de costos de Ecomm-App (tabla
-                       scorecard_costos_ecomapp, se carga con reposicion/scorecard_costos_ecomapp.py), y para
-                       los SKU que no estén ahí: Tiendanube de la propia marca, después el de la otra, y por
+                       scorecard_costos_ecomapp, que se actualiza antes de calcular con la API de Ecomm-App
+                       vía la función scorecard-costos), y para los SKU que no estén ahí: Tiendanube de la propia marca, después el de la otra, y por
                        último la tabla scorecard_costos_extra (cargada a mano de la planilla).
                        Con la lista de Ecomm-App el costo del 10 al 24/11/2026 quedó a menos de 0,1 % de la
                        planilla en las dos marcas (antes: 1,4 % en Pret y 2,5 % en Laván desde el 5/11).
@@ -48,7 +48,7 @@ CUENTAS = {  # canal del config -> (clave del documento del Scorecard, canal TN 
     "ml_pret": ("ml_pret_home", "tn_pret", "tn_lavan"),
     "ml_lavan": ("ml_casa_lavan", "tn_lavan", "tn_pret"),
 }
-DIAS_LISTA_VIEJA = 30  # a partir de acá el log avisa que hay que volver a cargar la lista de costos de Ecomm-App
+DIAS_LISTA_VIEJA = 2  # a partir de acá el log avisa que la lista de costos de Ecomm-App no se está actualizando
 ADVERTISERS = {"ml_pret": (27450, "ml_ads_pret"), "ml_lavan": (1144462, "ml_ads_lavan")}  # ids estables de Product Ads
 
 
@@ -217,6 +217,23 @@ def _productos_tn(cfg):
     raise RuntimeError(f"No se pudo leer el catálogo de Tiendanube de {cfg.get('label')}")
 
 
+def actualizar_costos_ecomapp(config):
+    """Pide a la función scorecard-costos que traiga los costos actuales de Ecomm-App (tarda ~1-2 minutos). Si falla
+    no frena el scorecard: se sigue con la última lista guardada y queda avisado en el log."""
+    sb = config["supabase"]
+    try:
+        r = requests.post(f"{sb['url']}/functions/v1/scorecard-costos", timeout=170,
+                          headers={"Authorization": f"Bearer {sb['service_role_key']}", "apikey": sb["service_role_key"]})
+        d = r.json()
+        if r.status_code != 200 or not d.get("ok"):
+            raise RuntimeError(f"{r.status_code} {str(d)[:200]}")
+        core.tnlog(f"✓ Costos de Ecomm-App: {d['con_costo']} SKUs ({d['nuevos']} nuevos, {d['cambiados']} cambiaron)")
+        return True
+    except Exception as e:
+        core.tnlog(f"⚠ No se pudieron actualizar los costos de Ecomm-App (se usa la última lista guardada): {e}")
+        return False
+
+
 def costos_por_sku(config, key):
     """Costo con IVA por SKU. Manda la lista de Ecomm-App; para lo que no esté ahí, catálogo TN de la marca, después
     el de la otra y por último scorecard_costos_extra."""
@@ -227,7 +244,7 @@ def costos_por_sku(config, key):
     if cargada is None:
         core.tnlog("  ⚠ La lista de costos de Ecomm-App está vacía: se usan solo los de Tiendanube")
     elif (datetime.now(timezone.utc) - cargada).days >= DIAS_LISTA_VIEJA:
-        core.tnlog(f"  ⚠ La lista de costos de Ecomm-App es del {cargada.astimezone(AR):%d/%m/%Y}: conviene volver a cargarla")
+        core.tnlog(f"  ⚠ La lista de costos de Ecomm-App no se actualiza desde el {cargada.astimezone(AR):%d/%m/%Y}")
     for tn in (propio, respaldo):
         cfg = config["channels"].get(tn)
         if not cfg:
@@ -263,6 +280,7 @@ def main():
     hasta = datetime.now(AR).date() - timedelta(days=1)       # el día de hoy está a medias: se carga mañana
     desde = date.fromisoformat(args.desde) if args.desde else hasta - timedelta(days=args.dias - 1)
     errores = []
+    actualizar_costos_ecomapp(config)
     for key, (clave, _, _) in CUENTAS.items():
         cfg = config["channels"].get(key, {})
         if not cfg.get("enabled", True):

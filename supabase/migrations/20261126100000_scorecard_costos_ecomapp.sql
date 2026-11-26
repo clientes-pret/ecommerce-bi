@@ -1,7 +1,7 @@
 -- Lista de costos (con IVA) por SKU de Ecomm-App: es la que usa el dueño para calcular la rentabilidad de Mercado
 -- Libre. El scorecard de ML (reposicion/scorecard_ml_sync.py) la usa primero; Tiendanube y scorecard_costos_extra
--- quedan de respaldo para los SKU que no figuren. Se carga con reposicion/scorecard_costos_ecomapp.py desde el archivo
--- "Actualización de productos" de Ecomm-App. Sin políticas: solo la lee el servicio (jobs).
+-- quedan de respaldo para los SKU que no figuren. La actualiza la función scorecard-costos desde la API de Ecomm-App.
+-- Sin políticas: solo la usa el servicio (jobs y funciones).
 create table if not exists scorecard_costos_ecomapp (
   sku            text primary key,
   costo          numeric(18,2) not null check (costo > 0),

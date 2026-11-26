@@ -40,6 +40,10 @@ verify_jwt = false
 [functions.rev-catalogo]
 verify_jwt = false
 
+# Costos de Ecomm-App para el Scorecard de Mercado Libre: la llama el job con la clave de servicio.
+[functions.scorecard-costos]
+verify_jwt = true
+
 # "Publicar en mi cuenta" del portal de revendedores: la llama el navegador con la sesión del revendedor; la función
 # valida esa sesión ella misma (supabase.auth.getUser) y busca a qué revendedor pertenece.
 [functions.rev-publicar]
