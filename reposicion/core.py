@@ -103,15 +103,25 @@ def set_stock_days(dias_por_sku):
 def contar_dias_con_stock(filas):
     """filas: dicts de repo_stock_snapshot (fecha, sku, stock_deposito,
     stock_full_pret, stock_full_lavan). Devuelve el dict para set_stock_days().
-    "full" = día con stock en cualquiera de los dos pools Full."""
-    destinos = ("deposito", "full_pret", "full_lavan", "full")
-    dias = defaultdict(lambda: {k: 0 for k in destinos} | {k + "_7d": 0 for k in destinos})
+    "full" = día con stock en cualquiera de los dos pools Full.
+    "vendible_<marca>" = día con stock en depósito o en el Full de esa marca;
+    "vendible" = con stock en cualquier lado. "fechas_full_<marca>" = días con
+    stock en ese pool Full (ver skus_full_sin_stock)."""
+    destinos = ("deposito", "full_pret", "full_lavan", "full",
+                "vendible_pret", "vendible_lavan", "vendible")
+    dias = defaultdict(lambda: {k: 0 for k in destinos} | {k + "_7d": 0 for k in destinos}
+                       | {"fechas_full_pret": set(), "fechas_full_lavan": set()})
     # Los snapshots con fecha posterior a este corte son los últimos RECENT_DAYS días.
     corte = (NOW - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%d")
     for r in filas:
         d = dias[r["sku"]]
         dep, fp, fl = (r.get("stock_deposito") or 0), (r.get("stock_full_pret") or 0), (r.get("stock_full_lavan") or 0)
-        con_stock = {"deposito": dep > 0, "full_pret": fp > 0, "full_lavan": fl > 0, "full": fp > 0 or fl > 0}
+        con_stock = {"deposito": dep > 0, "full_pret": fp > 0, "full_lavan": fl > 0, "full": fp > 0 or fl > 0,
+                     "vendible_pret": dep > 0 or fp > 0, "vendible_lavan": dep > 0 or fl > 0,
+                     "vendible": dep > 0 or fp > 0 or fl > 0}
+        for pool, qty in (("fechas_full_pret", fp), ("fechas_full_lavan", fl)):
+            if qty > 0:
+                d[pool].add(str(r.get("fecha", ""))[:10])
         reciente = str(r.get("fecha", "")) > corte
         for k, ok in con_stock.items():
             if ok:
@@ -733,6 +743,35 @@ def ml_sales_full_split(orders, item_details):
             (sales_full if is_full else sales_nofull)[sku] += qty
     return sales_full, sales_nofull
 
+def skus_full_sin_stock(orders, item_details, pool):
+    """SKUs con alguna venta clasificada como Full en un día en que el pool
+    `pool` ("full_pret" / "full_lavan") no tenía stock (ni ese día, ni el
+    anterior, ni el siguiente: el snapshot es una foto por día).
+
+    ml_sales_full_split() clasifica por el logistic_type ACTUAL de la
+    publicación: cuando una publicación pasa a Full, sus ventas anteriores
+    (despachadas desde depósito) quedan como "Full". Dividirlas solo por los
+    días con stock en Full infla la velocidad (caso real 2026-11-26
+    PH-FUN-A-LIN1VERDECLARO: 20 ventas desde depósito / 1 día en Full → pedía
+    enviar 580). Para estos SKUs la velocidad Full se divide por los días con
+    stock para vender (depósito o Full). SKUs sin historial de stock no se marcan."""
+    por_fecha = defaultdict(list)
+    for o in orders:
+        por_fecha[str(o.get("date_created", ""))[:10]].append(o)
+    marcados = set()
+    for fecha, del_dia in por_fecha.items():
+        try:
+            dia = datetime.strptime(fecha, "%Y-%m-%d")
+        except ValueError:
+            continue
+        vecinos = {(dia + timedelta(days=k)).strftime("%Y-%m-%d") for k in (-1, 0, 1)}
+        vendidos_full, _ = ml_sales_full_split(del_dia, item_details)
+        for sku in vendidos_full:
+            info = STOCK_DAYS.get(sku)
+            if info is not None and not (info.get("fechas_" + pool, set()) & vecinos):
+                marcados.add(sku)
+    return marcados
+
 def worker_tn(key, cfg):
     label = cfg["label"]
     try:
@@ -888,6 +927,12 @@ def build_rows(results):
         for sku, qty in d.items():
             rec_full_by_sku[sku] += qty
 
+    # SKUs cuyas ventas "Full" incluyen ventas hechas sin stock en Full (ver skus_full_sin_stock).
+    sin_stock_full = {
+        marca: skus_full_sin_stock(results.get(canal, {}).get("orders", []), items, f"full_{marca.lower()}")
+        for marca, canal, items in (("Pret", "ml_pret", ml_pret_items), ("Lavan", "ml_lavan", ml_lavan_items))
+    }
+
     # Full pasa a ser un canal más (como ML Pret/ML Lavan/TN Pret/TN Lavan), así que
     # las ventas "ML Pret"/"ML Lavan" de acá en más son SOLO no-Full — sin esto se
     # contarían dos veces (una en el canal ML de origen, otra en "Full").
@@ -908,11 +953,13 @@ def build_rows(results):
         ventas_full = ventas_dict.get(sku, 0)
         # Días con stock en ESTE pool Full (cada marca tiene el suyo), no días de vida.
         dias_vida = active_days
-        active_days = dias_efectivos(sku, f"full_{prefix.lower()}", active_days)
-        dias_prom_full   = dias_para_promedio(sku, f"full_{prefix.lower()}", dias_vida, ventas_full)
+        # Excepción: si hubo ventas "Full" sin stock en Full, la demanda se mide sobre los días
+        # con stock para vender (depósito o Full) — numerador y divisor tienen que coincidir.
+        pool = ("vendible_" if sku in sin_stock_full[prefix] else "full_") + prefix.lower()
+        dias_prom_full   = dias_para_promedio(sku, pool, dias_vida, ventas_full)
         vel_full_prom    = ventas_full / dias_prom_full if dias_prom_full > 0 else 0
         # Velocidad = el mayor entre el promedio (días con stock) y el ritmo de los últimos 7 días.
-        vel_full_rec     = vel_reciente((recientes_dict or {}).get(sku, 0), sku, f"full_{prefix.lower()}", dias_vida)
+        vel_full_rec     = vel_reciente((recientes_dict or {}).get(sku, 0), sku, pool, dias_vida)
         vel_full_diaria  = round(combinar_velocidad(vel_full_prom, vel_full_rec), 4)
         vel_full_semanal = round(vel_full_diaria * 7, 2)
 
@@ -1112,15 +1159,15 @@ def build_rows(results):
             # Velocidad = ventas / días CON STOCK (ver dias_efectivos), no / días de vida.
             ventas_deposito = total_sold - sold_full
             dias_dep    = dias_efectivos(sku, "deposito", prod_days_active)
-            dias_full   = dias_efectivos(sku, "full", prod_days_active)
+            destino_full = "vendible" if any(sku in s for s in sin_stock_full.values()) else "full"
             # Velocidad = el MAYOR entre el promedio (días con stock) y el ritmo de los últimos 7 días.
             dias_prom_dep = dias_para_promedio(sku, "deposito", prod_days_active, ventas_deposito)
             vel_dep_prom = ventas_deposito / dias_prom_dep if dias_prom_dep > 0 else 0
             vel_dep_rec  = vel_reciente(rec_deposito, sku, "deposito", prod_days_active)
             vel_dep_diaria  = round(combinar_velocidad(vel_dep_prom, vel_dep_rec), 4)
-            dias_prom_full = dias_para_promedio(sku, "full", prod_days_active, sold_full)
+            dias_prom_full = dias_para_promedio(sku, destino_full, prod_days_active, sold_full)
             vel_full_prom = sold_full / dias_prom_full if dias_prom_full > 0 else 0
-            vel_full_rec  = vel_reciente(rec_full, sku, "full", prod_days_active)
+            vel_full_rec  = vel_reciente(rec_full, sku, destino_full, prod_days_active)
             vel_diaria  = round(vel_dep_diaria + combinar_velocidad(vel_full_prom, vel_full_rec), 4)
             vel_semanal = round(vel_diaria * 7, 2)
             vel_dep_semanal = round(vel_dep_diaria * 7, 2)
@@ -1265,15 +1312,15 @@ def build_rows(results):
             # Velocidad = ventas / días CON STOCK (ver dias_efectivos), no / días de vida.
             ventas_deposito = total_sold - sold_full
             dias_dep    = dias_efectivos(sku, "deposito", prod_days_active)
-            dias_full   = dias_efectivos(sku, "full", prod_days_active)
+            destino_full = "vendible" if any(sku in s for s in sin_stock_full.values()) else "full"
             # Velocidad = el MAYOR entre el promedio (días con stock) y el ritmo de los últimos 7 días.
             dias_prom_dep = dias_para_promedio(sku, "deposito", prod_days_active, ventas_deposito)
             vel_dep_prom = ventas_deposito / dias_prom_dep if dias_prom_dep > 0 else 0
             vel_dep_rec  = vel_reciente(rec_deposito, sku, "deposito", prod_days_active)
             vel_dep_diaria  = round(combinar_velocidad(vel_dep_prom, vel_dep_rec), 4)
-            dias_prom_full = dias_para_promedio(sku, "full", prod_days_active, sold_full)
+            dias_prom_full = dias_para_promedio(sku, destino_full, prod_days_active, sold_full)
             vel_full_prom = sold_full / dias_prom_full if dias_prom_full > 0 else 0
-            vel_full_rec  = vel_reciente(rec_full, sku, "full", prod_days_active)
+            vel_full_rec  = vel_reciente(rec_full, sku, destino_full, prod_days_active)
             vel_diaria  = round(vel_dep_diaria + combinar_velocidad(vel_full_prom, vel_full_rec), 4)
             vel_semanal = round(vel_diaria * 7, 2)
             vel_dep_semanal = round(vel_dep_diaria * 7, 2)

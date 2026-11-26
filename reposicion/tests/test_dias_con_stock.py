@@ -127,6 +127,68 @@ def test_muestra_minima_acotada_por_antiguedad_del_producto():
     core.set_stock_days({})
 
 
+def _orden(fecha, sku, qty):
+    return {"date_created": f"{fecha}T15:00:00+00:00",
+            "order_items": [{"item": {"id": "MLA1", "seller_sku": sku}, "quantity": qty}]}
+
+
+_PUB_FULL = {"MLA1": {"shipping": {"logistic_type": "fulfillment"}, "seller_custom_field": "A"}}
+
+
+def test_ventas_desde_deposito_de_una_publicacion_que_paso_a_full():
+    # Caso PH-FUN-A-LIN1VERDECLARO: 15 días con depósito, entra a Full el último día,
+    # 20 ventas anteriores que hoy se clasifican Full. No son 20/día: son 20/15.
+    filas = [{"fecha": f"2026-11-{i:02d}", "sku": "A", "stock_deposito": 60,
+              "stock_full_pret": 20 if i == 26 else 0, "stock_full_lavan": 0} for i in range(12, 27)]
+    _con_now("2026-11-26T19:00:00+00:00")
+    core.set_stock_days(core.contar_dias_con_stock(filas))
+    ordenes = [_orden("2026-11-16", "A", 7), _orden("2026-11-18", "A", 9), _orden("2026-11-21", "A", 4)]
+    assert core.skus_full_sin_stock(ordenes, _PUB_FULL, "full_pret") == {"A"}
+    assert core.dias_efectivos("A", "full_pret", 15) == 1
+    assert core.dias_efectivos("A", "vendible_pret", 15) == 15
+    core.set_stock_days({})
+    core.configure(days=60, coverage_days=60)
+
+
+def test_ventas_con_stock_en_full_no_se_marcan():
+    # Stock en Full del 1 al 10; una venta el 11 (foto del 10 con stock) tampoco marca.
+    core.set_stock_days(core.contar_dias_con_stock(_filas("A", 10, dep=5, fp=3)))
+    ordenes = [_orden("2026-10-03", "A", 2), _orden("2026-10-11", "A", 1)]
+    assert core.skus_full_sin_stock(ordenes, _PUB_FULL, "full_pret") == set()
+    core.set_stock_days({})
+
+
+def test_sin_historial_no_se_marca_nada():
+    core.set_stock_days({})
+    assert core.skus_full_sin_stock([_orden("2026-10-03", "A", 2)], _PUB_FULL, "full_pret") == set()
+
+
+def test_build_rows_publicacion_recien_pasada_a_full():
+    # De punta a punta, con las fechas y cantidades reales de PH-FUN-A-LIN1VERDECLARO.
+    _con_now("2026-11-26T19:00:00+00:00")
+    core.configure(days=60, coverage_days=30, now=core.NOW)
+    filas = [{"fecha": f"2026-11-{i:02d}", "sku": "A", "stock_deposito": 62,
+              "stock_full_pret": 20 if i == 26 else 0, "stock_full_lavan": 0} for i in range(12, 27)]
+    core.set_stock_days(core.contar_dias_con_stock(filas))
+    ordenes = [_orden("2026-11-16", "A", 7), _orden("2026-11-17", "A", 4),
+               _orden("2026-11-18", "A", 5), _orden("2026-11-21", "A", 4)]
+    pub = {"MLA1": {"shipping": {"logistic_type": "fulfillment"}, "seller_custom_field": "A",
+                    "inventory_id": "INV1", "available_quantity": 20}}
+    results = {
+        "tn_pret": {"products": [{"id": 1, "name": {"es": "Almohadón"}, "created_at": "2026-11-11T12:00:00+00:00",
+                                  "variants": [{"id": 2, "sku": "A", "stock": 62}]}]},
+        "ml_pret": {"orders": ordenes, "orders_recent": ordenes[-1:], "item_details": pub},
+    }
+    row = core.build_rows(results)[0]
+    assert row["Unid. Full Pret"] == 20
+    assert row["Vel. Full Pret (semanal)"] < 12          # antes: 140
+    assert 15 <= row["A enviar Full Pret (uds)"] <= 25   # antes: 580
+    assert row["Vel. semanal"] < 12
+    assert row["A reponer (uds)"] == 0
+    core.set_stock_days({})
+    core.configure(days=60, coverage_days=60)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
