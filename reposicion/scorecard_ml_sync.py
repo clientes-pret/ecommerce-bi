@@ -13,9 +13,12 @@ Por cada día y cuenta calcula y guarda en Supabase con scorecard_guardar_dia() 
                        de cada pago, repartido por el valor de la orden cuando un pago cubre un carrito).
                        La planilla suma además una "bonificación por envío" de Flex (~0,1 % del neto) que acá
                        no se incluye.
-- costo de productos = costo de Tiendanube de cada SKU (con IVA) × cantidad: primero el catálogo de la
-                       propia marca, después el de la otra, y por último la tabla scorecard_costos_extra
-                       (SKUs que ya no están en Tiendanube, cargados de la planilla).
+- costo de productos = costo con IVA de cada SKU × cantidad: primero la lista de costos de Ecomm-App (tabla
+                       scorecard_costos_ecomapp, se carga con reposicion/scorecard_costos_ecomapp.py), y para
+                       los SKU que no estén ahí: Tiendanube de la propia marca, después el de la otra, y por
+                       último la tabla scorecard_costos_extra (cargada a mano de la planilla).
+                       Con la lista de Ecomm-App el costo del 10 al 24/11/2026 quedó a menos de 0,1 % de la
+                       planilla en las dos marcas (antes: 1,4 % en Pret y 2,5 % en Laván desde el 5/11).
 - inversión en ML Ads = Product Ads + Display/Brand Ads (API de publicidad de ML; coincide con el panel "Publicidad"),
                        clave ml_ads_pret / ml_ads_lavan.
                        Un día sin campañas con gasto es 0, no "pendiente".
@@ -45,6 +48,7 @@ CUENTAS = {  # canal del config -> (clave del documento del Scorecard, canal TN 
     "ml_pret": ("ml_pret_home", "tn_pret", "tn_lavan"),
     "ml_lavan": ("ml_casa_lavan", "tn_lavan", "tn_pret"),
 }
+DIAS_LISTA_VIEJA = 30  # a partir de acá el log avisa que hay que volver a cargar la lista de costos de Ecomm-App
 ADVERTISERS = {"ml_pret": (27450, "ml_ads_pret"), "ml_lavan": (1144462, "ml_ads_lavan")}  # ids estables de Product Ads
 
 
@@ -214,9 +218,16 @@ def _productos_tn(cfg):
 
 
 def costos_por_sku(config, key):
-    """Costo con IVA por SKU: catálogo TN de la marca, después el de la otra y por último scorecard_costos_extra."""
+    """Costo con IVA por SKU. Manda la lista de Ecomm-App; para lo que no esté ahí, catálogo TN de la marca, después
+    el de la otra y por último scorecard_costos_extra."""
     _, propio, respaldo = CUENTAS[key]
-    costos = {}
+    lista = db.select(config, "scorecard_costos_ecomapp", {"select": "sku,costo,actualizado_en", "order": "sku"})
+    costos = {f["sku"]: _num(f["costo"]) for f in lista if _num(f["costo"]) > 0}
+    cargada = max((datetime.fromisoformat(f["actualizado_en"].replace("Z", "+00:00")) for f in lista), default=None)
+    if cargada is None:
+        core.tnlog("  ⚠ La lista de costos de Ecomm-App está vacía: se usan solo los de Tiendanube")
+    elif (datetime.now(timezone.utc) - cargada).days >= DIAS_LISTA_VIEJA:
+        core.tnlog(f"  ⚠ La lista de costos de Ecomm-App es del {cargada.astimezone(AR):%d/%m/%Y}: conviene volver a cargarla")
     for tn in (propio, respaldo):
         cfg = config["channels"].get(tn)
         if not cfg:

@@ -8,7 +8,8 @@ from datetime import date
 from unittest import mock
 
 from reposicion import scorecard_ml_sync
-from reposicion.scorecard_ml_sync import calcular, cuenta, dia_cierre, documento, traer_ads
+from reposicion.scorecard_costos_ecomapp import leer_costos
+from reposicion.scorecard_ml_sync import calcular, costos_por_sku, cuenta, dia_cierre, documento, traer_ads
 
 D = date(2026, 10, 22)
 
@@ -109,6 +110,37 @@ def test_ads_cuenta_sin_display_cuenta_solo_product_ads():
     with mock.patch.object(scorecard_ml_sync.requests, "get", side_effect=sin_display):
         ads = traer_ads("tok", 1144462, date(2026, 11, 7), date(2026, 11, 9))
     assert ads == {"2026-11-07": 100.0, "2026-11-08": 0.0, "2026-11-09": 50.0}
+
+
+def test_costos_manda_ecomapp_y_tiendanube_es_respaldo():
+    tablas = {"scorecard_costos_ecomapp": [{"sku": "A", "costo": "10", "actualizado_en": "2026-11-25T10:00:00+00:00"}],
+              "scorecard_costos_extra": [{"sku": "C", "costo": "7"}, {"sku": "D", "costo": "8"}, {"sku": "A", "costo": "1"}]}
+    catalogos = {"propia": [{"variants": [{"sku": "A", "cost": "99"}, {"sku": "B", "cost": "20"}, {"sku": "E", "cost": None}]}],
+                 "otra": [{"variants": [{"sku": "B", "cost": "55"}, {"sku": "C", "cost": "30"}]}]}
+    config = {"channels": {"tn_lavan": {"n": "propia"}, "tn_pret": {"n": "otra"}}}
+    with mock.patch.object(scorecard_ml_sync.db, "select", side_effect=lambda _c, tabla, _p: tablas[tabla]), \
+            mock.patch.object(scorecard_ml_sync, "_productos_tn", side_effect=lambda cfg: catalogos[cfg["n"]]):
+        costos = costos_por_sku(config, "ml_lavan")
+    assert costos == {"A": 10.0, "B": 20.0, "C": 30.0, "D": 8.0}
+
+
+def test_lista_ecomapp_lee_formato_argentino_e_ignora_sin_costo():
+    filas = [["id_interno", "sku", "precio_compra"],
+             ["ID interno", "SKU variante\n(obligatorio)", "Costo\n(optativo)"],
+             ["1", " A ", "10.154,00"], ["2", "B", 6721], ["3", "C", "10.500"], ["4", "D", "1234.5"],
+             ["5", "E", ""], ["6", "F", "0"], ["7", "", "50"], ["8", "A", "9.000,00"], ["9"]]
+    costos, repetidos = leer_costos(filas)
+    assert costos == {"A": 10154.0, "B": 6721.0, "C": 10500.0, "D": 1234.5}
+    assert repetidos == ["A"]
+
+
+def test_lista_ecomapp_sin_las_columnas_falla():
+    try:
+        leer_costos([["codigo", "precio"], ["A", "1"]])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("tenía que fallar")
 
 
 if __name__ == "__main__":

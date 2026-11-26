@@ -1,0 +1,28 @@
+name: Scorecard Mercado Libre — recalcular desde una fecha
+
+# Solo a mano: rehace ventas, neto en MercadoPago, costo de productos y ML Ads de Pret y Laván desde la fecha pedida
+# hasta ayer. La corrida diaria (cashflow_sync.yml) repasa solo los últimos 4 días.
+on:
+  workflow_dispatch:
+    inputs:
+      desde:
+        description: "Recalcular desde (YYYY-MM-DD)"
+        required: true
+
+jobs:
+  scorecard_ml:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r reposicion/requirements.txt
+      - run: python3 -m reposicion.scorecard_ml_sync --aplicar --desde "$DESDE"
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          ML_PRET_CLIENT_SECRET: ${{ secrets.ML_PRET_CLIENT_SECRET }}
+          TN_PRET_TOKEN: ${{ secrets.TN_PRET_TOKEN }}
+          TN_LAVAN_TOKEN: ${{ secrets.TN_LAVAN_TOKEN }}
+          DESDE: ${{ github.event.inputs.desde }}
