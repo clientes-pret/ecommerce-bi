@@ -5,7 +5,7 @@ Correr:  python3 -m reposicion.tests.test_scorecard_tn
 
 from datetime import date
 
-from reposicion.scorecard_tn_sync import calcular, costo_envio, documento, mapa_zonas
+from reposicion.scorecard_tn_sync import calcular, costo_envio, documento, mapa_zonas, solo_envio
 
 
 def orden(numero, creada, total, estado="paid", gateway="pago-nube", productos=(("A", 2, 100),), status="open"):
@@ -106,6 +106,31 @@ def test_calcular_suma_envio_solo_con_zonas_y_documento():
     assert "envio" not in dias["2026-10-19"] and "costo_envio_tn_pret_home" not in documento("tn_pret_home", dias["2026-10-19"])
     dias, _ = calcular(ords, {}, D, D, {})                  # Pret: zonas vacías → tarifa propia + línea Envío
     assert documento("tn_pret_home", dias["2026-10-19"])["costo_envio_tn_pret_home"] == 9802.0
+
+
+def test_envio_gratis_por_correo_cuenta_el_valor_de_la_etiqueta():
+    # venta #52715: el cliente paga $0 de envío y la tienda paga la etiqueta
+    gratis = con_envio(52715, "Envío Nube - Correo Argentino Clásico a domicilio", "1714", cobrado=0)
+    gratis["shipping_cost_owner"] = "30902.40"
+    assert costo_envio(gratis, {}) == (30902.4, None)
+    sucursal = con_envio(2, "Punto de retiro", "1900", cobrado=0)
+    sucursal.update({"shipping_carrier_name": "Envío Nube", "shipping_cost_owner": "32647.32"})
+    assert costo_envio(sucursal, {}) == (32647.32, None)
+    otro = con_envio(3, "Correo Argentino Clasico - Envio a domicilio", "1900", cobrado=0)
+    otro["shipping_cost_owner"] = "12000"
+    assert costo_envio(otro, {}) == (12000.0, None)
+    # el retiro propio y el envío en el día no cambian aunque venga un costo para la tienda
+    propio = con_envio(4, "PRET A HOME", "", cobrado=0)
+    propio["shipping_cost_owner"] = "500"
+    assert costo_envio(propio, {}) == (0.0, None)
+    dia = con_envio(5, "Envío en el día - CABA", "1048", cobrado=3250)
+    dia["shipping_cost_owner"] = "3250"
+    assert costo_envio(dia, {}) == (2800.0, None)
+
+
+def test_solo_envio_no_toca_ventas_neta_ni_costo():
+    dias, _ = calcular([con_envio(1, "Envío en el día - CABA", "1048")], {}, D, D, {})
+    assert solo_envio(documento("tn_pret_home", dias["2026-10-19"])) == {"costo_envio_tn_pret_home": 2800.0}
 
 
 if __name__ == "__main__":

@@ -17,8 +17,10 @@ lo que ya había ese día):
                        La zona sale del código postal, con el tramo que Pret le asignó a ese código en sus órdenes de los
                        últimos 75 días. Los envíos por Correo Argentino/Andreani no se suman (el monto no viene en la API,
                        igual que en Pret): ese día queda subestimado y el log avisa cuántas órdenes faltaron.
-                       Envío Nube (Correo Argentino / Andreani, ambas marcas) = la línea "Envío" de la venta
-                       (shipping_cost_customer). Pret (desde 7/11/2026): se calcula acá también; ya no depende de la rutina.
+                       Envío Nube (Correo Argentino / Andreani, ambas marcas) = el valor de la etiqueta
+                       (shipping_cost_owner), también cuando al cliente le salió gratis (en Pret, compras desde
+                       $180.000). Hasta el 26/11/2026 se tomaba lo que pagaba el cliente y los gratis contaban $0.
+                       Pret (desde 7/11/2026): se calcula acá también; ya no depende de la rutina.
 
 Los últimos días se recalculan cada vez (un reembolso o cancelación posterior cambia un día ya cargado).
 
@@ -26,6 +28,7 @@ Uso: python3 -m reposicion.scorecard_tn_sync                       (simula: últ
      python3 -m reposicion.scorecard_tn_sync --aplicar             (guarda)
      python3 -m reposicion.scorecard_tn_sync --desde 2026-05-13 --aplicar   (carga histórica)
      python3 -m reposicion.scorecard_tn_sync --solo tn_lavan --desde 2026-10-28 --aplicar   (una sola tienda)
+     python3 -m reposicion.scorecard_tn_sync --solo-envio --desde 2026-09-01 --aplicar      (rehace solo el costo de envío)
 Pruebas: python3 -m reposicion.tests.test_scorecard_tn
 """
 
@@ -119,16 +122,22 @@ def _es_envio_nube(orden):
     return "Envío Nube" in (orden.get("shipping_option") or "") or orden.get("shipping_carrier_name") == "Envío Nube"
 
 
+def _costo_correo(orden):
+    """Lo que paga la tienda por un envío por correo: el costo para la tienda; si no viene, lo que pagó el cliente."""
+    return _num(orden.get("shipping_cost_owner")) or _num(orden.get("shipping_cost_customer"))
+
+
 def costo_envio(orden, zonas):
     """(costo, motivo) del envío de una orden. motivo: None = ok, 'sin_dato' = envío sin monto en la venta,
     'sin_zona' = código postal que no se pudo ubicar.
-    - Envío Nube (Correo Argentino, Andreani, sucursal): lo que dice la línea "Envío" de la venta
-      (`shipping_cost_customer`, ej. $9.802 en Correo Clásico a domicilio). Pedido del usuario 7/11/2026.
+    - Envío Nube y otros envíos por correo (Correo Argentino, Andreani, sucursal): el valor de la etiqueta
+      (`shipping_cost_owner`). Con envío gratis el cliente paga $0 y la tienda paga la etiqueta (ej. venta #52715:
+      $30.902,40). Confirmado por el usuario el 26/11/2026.
     - Envío en el día (CABA/GBA): la tarifa real que paga el dueño (TARIFA_PRET), no lo que cobra al cliente.
     - Envío "Gratis" en el día: la tarifa de la zona (el cliente no paga, el dueño sí). Retiro propio: $0."""
     opcion = orden.get("shipping_option") or ""
     if _es_envio_nube(orden):
-        return _num(orden.get("shipping_cost_customer")), None
+        return _costo_correo(orden), None
     if opcion == "Punto de retiro" or opcion == "PRET A HOME":
         return 0.0, None
     if opcion in TARIFA_PRET:
@@ -141,7 +150,7 @@ def costo_envio(orden, zonas):
             return TARIFA_PRET["Envío en el día - CABA"], None
         return 0.0, "sin_zona"
     if "Correo" in opcion or "Andreani" in opcion or "estándar" in opcion or not opcion:
-        monto = _num(orden.get("shipping_cost_customer"))
+        monto = _costo_correo(orden)
         return (monto, None) if monto else (0.0, "sin_dato")
     cp = _cp(orden)
     if cp in zonas:
@@ -203,6 +212,11 @@ def documento(clave, t):
     return doc
 
 
+def solo_envio(doc):
+    """Deja solo el costo de envío de un documento: para rehacerlo en días viejos sin tocar ventas, neta ni costo."""
+    return {k: v for k, v in doc.items() if k.startswith("costo_envio_")}
+
+
 def guardar_dia(config, fecha, campos):
     sb = db._sb(config)
     r = requests.post(f"{sb['url']}/rest/v1/rpc/scorecard_guardar_dia", headers=db._headers(config),
@@ -217,6 +231,7 @@ def main():
     ap.add_argument("--dias", type=int, default=7)
     ap.add_argument("--aplicar", action="store_true", help="guardar en Supabase (sin esto solo muestra)")
     ap.add_argument("--solo", choices=list(TIENDAS), help="procesar una sola tienda (ej. tn_lavan)")
+    ap.add_argument("--solo-envio", action="store_true", help="guardar solo el costo de envío")
     args = ap.parse_args()
     config = db.load_config()
     hasta = datetime.now(AR).date() - timedelta(days=1)       # el día de hoy está a medias: se carga mañana
@@ -239,7 +254,8 @@ def main():
                 core.tnlog(f"{key} {fecha}: {t['orders']} órdenes · ventas {t['revenue']:,.0f} · neta {t['neta']:,.0f} · costo {t['costo']:,.0f}"
                            + (f" · envío {t['envio']:,.0f}" if "envio" in t else ""))
                 if args.aplicar:
-                    guardar_dia(config, fecha, documento(clave, t))
+                    doc = documento(clave, t)
+                    guardar_dia(config, fecha, solo_envio(doc) if args.solo_envio else doc)
             core.tnlog(f"  ✓ {cfg.get('label', key)}: {len(dias)} días {'guardados' if args.aplicar else '(simulación, no se guardó)'}"
                        + (f" · ⚠ {avisos['sin_pagonube']} órdenes de Pago Nube sin neto (se usó el total)" if avisos["sin_pagonube"] else "")
                        + (f" · ⚠ {avisos['productos_sin_costo']} productos sin costo cargado" if avisos["productos_sin_costo"] else "")
