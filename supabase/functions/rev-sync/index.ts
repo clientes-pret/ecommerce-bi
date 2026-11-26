@@ -20,7 +20,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { COLUMNAS_REVENDEDOR, dormir, ponerStockML, type Revendedor, tokenValido } from "../_shared/rev_ml.ts";
-import { aceptaStock, colchonPara, enLotes, publicacionesAActualizar, stockOfrecido } from "./logic.ts";
+import { aceptaStock, colchonPara, enLotes, esCuentaPropia, publicacionesAActualizar, stockOfrecido } from "./logic.ts";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const ECOMM_TOKEN = Deno.env.get("ECOMMAPP_TOKEN") ?? "";
@@ -143,7 +143,10 @@ async function sincronizar(): Promise<Json> {
     if (error) throw new Error(`rev_stock_ofrecido: ${error.message}`);
   }
 
-  const revs = await leerTodo<Revendedor & { desactivado_modo: string | null; sincroniza_stock: boolean; colchon: number | null }>("rev_revendedores", COLUMNAS_REVENDEDOR + ",desactivado_modo,sincroniza_stock,colchon", "id");
+  // Las cuentas propias (Pret a Home, Casa Laván) se sacan acá, antes de todo: su stock lo maneja Ecomm-App y no se les
+  // manda nada en ningún estado (ni en vivo, ni "stock en 0", ni en modo real).
+  const revs = (await leerTodo<Revendedor & { desactivado_modo: string | null; sincroniza_stock: boolean; colchon: number | null; solo_publicaciones: boolean | null }>("rev_revendedores", COLUMNAS_REVENDEDOR + ",desactivado_modo,sincroniza_stock,colchon,solo_publicaciones", "id"))
+    .filter((r) => !esCuentaPropia(r, cfg.cuentas_propias));
   // A quién se le MANDA el stock (19/11/2026: por revendedor):
   //   - activos con "Sincroniza stock" prendido (o todos los activos si el sistema está en modo real);
   //   - desactivados con "stock en 0": se les manda 0 (una vez) a sus publicaciones vinculadas.

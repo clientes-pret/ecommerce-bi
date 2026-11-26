@@ -164,3 +164,11 @@ export function reposicionPendiente(f: { estado: string; descontado_at: string |
   if (f.reposicion === "al_recibir" && f.recibido_estado === "bien") return "devolucion";
   return null;
 }
+
+/** Cuentas propias de Mercado Libre (Pret a Home, Casa Laván): su stock lo maneja Ecomm-App, así que este sistema NUNCA
+ *  les manda stock ni descuenta sus ventas, sin importar en qué estado queden (pedido del usuario, 26/11/2026). Son las de
+ *  "solo publicar" y las que figuran en `rev_config.cuentas_propias`. */
+export function esCuentaPropia(r: { ml_user_id: number | string; solo_publicaciones?: boolean | null }, propias: unknown): boolean {
+  if (r.solo_publicaciones === true) return true;
+  return Array.isArray(propias) && propias.map(Number).includes(Number(r.ml_user_id));
+}

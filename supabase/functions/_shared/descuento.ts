@@ -10,7 +10,7 @@
 
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import {
-  claveIdempotente, interpretarRespuestaEcomm, motivoMovimiento, reposicionPendiente, transicionDescuento, type TipoMovimiento,
+  claveIdempotente, esCuentaPropia, interpretarRespuestaEcomm, motivoMovimiento, reposicionPendiente, transicionDescuento, type TipoMovimiento,
 } from "../rev-sync/logic.ts";
 
 const ECOMM_STOCK = "https://admin.ecomm-app.com/api/v3/public/inventario/variantes/stock";
@@ -46,13 +46,14 @@ export async function moverStock(token: string, o: { sku: string; cantidad: numb
 export async function procesarDescuentos(supabase: SupabaseClient, ecommToken: string, opciones: { soloOrden?: number } = {}) {
   const { data: cfg } = await supabase.from("rev_config").select("valor").eq("clave", "warehouse_id").maybeSingle();
   const warehouseId = Number(cfg?.valor ?? 1083);
-  const { data: revs } = await supabase.from("rev_revendedores").select("id,nickname,descuento_auto,sincroniza_stock,solo_publicaciones");
+  const { data: revs } = await supabase.from("rev_revendedores").select("id,ml_user_id,nickname,descuento_auto,sincroniza_stock,solo_publicaciones");
+  const { data: cp } = await supabase.from("rev_config").select("valor").eq("clave", "cuentas_propias").maybeSingle();
   const { data: cm } = await supabase.from("rev_config").select("valor").eq("clave", "modo").maybeSingle();
   const modoReal = cm?.valor === "real" || cm?.valor === "activo";
   // En vivo: con el sistema en modo real, todos; si no, solo los que tienen "Sincroniza stock" (19/11/2026). Las cuentas
-  // propias de "solo publicar" nunca (su stock lo maneja Ecomm-App).
-  const enVivo = new Set(((revs ?? []) as { id: number; sincroniza_stock: boolean; solo_publicaciones: boolean }[])
-    .filter((r) => !r.solo_publicaciones && (modoReal || r.sincroniza_stock)).map((r) => r.id));
+  // propias (las de "solo publicar" y las de rev_config.cuentas_propias) nunca: su stock lo maneja Ecomm-App.
+  const enVivo = new Set(((revs ?? []) as { id: number; ml_user_id: number; sincroniza_stock: boolean; solo_publicaciones: boolean }[])
+    .filter((r) => !esCuentaPropia(r, cp?.valor) && (modoReal || r.sincroniza_stock)).map((r) => r.id));
   const nick = new Map(((revs ?? []) as { id: number; nickname: string | null }[]).map((r) => [r.id, r.nickname]));
   // Revendedores con descuento MANUAL: sus ventas solo se descuentan (o se les devuelve el stock) cuando el administrador
   // lo pide para esa venta (`soloOrden`), nunca en la corrida automática.

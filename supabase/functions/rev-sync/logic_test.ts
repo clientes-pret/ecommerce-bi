@@ -178,3 +178,13 @@ Deno.test("aceptaStock: en revisión, cerrada o inactiva no; activa, pausada o s
   assertEquals(["under_review", "closed", "inactive"].map(aceptaStock), [false, false, false]);
   assertEquals(["active", "paused", null, undefined].map(aceptaStock), [true, true, true, true]);
 });
+
+Deno.test("cuentas propias: nunca se les sincroniza stock", async () => {
+  const { esCuentaPropia } = await import("./logic.ts");
+  const propias = [1255615205, 189036603];
+  assertEquals(esCuentaPropia({ ml_user_id: 189036603, solo_publicaciones: true }, propias), true);
+  assertEquals(esCuentaPropia({ ml_user_id: 1255615205, solo_publicaciones: false }, propias), true); // Pret, aunque no sea "solo publicar"
+  assertEquals(esCuentaPropia({ ml_user_id: 999, solo_publicaciones: true }, []), true);
+  assertEquals(esCuentaPropia({ ml_user_id: "260792647", solo_publicaciones: false }, propias), false);
+  assertEquals(esCuentaPropia({ ml_user_id: 260792647 }, null), false);
+});
