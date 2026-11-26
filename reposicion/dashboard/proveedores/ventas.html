@@ -29,7 +29,7 @@
 import { $, $$, guard, nav, peso0, hoy } from './app.js';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'scorecard');
-const { ref, DAY, POR_PAGINA, ADS_DE, PEND, NA, sumar, celdasSc, cabSc, conPct, periodosSc, ddmm, ddmmaa, largo } = await import('./ventas-lib.js');
+const { ref, DAY, POR_PAGINA, ADS_DE, PEND, sumar, flexTxt, celdasSc, cabSc, conPct, periodosSc, ddmm, ddmmaa, largo } = await import('./ventas-lib.js');
 
 let marca = 'all';
 const sc = { canal: 'tn', gran: 'dia', pag: 0 };
@@ -40,14 +40,14 @@ function tarjeta(et, t, canal) {
   const ads = ADS_DE[canal].map(([p, n]) => [n, t.ads[p] == null ? PEND : peso0(t.ads[p])]);
   const celdas = [
     ['Facturación neta', t.neta == null ? PEND : peso0(t.neta)], ['Órdenes', t.ordenes == null ? PEND : t.ordenes.toLocaleString('es-AR')],
-    ['Costo de productos', t.costo == null ? PEND : peso0(t.costo)], ['Costo de envío', canal === 'ml' ? NA : t.envio == null ? PEND : peso0(t.envio)],
+    ['Costo de productos', t.costo == null ? PEND : peso0(t.costo)], ...(canal === 'ml' ? [] : [['Costo de envío', t.envio == null ? PEND : peso0(t.envio)]]),
     ['Rentab. s/ads', conPct(t.rentS, t.ventas)], ...ads,
     ['ROAS', t.roas == null ? (t.inversion > 0 ? PEND : '<span class="chip">Sin inversión</span>') : t.roas.toFixed(2).replace('.', ',') + 'x'],
   ];
   const rc = t.rentS == null ? PEND : t.inversion == null ? '<span class="chip">Sin inversión</span>' : conPct(t.rentC, t.ventas);
   return `<div class="sc-card"><h3>${et}</h3>
     <div class="sc-top"><div><div class="l">Ventas</div><div class="v num">${t.ventas == null ? PEND : peso0(t.ventas)}</div></div><div style="text-align:right"><div class="l">Rentab. c/ads</div><div class="v num">${rc}</div></div></div>
-    <div class="sc-grid">${celdas.map(([l, v]) => `<div><div class="l">${l}</div><div class="v num">${v}</div></div>`).join('')}</div></div>`;
+    <div class="sc-grid">${(canal === 'ml' ? [...celdas, ['Costos Flex', flexTxt(t.flex)]] : celdas).map(([l, v]) => `<div><div class="l">${l}</div><div class="v num">${v}</div></div>`).join('')}</div></div>`;
 }
 
 function pintar() {
@@ -73,10 +73,10 @@ function pintar() {
   <div class="seg" role="group" aria-label="Marca" style="margin:16px 0 28px">${tabs}</div>
   <section class="card tabla"><div class="cab"><div><h2>Scorecard por canal</h2><span class="muted">${nombreMarca} · por día, semana (lunes a domingo), mes o período ML (del 11 al 10)</span></div>
       <div class="row wrapRow" style="gap:8px">${segSc('canal', [['tn', 'Tienda Nube'], ['ml', 'Mercado Libre']])}${segSc('gran', [['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes'], ['ml', 'Período ML']])}</div></div>
-    <div class="sc-tabla scroll"><table style="min-width:1100px"><thead>${cabSc(sc.canal, { dia: 'Fecha', semana: 'Semana', mes: 'Mes', ml: 'Período ML (11 al 10)' }[sc.gran])}</thead><tbody>${filasSc || '<tr><td colspan="11" class="muted">Sin datos todavía.</td></tr>'}</tbody></table></div>
+    <div class="sc-tabla scroll"><table style="min-width:${sc.canal === 'ml' ? 1040 : 1100}px"><thead>${cabSc(sc.canal, { dia: 'Fecha', semana: 'Semana', mes: 'Mes', ml: 'Período ML (11 al 10)' }[sc.gran])}</thead><tbody>${filasSc || `<tr><td colspan="${sc.canal === 'ml' ? 10 : 11}" class="muted">Sin datos todavía.</td></tr>`}</tbody></table></div>
     <div class="sc-cards">${cardsSc || '<p class="muted">Sin datos todavía.</p>'}</div>
     ${pager}</section>
-  <p class="muted small" style="line-height:1.6">Rentabilidad s/ads = neta − costo de productos − envío (en Mercado Libre el envío ya viene dentro de la neta). La pauta de Mercado Libre se muestra con 21 % de IVA incluido. Para ver cómo viene el período contra el promedio, está el <a href="ventas-dashboard.html">Dashboard</a>.</p>`;
+  <p class="muted small" style="line-height:1.6">Rentabilidad s/ads = neta − costo de productos − envío (Tienda Nube). En Mercado Libre = neta − costo de productos: el envío de Colecta y Full ya viene descontado de la neta; lo que se paga a la mensajería por Flex no está incluido. Costos Flex es una estimación para comparar con lo que pagás (envíos Flex del día de venta × tarifa de la zona según el código postal: CABA $2.800, GBA $4.500 / $6.000 / $7.750) y no se resta de la rentabilidad. La pauta de Mercado Libre se muestra con 21 % de IVA incluido. Para ver cómo viene el período contra el promedio, está el <a href="ventas-dashboard.html">Dashboard</a>.</p>`;
   $$('[data-marca]').forEach((b) => (b.onclick = () => { marca = b.dataset.marca; sc.pag = 0; pintar(); }));
   $$('[data-sc-canal]').forEach((b) => (b.onclick = () => { sc.canal = b.dataset.scCanal; sc.pag = 0; pintar(); }));
   $$('[data-sc-gran]').forEach((b) => (b.onclick = () => { sc.gran = b.dataset.scGran; sc.pag = 0; pintar(); }));

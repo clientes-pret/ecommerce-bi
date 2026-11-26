@@ -7,7 +7,7 @@ from datetime import date
 
 from unittest import mock
 
-from reposicion import scorecard_ml_sync
+from reposicion import scorecard_flex, scorecard_ml_sync
 from reposicion.scorecard_ml_sync import actualizar_costos_ecomapp, calcular, costos_por_sku, cuenta, dia_cierre, documento, traer_ads
 
 D = date(2026, 10, 22)
@@ -133,6 +133,32 @@ def test_si_la_actualizacion_de_costos_falla_no_frena_el_scorecard():
     bien = mock.Mock(status_code=200, json=lambda: {"ok": True, "con_costo": 9, "nuevos": 1, "cambiados": 2})
     with mock.patch.object(scorecard_ml_sync.requests, "post", return_value=bien):
         assert actualizar_costos_ecomapp(config) is True
+
+
+def test_flex_un_envio_por_carrito_zona_por_codigo_postal_y_solo_self_service():
+    def con_envio(oid, cierre, sid, **kw):
+        return {**orden(oid, cierre, 100, **kw), "shipping": {"id": sid}}
+
+    ords = [con_envio(1, "2026-10-22T10:00:00.000-03:00", 10), con_envio(2, "2026-10-23T10:00:00.000-03:00", 10),  # carrito
+            con_envio(3, "2026-10-22T11:00:00.000-03:00", 11), con_envio(4, "2026-10-22T12:00:00.000-03:00", 12),
+            con_envio(5, "2026-10-22T13:00:00.000-03:00", 13), con_envio(6, "2026-10-22T14:00:00.000-03:00", 14),
+            con_envio(7, "2026-10-22T15:00:00.000-03:00", 15, status="cancelled"),
+            con_envio(8, "2026-10-23T15:00:00.000-03:00", 16)]
+    hasta = date(2026, 10, 23)
+    por_dia = scorecard_flex.envios_por_dia(ords, cuenta, dia_cierre, D, hasta)
+    assert por_dia == {10: D, 11: D, 12: D, 13: D, 14: D, 16: hasta}
+
+    def flex(cp, tipo="self_service", estado="delivered"):
+        return {"logistic_type": tipo, "status": estado, "receiver_address": {"zip_code": cp}}
+
+    envios = {10: flex("1714"), 11: flex("C1425ABC"), 12: flex("5000"), 13: flex("1714", tipo="cross_docking"),
+              14: flex("1714", estado="cancelled"), 16: None}
+    dias = scorecard_flex.calcular_flex(por_dia, envios, {"1714": 4500.0}, D, hasta)
+    assert dias["2026-10-22"] == {"envios": 3, "costo": 4500.0 + 2800.0, "sin_zona": 1, "completo": True}
+    assert dias["2026-10-23"] == {"envios": 0, "costo": 0.0, "sin_zona": 0, "completo": False}
+    with mock.patch.object(scorecard_flex.db, "upsert") as up:
+        scorecard_flex.guardar({}, "pret", dias)
+    assert [f["fecha"] for f in up.call_args[0][2]] == ["2026-10-22"]          # el día incompleto no se pisa
 
 
 if __name__ == "__main__":

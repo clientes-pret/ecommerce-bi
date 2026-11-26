@@ -59,6 +59,14 @@ try {
   $('#app').innerHTML = `<h1>Ventas</h1><div class="card"><p class="err">No pude leer el scorecard: ${esc(e.message)}</p></div>`;
   throw e;
 }
+// Costo estimado de los envíos Flex de Mercado Libre (informativo, no entra en la rentabilidad). Si no se puede leer,
+// la columna queda "Pendiente" y el resto del scorecard sigue igual.
+export const flexDia = {}; // `${marca}` -> { fecha -> fila }
+if (globalThis.SCORECARD_MKT !== true) {
+  try {
+    for (const f of await todo('scorecard_flex_dia', 'fecha,marca,envios,costo,sin_zona', desde, ['fecha', 'marca'])) ((flexDia[f.marca] ??= {})[f.fecha] = f);
+  } catch (e) { console.warn('Sin costos Flex:', e.message); }
+}
 export const fila = {}; // `${marca}_${canal}` -> { fecha -> fila }
 for (const f of filas) ((fila[`${f.marca}_${f.canal}`] ??= {})[f.fecha] = f);
 export const adsDia = {}; // `${marca}_${plataforma}` -> { fecha -> inversion }
@@ -123,11 +131,13 @@ export function rentabilidad(c) {
 export const POR_PAGINA = 10;
 export const ADS_DE = { tn: [['meta', 'Meta Ads'], ['google', 'Google Ads']], ml: [['ml', 'ML Ads (c/ IVA)']] };
 export function sumar(dias, marcas, canal) {
-  const t = { ventas: null, ordenes: null, neta: null, costo: null, envio: null, ads: {} };
+  const t = { ventas: null, ordenes: null, neta: null, costo: null, envio: null, flex: null, ads: {} };
   const mas = (k, v) => { if (v != null) t[k] = (t[k] || 0) + Number(v); };
   for (const d of dias) for (const m of marcas) {
     const f = fila[`${m}_${canal}`]?.[d];
     if (f) { mas('ventas', f.ventas); mas('ordenes', f.ordenes); mas('neta', f.facturacion_neta); mas('costo', f.costo_productos); mas('envio', f.costo_envio); }
+    const x = canal === 'ml' ? flexDia[m]?.[d] : null;
+    if (x) { t.flex ??= { costo: 0, envios: 0, sinZona: 0 }; t.flex.costo += Number(x.costo); t.flex.envios += x.envios; t.flex.sinZona += x.sin_zona; }
     for (const [p] of ADS_DE[canal]) { const v = adsDia[`${m}_${p}`]?.[d]; if (v != null) t.ads[p] = (t.ads[p] || 0) + v; }
   }
   // Rentabilidad sin ads = neta − costo de productos − envío (solo TN: en ML el envío ya viene dentro de la neta).
@@ -138,19 +148,21 @@ export function sumar(dias, marcas, canal) {
   t.roas = t.ventas != null && t.inversion > 0 ? t.ventas / t.inversion : null;
   return t;
 }
-export const PEND = '<span class="chip">Pendiente</span>', NA = '<span class="chip">No aplica</span>';
+export const PEND = '<span class="chip">Pendiente</span>';
 export const conPct = (v, base) => (v == null ? PEND : `${peso0(v)}${base > 0 ? ` <span class="small" style="font-weight:700;color:${v >= 0 ? 'var(--ok)' : 'var(--warn)'}">${pctTxt(v / base)}</span>` : ''}`);
+export const flexTxt = (f) => (f == null ? PEND : `${peso0(f.costo)}<div class="small muted" style="font-weight:400">${f.envios.toLocaleString('es-AR')} envíos${f.sinZona ? ` · ${f.sinZona} sin zona` : ''}</div>`);
 export const celdasSc = (t, canal, adsJuntos = false) => {
   const c = (x) => `<td class="r num" style="white-space:nowrap">${x}</td>`;
   return c(t.ventas == null ? PEND : peso0(t.ventas)) + c(t.neta == null ? PEND : peso0(t.neta)) + c(t.ordenes == null ? PEND : t.ordenes.toLocaleString('es-AR'))
-    + c(t.costo == null ? PEND : peso0(t.costo)) + c(canal === 'ml' ? NA : t.envio == null ? PEND : peso0(t.envio)) + c(conPct(t.rentS, t.ventas))
+    + c(t.costo == null ? PEND : peso0(t.costo)) + (canal === 'ml' ? '' : c(t.envio == null ? PEND : peso0(t.envio))) + c(conPct(t.rentS, t.ventas))
     + (adsJuntos ? c(t.inversion == null ? PEND : peso0(t.inversion)) : ADS_DE[canal].map(([p]) => c(t.ads[p] == null ? PEND : peso0(t.ads[p]))).join(''))
     + c(t.roas == null ? (t.inversion > 0 ? PEND : '<span class="chip">Sin inversión</span>') : t.roas.toFixed(2).replace('.', ',') + 'x')
-    + c(t.rentS == null ? PEND : t.inversion == null ? '<span class="chip">Sin inversión</span>' : conPct(t.rentC, t.ventas));
+    + c(t.rentS == null ? PEND : t.inversion == null ? '<span class="chip">Sin inversión</span>' : conPct(t.rentC, t.ventas))
+    + (canal === 'ml' ? c(flexTxt(t.flex)) : '');
 };
 export const cabSc = (canal, primera, adsJuntos = false) => `<tr><th scope="col">${primera}</th><th scope="col" class="r">Ventas</th><th scope="col" class="r">Facturación neta</th><th scope="col" class="r">Órdenes</th>
-  <th scope="col" class="r">Costo de productos</th><th scope="col" class="r">Costo de envío</th><th scope="col" class="r">Rentab. s/ads</th>
-  ${adsJuntos ? '<th scope="col" class="r">Inversión en ads</th>' : ADS_DE[canal].map(([, n]) => `<th scope="col" class="r">${n}</th>`).join('')}<th scope="col" class="r">ROAS</th><th scope="col" class="r">Rentab. c/ads</th></tr>`;
+  <th scope="col" class="r">Costo de productos</th>${canal === 'ml' ? '' : '<th scope="col" class="r">Costo de envío</th>'}<th scope="col" class="r">Rentab. s/ads</th>
+  ${adsJuntos ? '<th scope="col" class="r">Inversión en ads</th>' : ADS_DE[canal].map(([, n]) => `<th scope="col" class="r">${n}</th>`).join('')}<th scope="col" class="r">ROAS</th><th scope="col" class="r">Rentab. c/ads</th>${canal === 'ml' ? '<th scope="col" class="r">Costos Flex</th>' : ''}</tr>`;
 export const ddmmaa = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}`;
 export function periodosSc(marcas, canal, gran) {
   const dias = [...new Set(marcas.flatMap((m) => Object.keys(fila[`${m}_${canal}`] || {})))].filter((d) => d <= ref).sort().reverse();

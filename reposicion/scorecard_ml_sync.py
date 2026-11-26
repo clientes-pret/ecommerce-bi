@@ -22,6 +22,8 @@ Por cada día y cuenta calcula y guarda en Supabase con scorecard_guardar_dia() 
 - inversión en ML Ads = Product Ads + Display/Brand Ads (API de publicidad de ML; coincide con el panel "Publicidad"),
                        clave ml_ads_pret / ml_ads_lavan.
                        Un día sin campañas con gasto es 0, no "pendiente".
+- costos Flex        = estimado de lo que se paga a la mensajería por Flex (reposicion/scorecard_flex.py), en
+                       la tabla scorecard_flex_dia. Informativo: no cambia ningún otro número.
 Si falta algún pago de MercadoPago de un día, ese día NO guarda la neta (queda lo que había) y avisa.
 
 Los últimos días se recalculan cada vez (devoluciones y reclamos cambian días ya cargados).
@@ -39,7 +41,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import requests
 
-from reposicion import core, db
+from reposicion import core, db, scorecard_flex
 from reposicion.scorecard_tn_sync import guardar_dia
 
 AR = timezone(timedelta(hours=-3))
@@ -281,10 +283,12 @@ def main():
     desde = date.fromisoformat(args.desde) if args.desde else hasta - timedelta(days=args.dias - 1)
     errores = []
     actualizar_costos_ecomapp(config)
+    zonas = None                                              # tabla de zonas Flex: se arma una sola vez
     for key, (clave, _, _) in CUENTAS.items():
         cfg = config["channels"].get(key, {})
         if not cfg.get("enabled", True):
             continue
+        ordenes = None
         try:
             ordenes = traer_ordenes(key, cfg, desde, hasta)
             token = core.ml_ensure_token(key, cfg)
@@ -303,6 +307,22 @@ def main():
         except Exception as e:
             errores.append(f"{key}: {e}")
             core.tnlog(f"  ⚠ {key}: {e}")
+        try:                                                     # Flex va aparte: si falla no frena las ventas
+            if ordenes is not None:
+                zonas = zonas if zonas is not None else scorecard_flex.zonas_flex(config, hasta)
+                marca = "pret" if key == "ml_pret" else "lavan"
+                por_dia = scorecard_flex.envios_por_dia(ordenes, cuenta, dia_cierre, desde, hasta)
+                envios = scorecard_flex.traer_envios(core.ml_ensure_token(key, cfg), list(por_dia))
+                flex = scorecard_flex.calcular_flex(por_dia, envios, zonas, desde, hasta)
+                if args.aplicar:
+                    scorecard_flex.guardar(config, marca, flex)
+                core.tnlog(f"  ✓ Flex {cfg.get('label', key)}: " + " · ".join(
+                    f"{f[5:]} {t['envios']} envíos {t['costo']:,.0f}" + (f" ({t['sin_zona']} sin zona)" if t["sin_zona"] else "")
+                    + ("" if t["completo"] else " INCOMPLETO, no se guarda") for f, t in sorted(flex.items()))
+                    + ("" if args.aplicar else " (simulación, no se guardó)"))
+        except Exception as e:
+            errores.append(f"{key} flex: {e}")
+            core.tnlog(f"  ⚠ {key} flex: {e}")
         try:                                                     # la pauta va aparte: si falla no frena las ventas
             adv, clave_ads = ADVERTISERS[key]
             ads = traer_ads(core.ml_ensure_token(key, cfg), adv, desde, hasta)
