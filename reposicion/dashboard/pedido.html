@@ -23,7 +23,11 @@
   button.link { background: transparent; color: var(--muted); padding: 2px 6px; font-size: 12px; margin: 0; }
   button.link:hover { color: #e57373; }
   button:disabled { opacity: 0.5; cursor: default; }
-  .grupo-acciones { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
+  button.borrar { background: transparent; border: 1px solid #6b3a3a; color: #e57373; margin: 0; }
+  button.borrar:hover:not(:disabled) { background: #2a1a1a; }
+  .cabecera-carrito { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .grupo-acciones { margin-top: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grupo-acciones .btn-borrar { margin-left: auto; }
   .ok-msg { color: #6fcf97; font-size: 13px; }
   .grupo-opciones { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
   .grupo-opciones select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
@@ -36,7 +40,10 @@
 </head>
 <body>
 <main>
-  <h1>🛒 Carrito de reposición</h1>
+  <div class="cabecera-carrito">
+    <h1>🛒 Carrito de reposición</h1>
+    <button type="button" id="btnVaciar" class="borrar" hidden>🗑 Vaciar carrito</button>
+  </div>
   <div id="vacio" style="display:none">
     El carrito está vacío. Volvé al <a href="index.html" style="color:var(--accent)">tablero</a>, elegí un SKU,
     decidí cantidad para depósito/Full y agregalo al carrito.
@@ -159,8 +166,9 @@ function lineasDelGrupo(grupoEl) {
 async function confirmarPedido(proveedor, lineas, grupoEl) {
   const reemplazan = pintarAvisos(grupoEl);
   if (reemplazan.length && !confirm(`Este pedido a ${proveedor} REEMPLAZA lo pendiente de ${reemplazan.length} producto${reemplazan.length === 1 ? "" : "s"} (no se suma):\n\n${reemplazan.slice(0, 10).join("\n")}${reemplazan.length > 10 ? `\n… y ${reemplazan.length - 10} más` : ""}\n\nLas cantidades que cargaste son el total que querés recibir. ¿Confirmar?`)) return;
-  const btn = grupoEl.querySelector(".btn-confirmar");
+  const btn = grupoEl.querySelector(".btn-confirmar"), btnBorrar = grupoEl.querySelector(".btn-borrar");
   btn.disabled = true;
+  btnBorrar.disabled = true;
   btn.textContent = "Guardando…";
   try {
     const res = await apiFetch("/pedidos", {
@@ -182,9 +190,12 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
     grupoEl.dataset.oc = res.pedido_id; // el PDF ya sale con el número de OC
     grupoEl.querySelectorAll("input, select, button.link").forEach((el) => el.disabled = true);
     grupoEl.querySelectorAll(".avisos, .estado-pend").forEach((el) => el.textContent = "");
+    btnBorrar.remove();   // ya es un pedido guardado: se maneja desde Pedidos
+    actualizarVista();
     cargarPendientes();
   } catch (e) {
     btn.disabled = false;
+    btnBorrar.disabled = false;
     btn.textContent = "Confirmar pedido";
     alert(`Error guardando el pedido: ${e.message}`);
   }
@@ -207,12 +218,34 @@ function quitarLinea(tr) {
     grupoEl.querySelector("h2").textContent =
       `📦 ${grupoEl.dataset.proveedor} — ${quedan} producto${quedan === 1 ? "" : "s"}`;
   }
-  if (!document.querySelector("#grupos .grupo")) {
-    document.getElementById("vacio").style.display = "block";
-  }
+  actualizarVista();
+}
+
+// Aviso de carrito vacío, botón "Vaciar carrito" y contador del menú, sin volver a dibujar los pedidos.
+function actualizarVista() {
   const n = getCarrito().length;
+  document.getElementById("vacio").style.display = document.querySelector("#grupos .grupo") ? "none" : "block";
+  document.getElementById("btnVaciar").hidden = !n;
   const navLink = document.querySelector('nav a[href="pedido.html"]');
   if (navLink) navLink.textContent = n ? `🛒 Carrito (${n})` : "🛒 Carrito";
+}
+
+function borrarPedido(grupoEl) {
+  const n = grupoEl.querySelectorAll("tbody tr[data-sku]").length;
+  if (!confirm(`¿Borrar del carrito el pedido a ${grupoEl.dataset.proveedor} (${n} producto${n === 1 ? "" : "s"})?\n\nNo se puede deshacer. Los pedidos ya confirmados no se tocan.`)) return;
+  setCarrito(getCarrito().filter((l) => String(l.proveedor) !== grupoEl.dataset.proveedor));
+  grupoEl.remove();
+  actualizarVista();
+}
+
+function vaciarCarrito() {
+  // Se quitan solo los pedidos sin confirmar; los ya guardados quedan en pantalla para bajar el PDF.
+  const abiertos = [...document.querySelectorAll("#grupos .grupo:not([data-oc])")];
+  if (abiertos.some((el) => el.querySelector(".btn-confirmar").disabled)) return alert("Esperá a que termine de guardarse el pedido.");
+  if (!confirm(`¿Vaciar el carrito? ${abiertos.length === 1 ? "Se borra 1 pedido" : `Se borran ${abiertos.length} pedidos`} sin confirmar.\n\nNo se puede deshacer. Los pedidos ya confirmados no se tocan.`)) return;
+  setCarrito([]);
+  abiertos.forEach((el) => el.remove());
+  actualizarVista();
 }
 
 function renderGrupo(proveedor, lineas) {
@@ -264,6 +297,7 @@ function renderGrupo(proveedor, lineas) {
     <div class="grupo-acciones">
       <button class="secondary btn-pdf">⬇ Descargar PDF</button>
       <button class="btn-confirmar">Confirmar pedido</button>
+      <button type="button" class="borrar btn-borrar">🗑 Borrar pedido</button>
     </div>
   `;
 
@@ -318,6 +352,7 @@ function renderGrupo(proveedor, lineas) {
     if (!lineas.length) return alert("No hay líneas con cantidad > 0.");
     confirmarPedido(proveedorElegido(el), lineas, el);
   });
+  el.querySelector(".btn-borrar").addEventListener("click", () => borrarPedido(el));
 
   return el;
 }
@@ -326,17 +361,13 @@ function render() {
   const carrito = getCarrito();
   const cont = document.getElementById("grupos");
   cont.innerHTML = "";
-  if (!carrito.length) {
-    document.getElementById("vacio").style.display = "block";
-    return;
-  }
-  document.getElementById("vacio").style.display = "none";
-  const grupos = agruparPorProveedor(carrito);
-  for (const [proveedor, lineas] of grupos) {
+  for (const [proveedor, lineas] of agruparPorProveedor(carrito)) {
     cont.appendChild(renderGrupo(proveedor, lineas));
   }
+  actualizarVista();
 }
 
+document.getElementById("btnVaciar").addEventListener("click", vaciarCarrito);
 render();
 if (getCarrito().length) cargarPendientes();
 </script>
