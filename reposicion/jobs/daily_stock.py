@@ -183,6 +183,14 @@ def detect_quiebres(config, hoy_rows, prev_by_sku, fecha_hoy):
     core.tnlog(f"  {len(nuevas_aperturas)} quiebres nuevos detectados")
 
 
+def recalcular_lotes(config, tanda=200):
+    """Recalcula cuánto queda de cada ingreso, de a `tanda` productos: todo junto tardaría más de lo que la base
+    permite en un pedido."""
+    skus = sorted({r["sku"] for r in db.select(config, "repo_ingresos", params={"select": "sku", "order": "id.asc"})})
+    return sum(db.rpc(config, "repo_calcular_lotes", {"p_skus": skus[i:i + tanda]}) or 0
+               for i in range(0, len(skus), tanda))
+
+
 def main():
     config = db.load_config()
     fecha_hoy = date.today().isoformat()
@@ -213,8 +221,9 @@ def main():
     # explica por ventas. Si falla no frena el resto: la próxima corrida lo recalcula.
     try:
         core.tnlog(f"✓ Ingresos de mercadería: {db.rpc(config, 'repo_detectar_ingresos')}")
+        core.tnlog(f"✓ Lotes recalculados: {recalcular_lotes(config)}")
     except Exception as e:
-        core.tnlog(f"  ⚠ Detección de ingresos falló: {e}")
+        core.tnlog(f"  ⚠ Ingresos de mercadería falló: {e}")
 
     core.tnlog("✓ Job diario terminado")
 
