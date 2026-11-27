@@ -95,6 +95,35 @@ def combinar_velocidad(promedio, reciente):
     return promedio + RECENT_WEIGHT * max(0, reciente - promedio)
 
 
+# ─── TOPE DE LA SUGERENCIA DE FULL ──────────────────────────────────────────
+# Pedido del usuario (2026-11-27): la sugerencia de Full tiene que parecerse a la del panel de Mercado Libre; quedar
+# un poco abajo no molesta, pedir muy por arriba sí. La velocidad (ventas / días con stock) proyecta a un producto
+# agotado como si hubiera seguido vendiendo a su mejor ritmo (caso PRET-BO150X140BLANCO: 643 contra 259 del panel).
+# El tope usa el ritmo de CALENDARIO: nunca sube la sugerencia, solo la recorta. Ajustado con 9 productos del panel.
+DIAS_TOPE_FULL = 90   # ventana larga: todas las ventas de ML de esa cuenta (Full o no)
+
+
+def edad_en_dias(created_at_str):
+    """Días desde que se creó el producto, SIN recortar a la ventana (days_active recorta a DAYS).
+    Sin fecha válida devuelve DIAS_TOPE_FULL (se trata como producto con toda la historia)."""
+    try:
+        created = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+        return max(1, (NOW - created).days)
+    except Exception:
+        return DIAS_TOPE_FULL
+
+
+def tope_full(stock_full, ventas_full, ventas_ml_largo, edad_dias, coverage=None):
+    """Máximo a enviar a Full: el mayor ritmo de calendario entre las ventas Full de la ventana (DAYS) y todas las
+    ventas en ML de la cuenta en DIAS_TOPE_FULL, llevado a `coverage` días, menos el stock en Full. Un producto
+    nuevo se mide sobre los días que existe (`edad_dias`)."""
+    if coverage is None:
+        coverage = COVERAGE_DAYS
+    ritmo = max((ventas_full or 0) / max(1, min(DAYS, edad_dias)),
+                (ventas_ml_largo or 0) / max(1, min(DIAS_TOPE_FULL, edad_dias)))
+    return max(0, round(ritmo * coverage - stock_full))
+
+
 def set_stock_days(dias_por_sku):
     global STOCK_DAYS
     STOCK_DAYS = dias_por_sku or {}
@@ -685,11 +714,17 @@ def ml_inventory_quantities(token, inventory_ids):
     siempre de más — nunca de menos — ej. GAKN14552 reportaba 195 en /items
     contra 0 real)."""
     quantities = {}
+    no_disponible = defaultdict(int)
     for inv_id in inventory_ids:
         data = ml_get(f"https://api.mercadolibre.com/inventories/{inv_id}/stock/fulfillment", token)
         if data is not None:
             quantities[inv_id] = data.get("available_quantity", 0) or 0
+            for d in data.get("not_available_detail") or []:
+                no_disponible[str(d.get("status"))] += d.get("quantity") or 0
         time.sleep(0.1)
+    # Solo informativo (todavía no se resta de la sugerencia): para saber qué informa ML de lo que no está disponible.
+    tnlog("  Full no disponible según ML, en unidades: "
+          + (", ".join(f"{k}={v}" for k, v in sorted(no_disponible.items())) or "sin detalle"))
     return quantities
 
 def ml_refresh_full_quantities(token, item_details):
@@ -939,7 +974,12 @@ def build_rows(results):
     ml_pret_by_sku  = ml_pret_sales_nofull
     ml_lavan_by_sku = ml_lavan_sales_nofull
 
-    def full_metrics_marca(sku, stock_full, active_days, prefix, ventas_dict, recientes_dict=None):
+    # {sku: (unidades en ML en los últimos DIAS_TOPE_FULL días, días desde la primera de esas ventas)} por cuenta.
+    # Lo arma weekly_calc. Sin la clave (generar_reporte.py, tests) no se aplica tope.
+    ventas_largas = {"Pret": results.get("ml_pret", {}).get("ventas_largas"),
+                     "Lavan": results.get("ml_lavan", {}).get("ventas_largas")}
+
+    def full_metrics_marca(sku, stock_full, active_days, prefix, ventas_dict, recientes_dict=None, edad=None):
         """Devuelve el dict de columnas Full de UNA sola marca (Pret o Lavan).
 
         El stock Full de cada cuenta ML es un pool separado que Mercado Libre
@@ -982,7 +1022,14 @@ def build_rows(results):
         else:
             alerta_full = f"🟢 OK FULL {prefix}"
 
-        a_enviar_full = units_to_order(stock_full, vel_full_diaria) if vel_full_diaria > 0 else 0
+        sin_tope = units_to_order(stock_full, vel_full_diaria) if vel_full_diaria > 0 else 0
+        a_enviar_full = sin_tope
+        largas = ventas_largas[prefix]
+        if largas is not None and sin_tope:
+            unidades, desde_primera = largas.get(sku, (0, 0))
+            # La primera venta vale como antigüedad: un producto recreado en Tiendanube no es nuevo.
+            edad_real = max(edad or DIAS_TOPE_FULL, desde_primera)
+            a_enviar_full = min(sin_tope, tope_full(stock_full, ventas_full, unidades, edad_real))
 
         return {
             f"Unid. Full {prefix}":          ventas_full,
@@ -993,13 +1040,15 @@ def build_rows(results):
             f"Fecha quiebre Full {prefix}":  fecha_q_full,
             f"Alerta Full {prefix}":         alerta_full,
             f"A enviar Full {prefix} (uds)": a_enviar_full,
+            f"A enviar Full {prefix} sin tope (uds)": sin_tope,
         }
 
-    def full_metrics(sku, active_days):
+    def full_metrics(sku, active_days, created_at=""):
         """Mergea las columnas Full de las dos marcas (Pret y Lavan) para un SKU."""
+        edad = edad_en_dias(created_at)
         return {
-            **full_metrics_marca(sku, ml_pret_stock_full.get(sku, 0), active_days, "Pret", ml_pret_sales_full, ml_pret_rec_full),
-            **full_metrics_marca(sku, ml_lavan_stock_full.get(sku, 0), active_days, "Lavan", ml_lavan_sales_full, ml_lavan_rec_full),
+            **full_metrics_marca(sku, ml_pret_stock_full.get(sku, 0), active_days, "Pret", ml_pret_sales_full, ml_pret_rec_full, edad),
+            **full_metrics_marca(sku, ml_lavan_stock_full.get(sku, 0), active_days, "Lavan", ml_lavan_sales_full, ml_lavan_rec_full, edad),
         }
 
     def ml_sales_by_sku(ml_sales):
@@ -1256,7 +1305,7 @@ def build_rows(results):
                 "URL TN Lavan":           url_tn_lavan,
                 "URL ML Pret":            ml_pret_sku_to_url.get(sku, ""),
                 "URL ML Lavan":           ml_lavan_sku_to_url.get(sku, ""),
-                **full_metrics(sku, prod_days_active),
+                **full_metrics(sku, prod_days_active, created_at),
             })
 
     # ── PASO 2: SKUs exclusivos de TN Lavan (no están en TN Pret)
@@ -1409,7 +1458,7 @@ def build_rows(results):
                 "URL TN Lavan":           url_tn_lavan,
                 "URL ML Pret":            ml_pret_sku_to_url.get(sku, ""),
                 "URL ML Lavan":           ml_lavan_sku_to_url.get(sku, ""),
-                **full_metrics(sku, prod_days_active),
+                **full_metrics(sku, prod_days_active, created_at),
             })
 
     return rows

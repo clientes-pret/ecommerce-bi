@@ -185,6 +185,33 @@ def _solo_recientes(orders, campo_fecha):
     return out
 
 
+def cargar_ventas_largas(config, canal, item_details):
+    """{sku: (unidades vendidas en ML en los últimos core.DIAS_TOPE_FULL días, días desde la primera de esas ventas)}
+    de una cuenta, sin canceladas. Alimenta el tope de la sugerencia de Full (core.tope_full)."""
+    desde = (core.NOW - timedelta(days=core.DIAS_TOPE_FULL)).strftime("%Y-%m-%d")
+    rows = db.select(config, "repo_ventas_items", params={
+        "select": "sku,item_id,cantidad,fecha",
+        "canal": f"eq.{canal}",
+        "fecha": f"gte.{desde}",
+        "estado": "eq.activa",
+        "order": "id.asc",  # orden fijo: ver nota en _ventas_rows
+    })
+    return resumir_ventas_largas(rows, item_details, core.NOW.date())
+
+
+def resumir_ventas_largas(rows, item_details, hoy):
+    unidades, primera = defaultdict(int), {}
+    for r in rows:
+        # Igual que ml_sales_full_split: sin SKU en la venta, el de la publicación.
+        sku = str(r.get("sku") or "").strip() or core.ml_item_sku(item_details.get(r.get("item_id"), {}))
+        if not sku:
+            continue
+        unidades[sku] += r["cantidad"]
+        fecha = str(r["fecha"])[:10]
+        primera[sku] = min(fecha, primera.get(sku, fecha))
+    return {sku: (n, (hoy - date.fromisoformat(primera[sku])).days) for sku, n in unidades.items()}
+
+
 def fetch_all_hybrid(config):
     """Catálogo en vivo (precio/costo/stock/nombre — cambia todos los días,
     no tiene sentido persistirlo con esta cadencia) + ventas desde
@@ -220,6 +247,7 @@ def fetch_all_hybrid(config):
         results[canal]["sales"] = sales_total
         results[canal]["sales_first"] = sales_first
         results[canal]["sales_second"] = sales_second
+        results[canal]["ventas_largas"] = cargar_ventas_largas(config, canal, results[canal]["item_details"])
         core.tnlog(f"  {canal}: {len(rows)} líneas de venta desde repo_ventas_items")
 
     return results
@@ -308,6 +336,7 @@ def row_to_calculo(row, semana, coverage_days):
         "fecha_quiebre_full_pret": _parse_fecha_ddmmyyyy(row.get("Fecha quiebre Full Pret")),
         "alerta_full_pret":        row.get("Alerta Full Pret"),
         "a_reponer_full_pret":     _int_or_none(row.get("A enviar Full Pret (uds)")),
+        "a_reponer_full_pret_sin_tope": _int_or_none(row.get("A enviar Full Pret sin tope (uds)")),
         "vendido_full_lavan":      row.get("Unid. Full Lavan"),
         "stock_full_lavan":         row.get("Stock Full Lavan", 0),
         "vel_diaria_full_lavan":    row.get("Vel. Full Lavan (diaria)"),
@@ -316,6 +345,7 @@ def row_to_calculo(row, semana, coverage_days):
         "fecha_quiebre_full_lavan": _parse_fecha_ddmmyyyy(row.get("Fecha quiebre Full Lavan")),
         "alerta_full_lavan":        row.get("Alerta Full Lavan"),
         "a_reponer_full_lavan":     _int_or_none(row.get("A enviar Full Lavan (uds)")),
+        "a_reponer_full_lavan_sin_tope": _int_or_none(row.get("A enviar Full Lavan sin tope (uds)")),
         "coverage_days_usado":    coverage_days,
     }
 

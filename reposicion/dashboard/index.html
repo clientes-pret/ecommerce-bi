@@ -683,6 +683,7 @@ function renderDetalle(p) {
     <div class="detalle-item"><div class="label">Canal dominante</div><div class="valor">${p.canal_dominante || "—"}</div></div>
     <div class="detalle-item"><div class="label">Revenue 60d</div><div class="valor">$${fmtNum(p.revenue_60d)}</div></div>
     <div class="detalle-item"><div class="label">Ganancia 60d</div><div class="valor">$${fmtNum(p.ganancia_60d)}</div></div>
+    ${p.a_reponer_full_pret_sin_tope > p.a_reponer_full_pret ? `<div class="detalle-item" title="La sugerencia de Full se limita al ritmo de venta de calendario, para no proyectar un producto sin stock como si hubiera seguido vendiendo a su mejor ritmo"><div class="label">Full sin tope</div><div class="valor">${fmtNum(p.a_reponer_full_pret_sin_tope)} u. (se sugieren ${fmtNum(p.a_reponer_full_pret)})</div></div>` : ""}
     ${Object.entries(canal).map(([k, v]) => `<div class="detalle-item"><div class="label">${k}</div><div class="valor">${fmtNum(v)} uds</div></div>`).join("")}
   `;
 
