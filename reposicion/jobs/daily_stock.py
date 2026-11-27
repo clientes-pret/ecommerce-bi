@@ -17,7 +17,7 @@ Uso local: python3 -m reposicion.jobs.daily_stock
 
 import sys
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -183,7 +183,7 @@ def detect_quiebres(config, hoy_rows, prev_by_sku, fecha_hoy):
     core.tnlog(f"  {len(nuevas_aperturas)} quiebres nuevos detectados")
 
 
-def recalcular_lotes(config, tanda=200):
+def recalcular_lotes(config, tanda=50):
     """Recalcula cuánto queda de cada ingreso, de a `tanda` productos: todo junto tardaría más de lo que la base
     permite en un pedido."""
     skus = sorted({r["sku"] for r in db.select(config, "repo_ingresos", params={"select": "sku", "order": "id.asc"})})
@@ -217,10 +217,12 @@ def main():
     # ventas desde el pedido (ver reposicion/recepciones.py).
     recepciones.reconciliar_pedidos(config, stock_by_sku)
 
-    # Ingresos de mercadería (subas de stock de los últimos 14 días). Va después del sync porque descuenta lo que se
-    # explica por ventas. Si falla no frena el resto: la próxima corrida lo recalcula.
+    # Ingresos de mercadería (subas de stock de los últimos 7 días; con 14 el pedido quedaba cerca del tiempo máximo
+    # de la base). Va después del sync porque descuenta lo que se explica por ventas. Si falla no frena el resto: la
+    # próxima corrida lo recalcula.
     try:
-        core.tnlog(f"✓ Ingresos de mercadería: {db.rpc(config, 'repo_detectar_ingresos')}")
+        desde = (date.today() - timedelta(days=7)).isoformat()
+        core.tnlog(f"✓ Ingresos de mercadería: {db.rpc(config, 'repo_detectar_ingresos', {'p_desde': desde})}")
         core.tnlog(f"✓ Lotes recalculados: {recalcular_lotes(config)}")
     except Exception as e:
         core.tnlog(f"  ⚠ Ingresos de mercadería falló: {e}")
