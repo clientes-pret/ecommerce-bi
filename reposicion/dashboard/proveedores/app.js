@@ -31,7 +31,12 @@ export const chipEstado = (e) => `<span class="chip ${ESTADO[e]?.[1] || ''}">${e
 
 // Las rutas se resuelven contra esta carpeta (proveedores/) para que anden igual desde operaciones/.
 const aca = (p) => new URL(p, import.meta.url).href;
-export const rutaPara = (rol) => aca(rol === 'deposito' ? 'recibir.html' : rol === 'marketing' ? '../marketing/dashboard.html' : rol === 'mercadolibre' ? '../operaciones/mercadolibre.html' : 'admin.html');
+export const rutaPara = (rol) => aca(rol === 'deposito' ? 'recibir.html' : rol === 'marketing' ? '../marketing/dashboard.html' : rol === 'mercadolibre' ? '../operaciones/mercadolibre.html' : '../inicio.html');
+// Pantalla a la que volver después de ingresar (?volver=). Solo páginas de este tablero: nunca otro sitio.
+export function rutaVolver(volver) {
+  if (!/^([a-z_]+\/)?[a-z_]+\.html(\?[A-Za-z0-9_=&%.-]*)?$/.test(volver || '') || /^proveedores\/index\.html/.test(volver)) return null;
+  return aca('../' + volver);
+}
 
 // Verifica sesión y rol. Si no corresponde, redirige. Devuelve el perfil.
 export async function guard(roles) {
@@ -163,9 +168,10 @@ export function nav(perfil, activa) {
   el.setAttribute('aria-label', 'Panel de control');
   // Los links van dentro de .links: en la compu es transparente al layout (display: contents); en el celular es una fila que se desliza.
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Panel de control</div></div>' +
-    '<div class="links">' + it('admin.html', 'Inicio', 'inicio') +
+    '<div class="links">' + it('../inicio.html', '← Inicio', 'portada') + it('admin.html', 'Resumen', 'inicio') +
     '<div class="grupo">Ventas</div>' + it('ventas.html', 'Scorecard', 'scorecard', 'sub') + it('ventas-dashboard.html', 'Dashboard', 'dashboard', 'sub') +
     '<div class="grupo">Proveedores</div>' + it('pendientes.html', 'Pendientes', 'pendientes', 'sub') + it('proveedores.html', 'Cuenta corriente', 'prov', 'sub') + it('ordenes.html', 'Órdenes de compra', 'ordenes', 'sub') + it('agenda.html', 'Agenda de pagos', 'agenda', 'sub') +
+    '<div class="grupo">Stock</div>' + it('stock.html', 'Análisis de stock', 'stock', 'sub') + it('ingresos.html', 'Ingresos', 'ingresos', 'sub') +
     '<div class="grupo">Gestión</div>' + it('costos.html', 'Costos', 'costos') + it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
     '<div class="grupo">Otras plataformas</div>' + it('../operaciones/empaquetado.html', 'Operaciones Pret a Home ↗', 'operaciones') + it('../marketing/dashboard.html', 'Marketing ↗', 'marketing') +
     `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a></div>` +
@@ -191,7 +197,7 @@ export function navOperaciones(perfil, activa) {
   el.className = 'side';
   el.setAttribute('aria-label', 'Operaciones Pret a Home');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Operaciones</div></div>' +
-    '<div class="links">' + it('mercadolibre.html', 'Mercado Libre', 'mercadolibre') + (soloMl ? '' : it('empaquetado.html', 'Empaquetado', 'empaquetado') +
+    '<div class="links">' + (soloMl ? '' : it('../inicio.html', '← Inicio', 'portada')) + it('mercadolibre.html', 'Mercado Libre', 'mercadolibre') + (soloMl ? '' : it('empaquetado.html', 'Empaquetado', 'empaquetado') +
       it('perdido.html', 'Stock perdido', 'perdido') + it('devoluciones.html', 'Devoluciones', 'devoluciones') +
       '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel')) + '<span class="sp"></span></div>' +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
@@ -209,7 +215,7 @@ export function navMarketing(perfil, activa) {
   el.className = 'side';
   el.setAttribute('aria-label', 'Marketing');
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Marketing</div></div>' +
-    '<div class="links">' + it('dashboard.html', 'Dashboard', 'dashboard') + it('scorecard.html', 'Scorecard', 'scorecard') + it('publicaciones.html', 'Publicaciones', 'publicaciones') + it('tareas.html', 'Tareas', 'tareas') + it('publicidad.html', 'Publicidad', 'publicidad') + it('trafico.html', 'Tráfico', 'trafico') + '<span class="sp"></span></div>' +
+    '<div class="links">' + (['admin', 'dueno'].includes(perfil.rol) ? it('../inicio.html', '← Inicio', 'portada') : '') + it('dashboard.html', 'Dashboard', 'dashboard') + it('scorecard.html', 'Scorecard', 'scorecard') + it('publicaciones.html', 'Publicaciones', 'publicaciones') + it('tareas.html', 'Tareas', 'tareas') + it('publicidad.html', 'Publicidad', 'publicidad') + it('trafico.html', 'Tráfico', 'trafico') + '<span class="sp"></span></div>' +
     `<div class="usuario"><span>${esc(perfil.nombre)}</span><a href="#" id="salir">Salir</a></div>`;
   document.body.classList.add('panel');
   document.body.prepend(el);

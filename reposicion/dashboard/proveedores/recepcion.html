@@ -36,7 +36,7 @@ async function cargar() {
 function pintar() {
   const dif = items.filter((i) => i.cant_remito != null && i.cant_remito !== i.cant_contada).length, sinSku = items.filter((i) => !i.sku).length;
   const cerrada = r.estado === 'controlada' || r.estado === 'con_diferencia';
-  $('#app').innerHTML = `<p class="small"><a href="admin.html">← Inicio</a></p>
+  $('#app').innerHTML = `<p class="small"><a href="admin.html">← Resumen</a></p>
   <div class="row between wrapRow"><div><h1>${esc(r.proveedor)}</h1><div class="muted">Remito ${esc(r.nro_remito || 's/n')} · recibido ${fechaHora(r.fecha)} · ${r.bultos ?? '?'} bultos</div></div>
     <span class="chip ${r.estado === 'controlada' ? 'ok' : r.estado === 'con_diferencia' ? 'bad' : 'warn'}">${esc(r.estado.replace('_', ' '))}</span></div>
   ${!r.recibido_completo ? `<div class="card" style="background:var(--bad-bg);margin-top:12px"><b>Mati marcó que NO llegó todo.</b>${r.notas ? `<div>${esc(r.notas)}</div>` : ''}</div>` : ''}

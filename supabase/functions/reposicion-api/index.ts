@@ -2,18 +2,19 @@
 //
 // Gateway único de la app de Reposición. El frontend (reposicion/dashboard/,
 // hosteado gratis en GitHub Pages) nunca ve el service_role_key — le pega a
-// esta función, que valida la contraseña compartida del equipo (header
-// X-App-Password) y adentro usa el service_role_key para leer/escribir en
-// Postgres. SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY los inyecta Supabase
+// esta función, que valida la sesión del usuario del panel (dueño o
+// administrador) o la contraseña compartida (ver auth.ts) y adentro usa el
+// service_role_key para leer/escribir en Postgres. SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY los inyecta Supabase
 // automáticamente en cada Edge Function; APP_SHARED_PASSWORD hay que
 // setearlo a mano una vez (ver reposicion/SETUP.md).
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { autorizado, type Consultas } from "./auth.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-App-Password",
+  "Access-Control-Allow-Headers": "Content-Type, X-App-Password, Authorization",
 };
 
 const supabase = createClient(
@@ -30,10 +31,10 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function checkPassword(req: Request): boolean {
-  if (!APP_PASSWORD) return true; // sin password configurado -> no bloquea (setup inicial)
-  return req.headers.get("x-app-password") === APP_PASSWORD;
-}
+const consultas: Consultas = {
+  usuario: async (token) => (await supabase.auth.getUser(token)).data.user?.id ?? null,
+  rol: async (id) => (await supabase.from("cc_perfiles").select("rol").eq("id", id).maybeSingle()).data?.rol ?? null,
+};
 
 // ─── Helpers de agregación ──────────────────────────────────────────────────
 
@@ -575,7 +576,7 @@ async function getVentasEstrella() {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
 
-  if (!checkPassword(req)) return json({ error: "Contraseña inválida" }, 401);
+  if (!(await autorizado(req, consultas, APP_PASSWORD))) return json({ error: "Sin acceso" }, 401);
 
   const url = new URL(req.url);
   // El path real (sin el prefijo /reposicion-api que agrega Supabase)

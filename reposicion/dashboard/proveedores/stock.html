@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Análisis de stock · Stock</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=12">
+  <style>
+    .filtros { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; } .filtros select, .filtros input { width: auto; }
+    .barras { display: grid; grid-template-columns: minmax(130px, max-content) 1fr max-content; gap: 6px 14px; align-items: center; }
+    .barras button { display: contents; cursor: pointer; font: inherit; }
+    .barras .et { text-align: left; font-size: 13px; color: var(--ink-soft); }
+    .barras .pista { height: 28px; display: flex; align-items: center; border-left: 1px solid var(--line-strong); cursor: pointer; }
+    .barras .pista i { display: block; height: 18px; background: var(--brand); border-radius: 0 4px 4px 0; min-width: 2px; }
+    .barras .val { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; white-space: nowrap; }
+    .barras button:hover .et, .barras button:focus-visible .et { color: var(--brand); text-decoration: underline; }
+    .barras button:hover .pista, .barras button:focus-visible .pista { background: var(--brand-bg); }
+    input.plazo { width: 74px; text-align: right; min-height: 36px; padding: 4px 8px; }
+    tr.cat th { background: var(--ink); color: #fff; font-size: 13px; }
+    tr.grupo th, tr.grupo td { background: var(--line-soft); }
+    tr.grupo button { background: none; border: 0; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; padding: 4px 0; text-align: left; }
+    .nota-fila { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<div id="tip" role="status"></div>
+<script type="module">
+import { sb, $, $$, esc, guard, nav, peso0, fecha, hoy } from './app.js';
+import * as S from './stock-lib.js';
+import { segmentar } from './grupos.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'stock');
+
+const num = (v) => Math.round(Number(v || 0)).toLocaleString('es-AR');
+const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
+const dias = (v) => (v === null ? 'sin ventas' : v > 730 ? 'más de 2 años' : `${num(v)} días`);
+const { millones } = S;
+const nombreDe = (f) => [f.nombre, f.color].filter(Boolean).join(' · ');
+const PESTANAS = [['proveedores', 'Proveedores'], ['categorias', 'Categorías'], ['frenada', 'Plata frenada'], ['riesgo', 'Pagos en riesgo']];
+const vista = { tab: 'proveedores', prov: '', cat: '', q: '', tramo: '', abiertos: new Set(), mostrar: 100 };
+let lotes = [], stock = [];
+
+async function cargar() {
+  const [a, b] = await Promise.all([sb.rpc('repo_lotes'), sb.rpc('repo_stock_valorizado')]);
+  if (a.error || b.error) throw a.error || b.error;
+  lotes = a.data || []; stock = b.data || [];
+}
+
+const filtro = (x) => (!vista.prov || x.proveedor === vista.prov) && (!vista.cat || x.categoria === vista.cat);
+const misLotes = () => lotes.filter(filtro);
+const miStock = () => stock.filter(filtro);
+const coincide = (x) => { const q = vista.q.trim().toLowerCase(); return !q || `${x.sku} ${x.nombre} ${x.color || ''}`.toLowerCase().includes(q); };
+
+function pantalla() {
+  const lista = (k) => [...new Set([...stock, ...lotes].map((x) => x[k]))].sort((a, b) => a.localeCompare(b, 'es'));
+  const opciones = (k, sel, todas) => `<option value="">${todas}</option>${lista(k).map((v) => `<option ${v === sel ? 'selected' : ''}>${esc(v)}</option>`).join('')}`;
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Análisis de stock</h1><p>Cuánto tarda en venderse lo que entra y cuánto vas a pagar antes de venderlo.</p></div>
+    <a class="btn" href="ingresos.html">Revisar ingresos</a></div>
+  <div class="filtros"><select id="fProv" aria-label="Proveedor">${opciones('proveedor', vista.prov, 'Todos los proveedores')}</select>
+    <select id="fCat" aria-label="Categoría">${opciones('categoria', vista.cat, 'Todas las categorías')}</select></div>
+  <div class="centro-comando compacto" id="kpis"></div>
+  <section class="card"><h2 style="margin-top:0">Plata en stock según cuánto tarda en venderse</h2><p class="muted small" style="margin-top:-6px">Tocá un tramo para ver sus productos.</p><div class="barras" id="barras"></div></section>
+  <section class="card tabla"><div class="cab" style="flex-wrap:wrap;gap:10px">
+    <div class="seg" role="group" aria-label="Qué ver">${PESTANAS.map(([k, t]) => `<button type="button" data-tab="${k}">${t}</button>`).join('')}</div>
+    <div class="row wrapRow"><input id="fQ" placeholder="Producto o SKU…" aria-label="Buscar" style="width:auto" value="${esc(vista.q)}"><button class="btn sm" id="csv">Descargar Excel (CSV)</button></div></div>
+    <p class="muted small" id="ayuda" style="padding:0 24px"></p>
+    <div class="scroll"><table id="tabla"></table></div>
+    <div class="row" style="justify-content:center;padding:12px"><button class="btn" id="mas" hidden>Ver más</button></div></section>
+  <p class="muted small">Es una estimación. Los ingresos se detectan desde las subas de stock y el historial empieza el 12/08: solo lo que entró hasta fines de septiembre ya cumplió 60 días. Los pesos son al costo actual de Ecomm-App (no el de la factura). El ritmo de venta es el que usa Reposición. Primero se vende lo que ya había y después lo nuevo.</p>`;
+  $('#fProv').onchange = (e) => { vista.prov = e.target.value; vista.mostrar = 100; todo(); };
+  $('#fCat').onchange = (e) => { vista.cat = e.target.value; vista.mostrar = 100; todo(); };
+  let t; $('#fQ').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { vista.q = e.target.value; vista.mostrar = 100; tabla(); }, 200); };
+  $$('[data-tab]').forEach((b) => (b.onclick = () => { vista.tab = b.dataset.tab; vista.tramo = ''; vista.mostrar = 100; tabla(); }));
+  $('#mas').onclick = () => { vista.mostrar += 100; tabla(); };
+  $('#csv').onclick = descargar;
+  todo();
+}
+const todo = () => { kpis(); barras(); tabla(); };
+
+function kpis() {
+  const s = miStock(), l = misLotes(), h = hoy();
+  const total = S.suma(s, S.valor), sinCosto = S.suma(s.filter((f) => !f.costo), S.unidades);
+  const venc = S.vigentes(l).filter((x) => S.vencido(x, h));
+  const p30 = S.proximos(l, h, 1, 30), p60 = S.proximos(l, h, 31, 60);
+  const tarjeta = (t, v, sub, cls = '') => `<div class="cc-card ${cls}"><div class="cc-label">${t}</div><div class="cc-valor">${v}</div><div class="cc-sub">${sub}</div></div>`;
+  $('#kpis').innerHTML = tarjeta('Plata en stock', millones(total), `${num(S.suma(s, S.unidades))} unidades${sinCosto ? ` · ${num(sinCosto)} sin costo` : ''}`)
+    + tarjeta('Días de stock', dias(S.diasDeStock(s)), 'para vender todo al ritmo actual')
+    + tarjeta('Vendido antes de pagar', pct(S.vendidoAlPago(l, h)), `de ${millones(S.suma(venc, S.ingresado))} cuyo pago ya venció`)
+    + tarjeta('Vas a pagar sin haber vendido', millones(p30.sinVender), `en 30 días, de ${millones(p30.aPagar)} a pagar<br>días 31 a 60: ${millones(p60.sinVender)} de ${millones(p60.aPagar)}`, p30.sinVender > 0 ? 'alerta' : '');
+}
+
+function barras() {
+  const t = S.porTramo(miStock()), total = S.suma(t, (x) => x.plata), max = Math.max(1, ...t.map((x) => x.plata));
+  $('#barras').innerHTML = t.map((x) => {
+    const parte = total ? Math.round((x.plata / total) * 100) : 0, detalle = `${num(x.productos)} productos · ${num(x.unidades)} unidades · ${peso0(x.plata)}`;
+    return `<button type="button" data-tramo="${x.id}" data-tip="${esc(x.nombre)}|${esc(detalle)}" aria-label="${esc(`${x.nombre}: ${detalle}`)}"><span class="et">${x.nombre}</span><span class="pista"><i style="width:${(x.plata / max) * 100}%"></i></span><span class="val">${millones(x.plata)} · ${parte}%</span></button>`;
+  }).join('');
+  const tip = $('#tip');
+  $$('#barras button').forEach((b) => {
+    b.onclick = () => { vista.tab = 'frenada'; vista.tramo = b.dataset.tramo; vista.mostrar = 100; tip.style.display = 'none'; tabla(); $('#tabla').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    const mostrar = (x, y) => { const [titulo, d] = b.dataset.tip.split('|'); tip.innerHTML = `<b>${esc(titulo)}</b><div>${esc(d)}</div>`; tip.style.display = 'block'; tip.style.left = `${Math.max(8, Math.min(x + 12, innerWidth - tip.offsetWidth - 8))}px`; tip.style.top = `${y + 14}px`; };
+    // Los botones usan display: contents, así que los eventos se escuchan en sus tres partes.
+    [...b.children].forEach((c) => { c.onmousemove = (e) => mostrar(e.clientX, e.clientY); c.onmouseleave = () => (tip.style.display = 'none'); });
+  });
+}
+
+// Cada pestaña: columnas, filas (para la tabla y el CSV) y una línea de ayuda.
+function datos() {
+  const h = hoy();
+  if (vista.tab === 'proveedores') {
+    return {
+      ayuda: 'Cambiá el plazo de pago de cada proveedor y se recalcula todo. "Tarda en agotarse" es la mediana de los ingresos que ya se agotaron.',
+      cols: ['Proveedor', 'Plazo (días)', 'Entró desde el 12/08', 'Vendido antes de pagar', 'Tarda en agotarse', 'Pagás en 60 días sin vender', 'Stock hoy', 'Días de stock'],
+      filas: S.porProveedor(misLotes(), miStock(), h).filter((p) => !vista.q.trim() || p.proveedor.toLowerCase().includes(vista.q.trim().toLowerCase())),
+      html: (p) => `<tr><th scope="row"><a class="prov" href="#" data-ver="${esc(p.proveedor)}">${esc(p.proveedor)}</a></th>
+        <td class="r"><input class="plazo num" type="number" min="0" max="365" inputmode="numeric" value="${p.plazo}" data-plazo="${esc(p.proveedor)}" aria-label="Plazo de pago de ${esc(p.proveedor)} en días"></td>
+        <td class="r num">${p.ingresado ? millones(p.ingresado) : ''}</td><td class="r num">${pct(p.pctAlPago)}</td><td class="r num">${p.diasEnAgotar === null ? '—' : `${num(p.diasEnAgotar)} días`}</td>
+        <td class="r num ${p.sinVender60 > 0 ? 'warn-t' : ''}">${p.sinVender60 ? millones(p.sinVender60) : ''}</td><td class="r num">${p.plataStock ? millones(p.plataStock) : ''}</td><td class="r num">${p.unidadesStock ? dias(p.diasStock) : ''}</td></tr>`,
+      csv: (p) => [p.proveedor, p.plazo, Math.round(p.ingresado), p.pctAlPago === null ? '' : Math.round(p.pctAlPago * 100), p.diasEnAgotar ?? '', Math.round(p.sinVender60), Math.round(p.plataStock), p.diasStock === null ? '' : Math.round(p.diasStock)],
+    };
+  }
+  if (vista.tab === 'frenada') {
+    const tramo = S.TRAMOS.find((t) => t.id === vista.tramo);
+    const base = tramo ? miStock().filter((f) => S.tramoDe(f) === tramo.id).map((f) => ({ ...f, sobran: S.frenada([f])[0]?.sobran || 0, plataSobra: S.frenada([f])[0]?.plataSobra || 0, dias: S.cobertura(f) })).sort((a, b) => S.valor(b) - S.valor(a)) : S.frenada(miStock());
+    return {
+      ayuda: tramo ? `Productos del tramo "${tramo.nombre}", de más a menos plata.` : 'Stock que no se va a vender dentro del plazo de pago de su proveedor, de más a menos plata.',
+      cols: ['Producto', 'Proveedor', 'Stock', 'Vende por semana', 'Dura', 'Sobran para el plazo', 'Plata que sobra', 'Plata en stock'],
+      filas: base.filter(coincide),
+      html: (f) => `<tr><td><div>${esc(nombreDe(f))}</div><div class="nota-fila">${esc(f.sku)}</div></td><td>${esc(f.proveedor)}</td>
+        <td class="r num">${num(S.unidades(f))}<div class="nota-fila">dep. ${num(f.dep)} · Full ${num(f.full_pret + f.full_lavan)}</div></td><td class="r num">${S.sinVentas(f) ? '0' : (f.vel * 7).toLocaleString('es-AR', { maximumFractionDigits: 1 })}</td>
+        <td class="r num">${dias(f.dias)}</td><td class="r num">${num(f.sobran)}</td><td class="r num">${f.costo ? millones(f.plataSobra) : '—'}</td><td class="r num">${f.costo ? millones(S.valor(f)) : '—'}</td></tr>`,
+      csv: (f) => [f.sku, nombreDe(f), f.proveedor, f.dep, f.full_pret + f.full_lavan, +(f.vel * 7).toFixed(2), f.dias === null ? '' : Math.round(f.dias), f.sobran, Math.round(f.plataSobra), Math.round(S.valor(f))],
+      csvCols: ['SKU', 'Producto', 'Proveedor', 'Depósito', 'Full', 'Vende por semana', 'Dura (días)', 'Sobran', 'Plata que sobra', 'Plata en stock'],
+    };
+  }
+  if (vista.tab === 'riesgo') {
+    return {
+      ayuda: 'Ingresos que no llegan a venderse antes de su fecha de pago, o que ya vencieron con mercadería sin vender y todavía está en stock.',
+      cols: ['Producto', 'Proveedor', 'Entró', 'Cantidad', 'Quedan hoy', 'Se paga', 'Sin vender al pagar', 'En pesos', 'Se termina'],
+      filas: S.vigentes(misLotes()).filter((l) => ['riesgo', 'pagado'].includes(S.estadoLote(l, h).id)).filter(coincide)
+        .sort((a, b) => S.quedaAlPago(b) - S.quedaAlPago(a) || b.quedan_al_pago - a.quedan_al_pago),
+      html: (l) => { const e = S.estadoLote(l, h), nuevo = l.origen === 'producto_nuevo' && S.diasEntre(l.fecha, h) < 21; return `<tr><td><div>${esc(nombreDe(l))}</div><div class="nota-fila">${esc(l.sku)}</div>${nuevo ? '<div class="nota-fila warn-t">Recién lanzado: todavía hay pocos datos</div>' : ''}</td><td>${esc(l.proveedor)}</td><td>${fecha(l.fecha)}</td><td class="r num">${num(l.unidades)}</td><td class="r num">${num(l.quedan)}</td>
+        <td>${fecha(l.pago)}<div><span class="chip ${e.clase}">${e.id === 'pagado' ? 'Ya venció' : 'Por vencer'}</span></div></td><td class="r num">${num(l.quedan_al_pago)}</td><td class="r num">${l.costo ? millones(S.quedaAlPago(l)) : '—'}</td><td>${!l.termina_est ? '<span class="muted">sin ventas</span>' : S.diasEntre(h, l.termina_est) > 730 ? 'en más de 2 años' : fecha(l.termina_est)}</td></tr>`; },
+      csv: (l) => [l.sku, nombreDe(l), l.proveedor, l.fecha, l.unidades, l.quedan, l.pago, l.quedan_al_pago, Math.round(S.quedaAlPago(l)), l.termina_est || ''],
+      csvCols: ['SKU', 'Producto', 'Proveedor', 'Entró', 'Cantidad', 'Quedan hoy', 'Se paga', 'Sin vender al pagar', 'En pesos', 'Se termina'],
+    };
+  }
+  const quedan = new Map();
+  for (const l of S.vigentes(misLotes())) quedan.set(l.sku, (quedan.get(l.sku) || 0) + l.quedan);
+  return {
+    ayuda: 'Categoría → modelo → medida. "De ingresos recientes" es lo que todavía queda de lo que entró desde el 12/08.',
+    cols: ['Producto', 'Depósito', 'Full', 'De ingresos recientes', 'Plata en stock', 'Días de stock'],
+    filas: miStock().filter(coincide).map((f) => ({ ...f, recientes: quedan.get(f.sku) || 0 })),
+  };
+}
+
+const celdas = (fs) => `<td class="r num">${num(S.suma(fs, (f) => f.dep))}</td><td class="r num">${num(S.suma(fs, (f) => f.full_pret + f.full_lavan))}</td><td class="r num">${num(S.suma(fs, (f) => f.recientes))}</td><td class="r num">${millones(S.suma(fs, S.valor))}</td><td class="r num">${dias(S.diasDeStock(fs))}</td>`;
+function arbol(filas) {
+  const abierto = (k) => !!vista.q.trim() || vista.abiertos.has(k);
+  return segmentar(filas).sort((a, b) => S.suma(b.filas, S.valor) - S.suma(a.filas, S.valor)).map((c) => `<tr class="cat"><th scope="colgroup">${esc(c.categoria)}</th><th class="r">${num(S.suma(c.filas, (f) => f.dep))}</th><th class="r">${num(S.suma(c.filas, (f) => f.full_pret + f.full_lavan))}</th><th class="r">${num(S.suma(c.filas, (f) => f.recientes))}</th><th class="r">${millones(S.suma(c.filas, S.valor))}</th><th class="r">${dias(S.diasDeStock(c.filas))}</th></tr>`
+    + c.grupos.sort((a, b) => S.suma(b.filas, S.valor) - S.suma(a.filas, S.valor)).map((g) => {
+      const k = `${c.categoria}|${g.grupo.toLowerCase()}`;
+      const cab = `<tr class="grupo"><th scope="rowgroup"><button type="button" data-abrir="${esc(k)}" aria-expanded="${abierto(k)}">${abierto(k) ? '▾' : '▸'} ${esc(g.grupo)} <span class="muted">(${g.filas.length})</span></button></th>${celdas(g.filas)}</tr>`;
+      if (!abierto(k)) return cab;
+      return cab + g.medidas.map((m) => (m.medida ? `<tr><th colspan="6" class="small muted">${esc(m.medida)}</th></tr>` : '')
+        + m.filas.map((f) => `<tr><td><div>${esc(f.colorLimpio || f.sku)}</div><div class="nota-fila">${esc(f.sku)} · ${esc(f.proveedor)}</div></td>${celdas([f])}</tr>`).join('')).join('');
+    }).join('')).join('');
+}
+
+function tabla() {
+  $$('[data-tab]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.tab === vista.tab));
+  const d = datos(), arb = vista.tab === 'categorias';
+  const visibles = arb ? d.filas : d.filas.slice(0, vista.mostrar);
+  const cuerpo = arb ? arbol(visibles) : visibles.map(d.html).join('');
+  $('#ayuda').textContent = d.ayuda + (!arb && d.filas.length ? ` (${num(d.filas.length)})` : '');
+  $('#tabla').style.minWidth = arb ? '760px' : '940px';
+  $('#tabla').innerHTML = `<thead><tr>${d.cols.map((c, i) => `<th scope="col" class="${i && !['Proveedor', 'Entró', 'Se paga', 'Se termina'].includes(c) ? 'r' : ''}">${c}</th>`).join('')}</tr></thead><tbody>${cuerpo || `<tr><td colspan="${d.cols.length}" class="muted">No hay nada con ese filtro.</td></tr>`}</tbody>`;
+  $('#mas').hidden = arb || d.filas.length <= vista.mostrar;
+  $$('[data-abrir]').forEach((b) => (b.onclick = () => { const k = b.dataset.abrir; vista.abiertos.has(k) ? vista.abiertos.delete(k) : vista.abiertos.add(k); tabla(); }));
+  $$('[data-ver]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); vista.prov = a.dataset.ver; vista.tab = 'frenada'; vista.tramo = ''; vista.q = ''; $('#fQ').value = ''; $('#fProv').value = vista.prov; todo(); }));
+  $$('[data-plazo]').forEach((i) => (i.onchange = () => guardarPlazo(i)));
+}
+
+async function guardarPlazo(input) {
+  const v = Number(input.value), p = input.dataset.plazo;
+  if (input.value === '' || !Number.isInteger(v) || v < 0 || v > 365) { alert('El plazo va en días, entre 0 y 365.'); tabla(); return; }
+  input.disabled = true;
+  const y = scrollY;
+  try {
+    const { error } = await sb.rpc('repo_plazo_guardar', { p_proveedor: p, p_dias: v });
+    if (error) throw error;
+    await cargar(); todo(); scrollTo(0, y);
+  } catch (e) { alert('No se pudo guardar el plazo: ' + e.message); tabla(); }
+}
+
+function descargar() {
+  const celda = (v) => { let t = String(v ?? ''); if (typeof v !== 'number' && /^[=+\-@]/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; };
+  const d = datos();
+  const filas = vista.tab === 'categorias'
+    ? [['Categoría', 'Modelo', 'Medida', 'Color', 'SKU', 'Proveedor', 'Depósito', 'Full', 'De ingresos recientes', 'Plata en stock', 'Días de stock'],
+      ...segmentar(d.filas).flatMap((c) => c.filas).map((f) => [f.categoria, f.grupo, f.medida, f.colorLimpio, f.sku, f.proveedor, f.dep, f.full_pret + f.full_lavan, f.recientes, Math.round(S.valor(f)), S.cobertura(f) === null ? '' : Math.round(S.cobertura(f))])]
+    : [d.csvCols || d.cols, ...d.filas.map(d.csv)];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + filas.map((f) => f.map(celda).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  a.download = `stock-${vista.tab}-${hoy()}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+$('#app').innerHTML = '<p class="muted"><span class="spin"></span> Calculando…</p>';
+try { await cargar(); pantalla(); } catch (e) { $('#app').innerHTML = `<p class="err">No pude cargar el análisis: ${esc(e.message)}</p>`; }
+</script>
+</body>
+</html>

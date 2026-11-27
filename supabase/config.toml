@@ -1,5 +1,5 @@
-# La Edge Function no usa Supabase Auth (no hay login de usuarios de Supabase,
-# solo la contraseña compartida que valida index.ts vía header X-App-Password).
+# La Edge Function valida ella misma quién entra (auth.ts): la sesión del usuario del panel o la contraseña
+# compartida vía header X-App-Password.
 # Sin verify_jwt = false, la plataforma rechazaría con 401 todo request que no
 # traiga un JWT de Supabase válido, antes de que nuestro código corra.
 [functions.reposicion-api]

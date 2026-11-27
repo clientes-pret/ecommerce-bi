@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#F5F4F0">
 <title>Reposición — Métricas Full</title>
 <style>
   :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#e8eaed; --muted:#8b93a1; --accent:#4f8cff;
@@ -18,7 +19,7 @@
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
   th { color: var(--muted); font-weight: 600; cursor: pointer; }
-  tbody tr:hover { background: rgba(255,255,255,0.03); cursor: pointer; }
+  tbody tr:hover { background: #FAF9F6; cursor: pointer; }
   .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
   #status { padding: 20px; color: var(--muted); }
   #detalle { display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
@@ -26,6 +27,7 @@
   .leyenda { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .leyenda span::before { content: "●"; margin-right: 4px; }
 </style>
+<link rel="stylesheet" href="tema.css?v=1">
 </head>
 <body>
 <main>
@@ -55,7 +57,7 @@
 </main>
 
 <script src="config.js"></script>
-<script src="app.js?v=20261015"></script>
+<script src="app.js?v=20261127"></script>
 <script>
 renderNav("full");
 

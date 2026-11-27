@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inicio · Pret a Home</title>
+  <link rel="icon" href="proveedores/icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="proveedores/estilo.css?v=12">
+  <style>
+    .barra { background: var(--side); padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .barra img { width: 150px; height: auto; display: block; }
+    .barra div { display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--side-muted); }
+    .barra a { color: var(--side-ink); padding: 8px; }
+    .areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 24px; }
+    .area { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+    .area h2 { margin: 0; font-size: 20px; }
+    .area p { margin: 0; color: var(--muted); }
+    .area .atajos { display: flex; flex-wrap: wrap; gap: 8px; }
+    .area .atajos a { border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; font-size: 13px; color: var(--ink); min-height: 34px; }
+    .area .atajos a:hover { border-color: var(--brand); color: var(--brand); }
+    .area .btn { margin-top: auto; }
+    @media (max-width: 600px) { .areas { grid-template-columns: 1fr; margin-top: 16px; } .barra { padding: 12px 16px; } .barra img { width: 110px; } }
+  </style>
+</head>
+<body>
+<header class="barra"><img src="assets/logo-white.png" alt="Pret a Home"><div><span id="quien"></span><a href="#" id="salir" hidden>Salir</a></div></header>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, esc, rutaPara, salir } from './proveedores/app.js';
+
+// Cada área con quién la puede abrir: los mismos roles que exige cada pantalla.
+const EQUIPO = ['admin', 'dueno'];
+const AREAS = [
+  { nombre: 'Reposición', texto: 'Qué pedir y qué mandar a Full, carrito y pedidos.', roles: EQUIPO, ir: 'index.html',
+    atajos: [['Tablero', 'index.html'], ['Productos estrella', 'index.html?vista=estrella'], ['Carrito', 'pedido.html'], ['Pedidos', 'historial_pedidos.html'], ['Quiebres', 'historial_quiebres.html']] },
+  { nombre: 'Gestión', texto: 'Proveedores, stock, ventas, costos, equipo y resultados.', roles: EQUIPO, ir: 'proveedores/admin.html',
+    atajos: [['Pendientes', 'proveedores/pendientes.html'], ['Análisis de stock', 'proveedores/stock.html'], ['Ingresos', 'proveedores/ingresos.html'], ['Cuenta corriente', 'proveedores/proveedores.html'], ['Scorecard', 'proveedores/ventas.html'], ['P&L', 'proveedores/pyl.html']] },
+  { nombre: 'Marketing', texto: 'Resultados, publicaciones, publicidad y tareas.', roles: [...EQUIPO, 'marketing'], ir: 'marketing/dashboard.html',
+    atajos: [['Scorecard', 'marketing/scorecard.html'], ['Publicaciones', 'marketing/publicaciones.html'], ['Publicidad', 'marketing/publicidad.html'], ['Tareas', 'marketing/tareas.html']] },
+  { nombre: 'Operaciones', texto: 'Armado y empaquetado de pedidos, devoluciones y Mercado Libre.', roles: EQUIPO, ir: 'operaciones/empaquetado.html',
+    atajos: [['Armado de pedidos', 'armado.html'], ['Empaquetado', 'operaciones/empaquetado.html'], ['Devoluciones', 'operaciones/devoluciones.html'], ['Stock perdido', 'operaciones/perdido.html'], ['Mercado Libre', 'operaciones/mercadolibre.html']] },
+  { nombre: 'Revendedores', texto: 'Sus ventas, publicaciones vinculadas y cuentas.', roles: EQUIPO, ir: 'revendedores/dashboard.html',
+    atajos: [['Publicaciones vinculadas', 'revendedores/vinculadas.html'], ['Ventas', 'revendedores/ventas.html'], ['Administración', 'revendedores/admin.html']] },
+];
+
+const alIngreso = () => location.replace('proveedores/index.html?volver=inicio.html');
+const { data } = await sb.auth.getSession();
+if (!data.session) alIngreso();
+else {
+  const { data: p, error } = await sb.from('cc_perfiles').select('nombre,rol').eq('id', data.session.user.id).maybeSingle();
+  if (error) $('#app').innerHTML = `<p class="err">No pude revisar tu usuario: ${esc(error.message)}. Probá recargar.</p>`;
+  else if (!p) { await sb.auth.signOut({ scope: 'local' }); alIngreso(); }
+  else {
+    const mias = AREAS.filter((a) => a.roles.includes(p.rol));
+    // Quien tiene una sola pantalla (depósito, Mercado Libre, marketing) va directo, como antes.
+    if (!EQUIPO.includes(p.rol)) location.replace(rutaPara(p.rol));
+    else {
+      $('#quien').textContent = p.nombre;
+      $('#salir').hidden = false;
+      $('#salir').onclick = (e) => { e.preventDefault(); salir(); };
+      $('#app').innerHTML = `<h1>Inicio</h1><p class="muted" style="margin:0">¿A dónde querés ir?</p><div class="areas">${mias.map((a) => `<section class="area">
+        <div><h2>${a.nombre}</h2><p>${a.texto}</p></div>
+        <nav class="atajos" aria-label="Atajos de ${a.nombre}">${a.atajos.map(([t, h]) => `<a href="${h}">${esc(t)}</a>`).join('')}</nav>
+        <a class="btn primary" href="${a.ir}">Entrar a ${a.nombre}</a></section>`).join('')}</div>`;
+    }
+  }
+}
+</script>
+</body>
+</html>

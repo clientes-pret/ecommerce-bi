@@ -11,39 +11,97 @@ function getUser() {
   return localStorage.getItem(USER_KEY) || "";
 }
 
-function ensureLoginOverlay() {
-  if (document.getElementById("repoLoginOverlay")) return;
-  const overlay = document.createElement("div");
-  overlay.id = "repoLoginOverlay";
-  overlay.style.cssText =
-    "position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;" +
-    "align-items:center;justify-content:center;z-index:9999;font-family:inherit;";
-  overlay.innerHTML = `
-    <form id="repoLoginForm" style="background:#171a21;border:1px solid #2a2f3a;border-radius:10px;
-        padding:28px;min-width:280px;display:flex;flex-direction:column;gap:12px;color:#e8eaed;">
-      <div style="font-size:16px;font-weight:600;">📦 Reposición</div>
-      <label style="font-size:13px;color:#8b93a1;">Usuario
-        <input id="repoLoginUser" type="text" value="info@pretahome.com" autocomplete="username"
-          style="width:100%;margin-top:4px;padding:8px;border-radius:6px;background:#0f1115;
-              color:#e8eaed;border:1px solid #2a2f3a;box-sizing:border-box;">
-      </label>
-      <label style="font-size:13px;color:#8b93a1;">Contraseña
-        <input id="repoLoginPass" type="password" autocomplete="current-password"
-          style="width:100%;margin-top:4px;padding:8px;border-radius:6px;background:#0f1115;
-              color:#e8eaed;border:1px solid #2a2f3a;box-sizing:border-box;">
-      </label>
-      <div id="repoLoginError" style="color:#e57373;font-size:13px;display:none;">Usuario o contraseña incorrectos.</div>
-      <button type="submit" style="background:#4f8cff;color:white;border:none;border-radius:6px;
-          padding:10px;font-size:14px;cursor:pointer;">Entrar</button>
-    </form>`;
-  document.body.appendChild(overlay);
+// ─── Ingreso ────────────────────────────────────────────────────────────────
+// Se entra con el usuario del panel (el mismo de Proveedores; solo dueño y administradores). La contraseña
+// compartida sigue sirviendo hasta que se confirme que todos entran bien (27/11/2026); después se saca.
+const RM_ROLES = ["admin", "dueno"];
+let rmPanelPromise = null;
+let rmPerfil = null;     // {id, nombre, email, permitido}
+let rmLoginPromise = null;
+let rmTokenRechazado = false; // la API no aceptó la sesión: se sigue con la contraseña
+
+const rmPanel = () => (rmPanelPromise ||= import("./proveedores/app.js"));
+
+async function rmSesion() {
+  try {
+    const { sb } = await rmPanel();
+    const { data } = await sb.auth.getSession();
+    if (!data.session) return null;
+    const u = data.session.user;
+    if (!rmPerfil || rmPerfil.id !== u.id) {
+      const { data: p } = await sb.from("cc_perfiles").select("nombre,rol").eq("id", u.id).maybeSingle();
+      rmPerfil = { id: u.id, nombre: p?.nombre || u.email, email: u.email, permitido: !!p && RM_ROLES.includes(p.rol) };
+      if (rmPerfil.permitido) localStorage.setItem(USER_KEY, u.email); // queda como autor de pedidos y cambios
+    }
+    rmPintarUsuario();
+    return { ...rmPerfil, token: data.session.access_token };
+  } catch (e) {
+    console.warn("No se pudo revisar la sesión del panel", e);
+    return null;
+  }
 }
 
-function waitForLogin() {
-  return new Promise((resolve) => {
-    ensureLoginOverlay();
-    const overlay = document.getElementById("repoLoginOverlay");
-    overlay.style.display = "flex";
+function rmPintarUsuario() {
+  const el = document.getElementById("rmUsuario");
+  if (el) el.textContent = rmPerfil?.permitido ? rmPerfil.nombre : getUser();
+}
+
+async function rmSalirSesion() {
+  sessionStorage.removeItem(PASSWORD_KEY);
+  if (rmPerfil) {
+    const { salir } = await rmPanel();
+    return salir();
+  }
+  location.reload();
+}
+
+function ensureLoginOverlay(sesion) {
+  let overlay = document.getElementById("repoLoginOverlay");
+  if (overlay) return overlay;
+  overlay = document.createElement("div");
+  overlay.id = "repoLoginOverlay";
+  overlay.className = "rm-login";
+  const volver = (location.pathname.split("/").pop() || "index.html") + location.search;
+  const aviso = sesion && !sesion.permitido
+    ? "Tu usuario no tiene acceso a Reposición. Entrá con uno de administrador."
+    : "Entrá con tu usuario del panel, el mismo de Proveedores.";
+  overlay.innerHTML = `
+    <div class="rm-caja">
+      <h2>Reposición</h2>
+      <p>${aviso}</p>
+      <a class="rm-boton" id="repoEntrarPanel" href="proveedores/index.html?volver=${encodeURIComponent(volver)}">Entrar con mi usuario</a>
+      <details id="repoClave"><summary>Usar la contraseña compartida</summary>
+        <form id="repoLoginForm">
+          <label>Usuario <input id="repoLoginUser" type="text" value="info@pretahome.com" autocomplete="username"></label>
+          <label>Contraseña <input id="repoLoginPass" type="password" autocomplete="current-password"></label>
+          <div id="repoLoginError" class="rm-error" hidden>Usuario o contraseña incorrectos.</div>
+          <button type="submit" class="secondary">Entrar</button>
+        </form>
+      </details>
+    </div>`;
+  // Con una sesión sin permiso, primero hay que cerrarla para poder entrar con otro usuario.
+  if (sesion && !sesion.permitido) {
+    overlay.querySelector("#repoEntrarPanel").addEventListener("click", async (e) => {
+      e.preventDefault();
+      const { sb } = await rmPanel();
+      await sb.auth.signOut({ scope: "local" });
+      location.href = e.target.href;
+    });
+  }
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+// Una sola espera compartida: dos pedidos a la vez no abren dos formularios ni dejan uno colgado.
+function waitForLogin(sesion, conError = false) {
+  const overlay = ensureLoginOverlay(sesion);
+  overlay.style.display = "flex";
+  if (conError) {
+    document.getElementById("repoClave").open = true;
+    document.getElementById("repoLoginError").hidden = false;
+  }
+  if (rmLoginPromise) return rmLoginPromise;
+  rmLoginPromise = new Promise((resolve) => {
     const form = document.getElementById("repoLoginForm");
     const userInput = document.getElementById("repoLoginUser");
     const passInput = document.getElementById("repoLoginPass");
@@ -55,36 +113,47 @@ function waitForLogin() {
       localStorage.setItem(USER_KEY, user);
       sessionStorage.setItem(PASSWORD_KEY, passInput.value);
       overlay.style.display = "none";
+      rmLoginPromise = null;
+      rmPintarUsuario();
       resolve();
     };
-    passInput.focus();
   });
-}
-
-function showLoginError() {
-  ensureLoginOverlay();
-  document.getElementById("repoLoginOverlay").style.display = "flex";
-  document.getElementById("repoLoginError").style.display = "block";
+  return rmLoginPromise;
 }
 
 async function apiFetch(path, options = {}) {
-  if (!getPassword() || !getUser()) await waitForLogin();
+  const sesion = await rmSesion();
+  let token = sesion?.permitido && !rmTokenRechazado ? sesion.token : null;
+  const pedirClave = async () => { if (!getPassword() || !getUser()) await waitForLogin(sesion); };
+  if (!token) await pedirClave();
 
   const doFetch = () =>
     fetch(`${window.REPOSICION_API_URL}${path}`, {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        "X-App-Password": getPassword(),
+        ...(token ? { Authorization: `Bearer ${token}` } : { "X-App-Password": getPassword() }),
         ...(options.headers || {}),
       },
     });
+  const sinSesion = async () => { rmTokenRechazado = true; token = null; await pedirClave(); };
 
-  let res = await doFetch();
+  let res;
+  try {
+    res = await doFetch();
+  } catch (e) {
+    // Una versión anterior de la API no acepta la sesión del panel y el navegador corta el pedido.
+    if (!token) throw e;
+    await sinSesion();
+    res = await doFetch();
+  }
+  if (res.status === 401 && token) {
+    await sinSesion();
+    res = await doFetch();
+  }
   if (res.status === 401) {
     sessionStorage.removeItem(PASSWORD_KEY);
-    showLoginError();
-    await waitForLogin();
+    await waitForLogin(sesion, true);
     res = await doFetch();
   }
   if (!res.ok) {
@@ -251,37 +320,38 @@ function generarPDF(proveedor, lineas, unidad = "unidades", oc = null, extra = "
 }
 
 const NAV_LINKS = [
-  { href: "index.html", label: "📦 Tablero", key: "tablero" },
-  { href: "index.html?vista=estrella", label: "⭐ Productos estrella", key: "estrella" },
-  { href: "pedido.html", label: "🛒 Carrito", key: "pedido" },
-  { href: "historial_pedidos.html", label: "📋 Pedidos", key: "pedidos" },
-  { href: "historial_quiebres.html", label: "🕳️ Quiebres", key: "quiebres" },
-  { href: "analisis_stock.html", label: "📊 Análisis de stock", key: "analisis" },
-  { href: "armado.html", label: "✅ Armado de pedidos", key: "armado" },
+  { href: "index.html", label: "Tablero", key: "tablero" },
+  { href: "index.html?vista=estrella", label: "Productos estrella", key: "estrella" },
+  { href: "pedido.html", label: "Carrito", key: "pedido" },
+  { href: "historial_pedidos.html", label: "Pedidos", key: "pedidos" },
+  { href: "historial_quiebres.html", label: "Quiebres", key: "quiebres" },
+  { href: "analisis_stock.html", label: "Stock por categoría", key: "analisis" },
+  { href: "armado.html", label: "Armado de pedidos", key: "armado" },
 ];
 
+// Menú lateral, igual al del panel (estilos en tema.css; clases propias para no chocar con las de cada pantalla).
 function renderNav(activeKey) {
   const nav = document.createElement("nav");
-  nav.style.cssText =
-    "display:flex;align-items:center;gap:4px;padding:10px 20px;border-bottom:1px solid #2a2f3a;" +
-    "background:#0f1115;flex-wrap:wrap;";
-  const logo = document.createElement("img");
-  logo.src = "assets/logo-white.png";
-  logo.alt = "Pret a Home";
-  logo.style.cssText = "height:20px;margin-right:16px;display:block;";
-  nav.appendChild(logo);
-  for (const link of NAV_LINKS) {
-    const a = document.createElement("a");
-    a.href = link.href;
-    const carritoLen = link.key === "pedido" ? getCarrito().length : 0;
-    a.textContent = carritoLen ? `${link.label} (${carritoLen})` : link.label;
-    const isActive = link.key === activeKey;
-    a.style.cssText =
-      "color:#e8eaed;text-decoration:none;font-size:13px;padding:6px 12px;border-radius:6px;" +
-      (isActive ? "background:#4f8cff;" : "background:transparent;");
-    nav.appendChild(a);
-  }
+  nav.className = "rm-side";
+  nav.setAttribute("aria-label", "Reposición");
+  const carritoLen = getCarrito().length;
+  const link = (l) => {
+    const texto = l.key === "pedido" && carritoLen ? `${l.label} (${carritoLen})` : l.label;
+    return `<a href="${l.href}"${l.key === activeKey ? ' class="on" aria-current="page"' : ""}>${texto}</a>`;
+  };
+  nav.innerHTML =
+    '<div class="rm-marca"><img src="assets/logo-white.png" alt="Pret a Home"><div class="rm-titulo">Reposición</div></div>' +
+    '<div class="rm-links"><a href="inicio.html">← Inicio</a><div class="rm-sec">Reposición</div>' + NAV_LINKS.map(link).join("") +
+    '<span class="rm-sp"></span></div>' +
+    '<div class="rm-usuario"><span id="rmUsuario"></span><a href="#" id="rmSalir">Salir</a></div>';
+  document.body.classList.add("con-menu");
   document.body.insertBefore(nav, document.body.firstChild);
+  nav.querySelector("#rmSalir").addEventListener("click", (e) => { e.preventDefault(); rmSalirSesion(); });
+  // En el celular los links se deslizan: deja a la vista el de la pantalla actual.
+  const links = nav.querySelector(".rm-links"), on = nav.querySelector("a.on");
+  if (on && links.scrollWidth > links.clientWidth) links.scrollLeft = Math.max(0, on.offsetLeft - 24);
+  rmPintarUsuario();
+  rmSesion();
 }
 
 // ─── Carrito ────────────────────────────────────────────────────────────────

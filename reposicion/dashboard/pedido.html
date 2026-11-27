@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#F5F4F0">
 <title>Reposición — Carrito</title>
 <style>
   :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#e8eaed; --muted:#8b93a1; --accent:#4f8cff; }
@@ -15,11 +16,11 @@
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
-  input[type=number] { width: 80px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+  input[type=number] { width: 80px; background: var(--campo); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
   .total-cell { font-weight: 600; }
   .hint { color: var(--muted); font-size: 11px; }
   button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; margin-right: 8px; }
-  button.secondary { background: #0f1115; border: 1px solid var(--border); color: var(--text); }
+  button.secondary { background: var(--campo); border: 1px solid var(--border); color: var(--text); }
   button.link { background: transparent; color: var(--muted); padding: 2px 6px; font-size: 12px; margin: 0; }
   button.link:hover { color: #e57373; }
   button:disabled { opacity: 0.5; cursor: default; }
@@ -30,13 +31,14 @@
   .grupo-acciones .btn-borrar { margin-left: auto; }
   .ok-msg { color: #6fcf97; font-size: 13px; }
   .grupo-opciones { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
-  .grupo-opciones select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
-  .grupo-opciones input.titulo-extra { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; margin-left: 6px; width: 320px; max-width: 100%; }
+  .grupo-opciones select { background: var(--campo); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
+  .grupo-opciones input.titulo-extra { background: var(--campo); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; margin-left: 6px; width: 320px; max-width: 100%; }
   .solo-deposito .col-full, .solo-deposito .col-total { display: none; }
   .aviso-pend { font-size: 11px; color: #f0b45a; margin-top: 3px; }
   .aviso-pend.otro { color: var(--muted); }
   #vacio { padding: 40px; text-align: center; color: var(--muted); }
 </style>
+<link rel="stylesheet" href="tema.css?v=1">
 </head>
 <body>
 <main>
@@ -54,7 +56,7 @@
 <script src="config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="assets/logo-black-base64.js"></script>
-<script src="app.js?v=20261118b"></script>
+<script src="app.js?v=20261127"></script>
 <script>
 renderNav("pedido");
 
@@ -227,7 +229,7 @@ function actualizarVista() {
   document.getElementById("vacio").style.display = document.querySelector("#grupos .grupo") ? "none" : "block";
   document.getElementById("btnVaciar").hidden = !n;
   const navLink = document.querySelector('nav a[href="pedido.html"]');
-  if (navLink) navLink.textContent = n ? `🛒 Carrito (${n})` : "🛒 Carrito";
+  if (navLink) navLink.textContent = n ? `Carrito (${n})` : "Carrito";
 }
 
 function borrarPedido(grupoEl) {

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ingresos de mercadería · Stock</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=12">
+  <style>
+    tr.dia th { background: var(--ink); color: #fff; font-size: 13px; }
+    tr.grupo th { background: var(--line-soft); font-weight: 600; vertical-align: middle; }
+    tr.grupo button.abrir { background: none; border: 0; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; padding: 6px 0; text-align: left; }
+    tr.descartado td { color: var(--muted); } tr.descartado td .prod { text-decoration: line-through; }
+    input.cant { width: 92px; text-align: right; min-height: 36px; padding: 4px 8px; }
+    .nota-fila { font-size: 12px; color: var(--muted); }
+    .acc { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .filtros { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script type="module">
+import { sb, $, $$, esc, guard, nav, peso0, fecha, hoy } from './app.js';
+import * as S from './stock-lib.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'ingresos');
+
+const num = (v) => Number(v || 0).toLocaleString('es-AR');
+// (Map.groupBy no está en celulares con versiones viejas del navegador.)
+const agrupar = (xs, clave) => xs.reduce((m, x) => { const k = clave(x); (m.get(k) || m.set(k, []).get(k)).push(x); return m; }, new Map());
+const DIAS_POR_TANDA = 7;
+const plata = (p, u) => (!p && u ? '<span title="Estos productos no tienen costo cargado">sin costo</span>' : peso0(p));
+const vista = { dias: 30, prov: '', estado: '', q: '', mostrar: DIAS_POR_TANDA, abiertos: new Set() };
+let lotes = [];
+
+async function cargar() {
+  const { data, error } = await sb.rpc('repo_lotes');
+  if (error) throw error;
+  lotes = data || [];
+}
+
+const enPeriodo = (l) => !vista.dias || S.diasEntre(l.fecha, hoy()) < vista.dias;
+function filtrados() {
+  const q = vista.q.trim().toLowerCase();
+  return lotes.filter((l) => enPeriodo(l) && (!vista.prov || l.proveedor === vista.prov) && (!vista.estado || l.estado === vista.estado)
+    && (!q || `${l.sku} ${l.nombre} ${l.color || ''}`.toLowerCase().includes(q)));
+}
+
+function pantalla() {
+  const provs = [...new Set(lotes.map((l) => l.proveedor))].sort((a, b) => a.localeCompare(b, 'es'));
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Ingresos de mercadería</h1><p>Lo que entró, detectado por las subas de stock del depósito desde el 12/08. Es una estimación: marcá lo que no haya sido una compra.</p></div>
+    <a class="btn" href="stock.html">Ver análisis de stock</a></div>
+  <div class="centro-comando compacto" id="kpis"></div>
+  <section class="card tabla"><div class="cab" style="flex-wrap:wrap;gap:10px">
+    <div class="seg" role="group" aria-label="Período">${[[14, '14 días'], [30, '30 días'], [0, 'Todo']].map(([v, t]) => `<button type="button" data-dias="${v}" aria-pressed="${vista.dias === v}">${t}</button>`).join('')}</div>
+    <div class="filtros">
+      <select id="fProv" aria-label="Proveedor"><option value="">Todos los proveedores</option>${provs.map((p) => `<option ${p === vista.prov ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
+      <select id="fEstado" aria-label="Estado">${[['', 'Todos'], ['detectado', 'Sin revisar'], ['confirmado', 'Confirmados'], ['descartado', 'No fue compra']].map(([v, t]) => `<option value="${v}" ${v === vista.estado ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <input id="fQ" placeholder="Producto o SKU…" aria-label="Buscar" value="${esc(vista.q)}">
+    </div></div>
+    <div class="scroll"><table style="min-width:940px"><thead><tr><th scope="col">Producto</th><th scope="col" class="r">Entraron</th><th scope="col" class="r">A costo</th><th scope="col" class="r">Quedan hoy</th><th scope="col">Estado</th><th scope="col" class="r"></th></tr></thead><tbody id="tb"></tbody></table></div>
+    <div class="row" style="justify-content:center;padding:12px"><button class="btn" id="mas" hidden>Ver días anteriores</button></div></section>
+  <p class="muted small">Cuenta como ingreso una suba de 3 unidades o más en un día. No cuentan las que recuperan una caída sin ventas ni las vueltas de Full. Los pesos son al costo actual de Ecomm-App. Registrar la entrega de un pedido se hace en Pendientes.</p>`;
+  $$('[data-dias]').forEach((b) => (b.onclick = () => { vista.dias = Number(b.dataset.dias); vista.mostrar = DIAS_POR_TANDA; pantalla(); }));
+  $('#fProv').onchange = (e) => { vista.prov = e.target.value; vista.mostrar = DIAS_POR_TANDA; kpis(); tabla(); };
+  $('#fEstado').onchange = (e) => { vista.estado = e.target.value; vista.mostrar = DIAS_POR_TANDA; tabla(); };
+  let t; $('#fQ').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { vista.q = e.target.value; vista.mostrar = DIAS_POR_TANDA; tabla(); }, 200); };
+  $('#mas').onclick = () => { vista.mostrar += DIAS_POR_TANDA; tabla(); };
+  kpis(); tabla();
+}
+
+function kpis() {
+  const base = lotes.filter((l) => enPeriodo(l) && (!vista.prov || l.proveedor === vista.prov));
+  const v = S.vigentes(base), mes = S.vigentes(lotes).filter((l) => l.fecha.slice(0, 7) === hoy().slice(0, 7) && (!vista.prov || l.proveedor === vista.prov));
+  const sinRevisar = base.filter((l) => l.estado === 'detectado').length;
+  const tarjeta = (t, valor, sub) => `<div class="cc-card"><div class="cc-label">${t}</div><div class="cc-valor">${valor}</div><div class="cc-sub">${sub}</div></div>`;
+  $('#kpis').innerHTML = tarjeta(vista.dias ? `Ingresó en ${vista.dias} días` : 'Ingresó desde el 12/08', S.millones(S.suma(v, S.ingresado)), `${num(S.suma(v, (l) => l.unidades))} unidades · a costo`)
+    + tarjeta('Ingresó este mes', S.millones(S.suma(mes, S.ingresado)), `${num(S.suma(mes, (l) => l.unidades))} unidades`)
+    + tarjeta('De eso, todavía en stock', S.millones(S.suma(v, S.queda)), `${num(S.suma(v, (l) => l.quedan))} unidades`)
+    + tarjeta('Sin revisar', num(sinRevisar), 'ingresos del período');
+}
+
+const chip = (e) => ({ detectado: '<span class="chip">Sin revisar</span>', confirmado: '<span class="chip ok">Confirmado</span>', descartado: '<span class="chip warn">No fue compra</span>' }[e]);
+const resumen = (fs) => { const v = S.vigentes(fs); return { u: S.suma(v, (l) => l.unidades), p: S.suma(v, S.ingresado), q: S.suma(v, (l) => l.quedan) }; };
+
+function fila(l) {
+  const nombre = [l.nombre, l.color].filter(Boolean).join(' · ');
+  const notas = [
+    l.origen === 'producto_nuevo' ? 'Producto nuevo' : '',
+    l.unidades !== l.detectadas ? `Detectadas: ${num(l.detectadas)}` : '',
+  ].filter(Boolean).join(' · ');
+  const pedido = l.pendiente_u && l.estado !== 'descartado'
+    ? `<div class="nota-fila warn-t">Figuran ${num(l.pendiente_u)} u. pedidas sin recibir · <a href="pendientes.html?p=${encodeURIComponent(l.proveedor)}">cargar la entrega</a></div>` : '';
+  return `<tr class="${l.estado === 'descartado' ? 'descartado' : ''}" data-id="${l.id}">
+    <td><div class="prod">${esc(nombre)}</div><div class="nota-fila">${esc(l.sku)}${notas ? ` · ${notas}` : ''}</div>${pedido}</td>
+    <td class="r"><input class="cant num" type="number" min="1" max="100000" inputmode="numeric" value="${l.unidades}" data-cant="${l.id}" aria-label="Unidades que entraron de ${esc(l.sku)}" ${l.estado === 'descartado' ? 'disabled' : ''}></td>
+    <td class="r num">${l.costo ? peso0(S.ingresado(l)) : '<span class="muted">sin costo</span>'}</td>
+    <td class="r num">${l.estado === 'descartado' ? '' : num(l.quedan)}</td>
+    <td>${chip(l.estado)}</td>
+    <td class="r"><div class="acc">${l.estado === 'detectado'
+    ? `<button type="button" class="btn sm" data-ok="${l.id}">Confirmar</button><button type="button" class="btn sm" data-no="${l.id}">No fue compra</button>`
+    : `<button type="button" class="btn sm" data-undo="${l.id}">Deshacer</button>`}</div></td></tr>`;
+}
+
+function tabla() {
+  const filas = filtrados();
+  const dias = agrupar(filas, (l) => l.fecha);
+  const orden = [...dias.keys()].sort().reverse();
+  const unSolo = !!vista.q.trim() || !!vista.prov;
+  $('#tb').innerHTML = orden.slice(0, vista.mostrar).map((d) => {
+    const delDia = dias.get(d), r = resumen(delDia);
+    const provs = [...agrupar(delDia, (l) => l.proveedor)].sort((a, b) => resumen(b[1]).p - resumen(a[1]).p);
+    return `<tr class="dia"><th scope="colgroup">${fecha(d)}</th><th class="r">${num(r.u)}</th><th class="r">${plata(r.p, r.u)}</th><th class="r">${num(r.q)}</th><th colspan="2"></th></tr>` + provs.map(([p, fs]) => {
+      const k = `${d}|${p}`, abierto = unSolo || vista.abiertos.has(k), g = resumen(fs), pend = fs.filter((l) => l.estado === 'detectado').map((l) => l.id);
+      return `<tr class="grupo"><th scope="rowgroup"><button type="button" class="abrir" data-abrir="${esc(k)}" aria-expanded="${abierto}">${abierto ? '▾' : '▸'} ${esc(p)} <span class="muted">(${fs.length} producto${fs.length === 1 ? '' : 's'})</span></button></th>
+        <th class="r num">${num(g.u)}</th><th class="r num">${plata(g.p, g.u)}</th><th class="r num">${num(g.q)}</th><th>${pend.length ? `<span class="chip">${pend.length} sin revisar</span>` : ''}</th>
+        <th class="r">${pend.length ? `<div class="acc"><button type="button" class="btn sm" data-grupo-ok="${esc(k)}">Confirmar todo</button><button type="button" class="btn sm" data-grupo-no="${esc(k)}">Nada fue compra</button></div>` : ''}</th></tr>`
+        + (abierto ? fs.map(fila).join('') : '');
+    }).join('');
+  }).join('') || '<tr><td colspan="6" class="muted">No hay ingresos con ese filtro.</td></tr>';
+  $('#mas').hidden = orden.length <= vista.mostrar;
+
+  $$('[data-abrir]').forEach((b) => (b.onclick = () => { const k = b.dataset.abrir; vista.abiertos.has(k) ? vista.abiertos.delete(k) : vista.abiertos.add(k); tabla(); }));
+  $$('[data-ok]').forEach((b) => (b.onclick = () => confirmar(Number(b.dataset.ok), b)));
+  $$('[data-no]').forEach((b) => (b.onclick = () => revisar([Number(b.dataset.no)], 'descartado', null, b)));
+  $$('[data-undo]').forEach((b) => (b.onclick = () => revisar([Number(b.dataset.undo)], 'detectado', null, b)));
+  // Cambiar la cantidad y salir del campo la guarda como confirmada.
+  $$('[data-cant]').forEach((i) => (i.onchange = () => confirmar(Number(i.dataset.cant), i)));
+  const delGrupo = (k) => { const [d, p] = [k.slice(0, 10), k.slice(11)]; return filtrados().filter((l) => l.fecha === d && l.proveedor === p && l.estado === 'detectado'); };
+  $$('[data-grupo-ok]').forEach((b) => (b.onclick = () => revisar(delGrupo(b.dataset.grupoOk).map((l) => l.id), 'confirmado', null, b)));
+  $$('[data-grupo-no]').forEach((b) => (b.onclick = () => {
+    const ls = delGrupo(b.dataset.grupoNo);
+    if (confirm(`¿Marcar "no fue compra" ${ls.length} ingreso${ls.length === 1 ? '' : 's'} de ${b.dataset.grupoNo.slice(11)} del ${fecha(b.dataset.grupoNo.slice(0, 10))}? Se puede deshacer.`)) revisar(ls.map((l) => l.id), 'descartado', null, b);
+  }));
+}
+
+function confirmar(id, el) {
+  const l = lotes.find((x) => x.id === id), v = Number($(`[data-cant="${id}"]`).value);
+  if (!Number.isInteger(v) || v < 1 || v > 100000) { alert('Poné una cantidad entera entre 1 y 100.000. Si no entró nada, usá "No fue compra".'); $(`[data-cant="${id}"]`).value = l.unidades; return; }
+  revisar([id], 'confirmado', v === l.unidades ? null : v, el);
+}
+
+async function revisar(ids, estado, unidades, el) {
+  if (!ids.length) return;
+  el.disabled = true;
+  const y = scrollY;
+  try {
+    const { error } = await sb.rpc('repo_ingreso_revisar', { p_ids: ids, p_estado: estado, p_unidades: unidades });
+    if (error) throw error;
+    await cargar();
+    kpis(); tabla(); scrollTo(0, y);
+  } catch (e) { el.disabled = false; alert('No se pudo guardar: ' + e.message); }
+}
+
+$('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando ingresos…</p>';
+try { await cargar(); pantalla(); } catch (e) { $('#app').innerHTML = `<p class="err">No pude cargar los ingresos: ${esc(e.message)}</p>`; }
+</script>
+</body>
+</html>

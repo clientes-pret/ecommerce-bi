@@ -1,0 +1,103 @@
+/* Tema claro de Reposición: los mismos colores, tipografía y menú lateral que el panel (proveedores/estilo.css).
+   Se enlaza DESPUÉS del <style> de cada pantalla, así estas reglas ganan. No se usa estilo.css directo porque sus
+   reglas generales de botones y campos romperían las tablas de estas pantallas. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+:root {
+  --bg: #F5F4F0; --panel: #FFFFFF; --campo: #FFFFFF; --border: #E3E1DA; --borde-fuerte: #C9C6BD; --text: #1B1D21; --muted: #5B5F66;
+  --accent: #2449B8; --accent-hover: #1A3690; --accent-bg: #E8EDFB; --suave: #F0EEE8;
+  --ok-t: #1F6F43; --warn-t: #8A3A06; --bad-t: #B42318;
+  /* Fondos de las etiquetas de estado (texto blanco) */
+  --ok: #1F6F43; --bajo: #8F6200; --critico: #B42318; --nostock: #7A1F2B; --parcial: #8F6200; --enviado: #2449B8;
+  --abierto: #B42318; --cerrado: #1F6F43; --aviso: #8F6200;
+  --side: #1B1D21; --side-ink: #D5D7DB; --side-muted: #9EA2A8;
+  color-scheme: light;
+}
+html, body { background: var(--bg); color: var(--text); }
+body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Arial, sans-serif; line-height: 1.45; }
+a { color: var(--accent); }
+h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+main h1 { margin-top: 8px; }
+button, input, select, textarea { font-family: inherit; }
+button { background: var(--accent); border-radius: 8px; font-weight: 600; min-height: 34px; }
+button:hover:not(:disabled) { background: var(--accent-hover); }
+button.secondary, .pedido-acciones button, .pase button, .grupo > button { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+button.secondary:hover:not(:disabled), .pedido-acciones button:hover:not(:disabled), .pase button:hover:not(:disabled) { background: var(--panel); border-color: var(--borde-fuerte); }
+input[type=text], input[type=number], select { border: 1px solid var(--borde-fuerte); border-radius: 8px; min-height: 34px; background: var(--campo); color: var(--text); }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+th { color: var(--muted); }
+th, td { border-bottom-color: var(--suave); }
+thead th { font-size: 12px; border-bottom: 1px solid var(--border); }
+tbody tr.fila-producto:hover, tbody tr.fila-categoria:hover, .pedido-header:hover { background: #FAF9F6; }
+.fila-detalle td { background: #FAF9F6; }
+.badge { color: #fff; font-weight: 600; }
+.detalle button, td .accion button { white-space: nowrap; }
+.badge.cancelado, .badge.reemplazado, .badge.pasado, .badge.cerrado { background: #6B6F76; }
+.tab { background: transparent; min-height: 0; border-radius: 0; }
+.tab:hover:not(:disabled) { background: transparent; color: var(--text); }
+.grupo > button.activa, .grupo > button.activa:hover:not(:disabled), .estrella-chip.activo, #btnExcluirEstrella[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.grupo > button:hover:not(:disabled) { background: var(--accent-bg); color: var(--text); }
+.estrella-chip { color: var(--text); background: var(--panel); border: 1px solid var(--border); }
+.estrella-chip:hover:not(:disabled) { background: var(--accent-bg); }
+.accion button.en-pedido, .accion button.en-pedido:hover:not(:disabled) { background: var(--cerrado); }
+.solicitado, #estrellaPreview .ok, .ok-msg, .stockOk { color: var(--ok-t); }
+#estrellaPreview .warn, .aviso-pend { color: var(--warn-t); }
+.aviso-pend.otro { color: var(--muted); }
+.stock0 { color: var(--bad-t); }
+.accion input.error { border-color: var(--bad-t); }
+button.link { background: transparent; min-height: 0; color: var(--muted); }
+button.link:hover:not(:disabled) { background: transparent; color: var(--bad-t); }
+button.borrar { background: var(--panel); border: 1px solid #F0C4BF; color: var(--bad-t); }
+button.borrar:hover:not(:disabled) { background: #FDECEA; }
+.card, .cc-card, .pedido, #detalle, .destino-card, .grupo[data-proveedor] { background: var(--panel); border-color: var(--border); border-radius: 12px; }
+#carritoBar { box-shadow: 0 -4px 16px rgba(0,0,0,.08); }
+.punto-pedido { background-color: #E5484D; }
+
+/* ───── Menú lateral (igual al del panel) ───── */
+body.con-menu { padding-left: 232px; }
+.rm-side { position: fixed; z-index: 600; left: 0; top: 0; bottom: 0; width: 232px; background: var(--side); padding: 24px 12px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+.rm-marca { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 16px; }
+.rm-marca img { width: 150px; height: auto; display: block; }
+.rm-titulo, .rm-sec { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--side-muted); }
+.rm-sec { font-size: 11px; padding: 18px 12px 6px; }
+.rm-links { display: contents; }
+.rm-side a { padding: 10px 12px; border-radius: 8px; font-size: 14px; color: var(--side-ink); text-decoration: none; white-space: nowrap; }
+.rm-side a:hover { background: rgba(255,255,255,.06); color: #fff; }
+.rm-side a.on { background: var(--accent); color: #fff; font-weight: 600; }
+.rm-sp { flex: 1; min-height: 16px; }
+.rm-usuario { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0 0 12px; font-size: 13px; color: var(--side-muted); }
+.rm-usuario span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rm-usuario a { font-size: 13px; color: var(--side-muted); padding: 6px 8px; }
+@media (min-width: 761px) { body.con-menu #carritoBar { left: 232px; } }
+@media (max-width: 760px) {
+  body.con-menu { padding-left: 0; }
+  .rm-side { position: static; width: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px 8px; gap: 8px 12px; overflow: visible; }
+  .rm-marca { order: 1; flex: 1 1 auto; flex-direction: row; align-items: center; padding: 0 4px; }
+  .rm-marca img { width: 100px; }
+  .rm-titulo, .rm-sec, .rm-sp { display: none; }
+  .rm-usuario { order: 2; padding: 0; }
+  .rm-usuario span { max-width: 110px; }
+  .rm-links { order: 3; display: flex; width: calc(100% + 24px); margin: 0 -12px; padding: 0 12px 2px; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .rm-links::-webkit-scrollbar { display: none; }
+  .rm-links a { flex: none; display: inline-flex; align-items: center; min-height: 40px; padding: 8px 14px; background: rgba(255,255,255,.07); border-radius: 999px; }
+  input, select, textarea { font-size: 16px; }
+  main { padding-left: 14px; padding-right: 14px; }
+  main { overflow-x: auto; }
+  .toolbar-right { flex-wrap: wrap; margin-left: 0; }
+  .toolbar > * { max-width: 100%; }
+  .grupo[data-proveedor] { overflow-x: auto; }
+  .grupo-opciones select, .grupo-opciones input.titulo-extra { max-width: 100%; }
+  .grupo-opciones label { max-width: 100%; }
+}
+
+/* ───── Ingreso ───── */
+.rm-login { position: fixed; inset: 0; background: rgba(245,244,240,.96); display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 16px; }
+.rm-caja { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 28px; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+.rm-caja h2 { margin: 0; font-size: 20px; }
+.rm-caja p { margin: 0; color: var(--muted); font-size: 14px; }
+.rm-caja label { font-size: 13px; font-weight: 600; display: block; }
+.rm-caja input { width: 100%; margin-top: 4px; padding: 10px 12px; min-height: 44px; box-sizing: border-box; border: 1px solid var(--borde-fuerte); border-radius: 8px; }
+.rm-caja button, .rm-caja a.rm-boton { min-height: 46px; font-size: 15px; }
+.rm-caja a.rm-boton { display: flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; border-radius: 8px; font-weight: 600; text-decoration: none; }
+.rm-caja details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.rm-caja details form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.rm-error { color: var(--bad-t); font-size: 13px; font-weight: 600; }

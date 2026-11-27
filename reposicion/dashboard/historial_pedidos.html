@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#F5F4F0">
 <title>Reposición — Historial de pedidos</title>
 <style>
   :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#e8eaed; --muted:#8b93a1; --accent:#4f8cff;
@@ -14,16 +15,16 @@
   .pedido { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
   .pedido-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
   .unidad-medida { color: var(--muted); font-size: 13px; margin-right: 8px; }
-  .unidad-medida select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
-  .pedido-header:hover { background: rgba(255,255,255,0.03); }
+  .unidad-medida select { background: var(--campo); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
+  .pedido-header:hover { background: #FAF9F6; }
   .badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; }
   .badge.enviado { background: var(--enviado); }
   .badge.recibido_parcial { background: var(--parcial); }
   .badge.recibido_completo { background: var(--ok); }
   .badge.cancelado, .badge.reemplazado, .badge.pasado, .badge.cerrado { background: #444; }
   .pase { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
-  .pase select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
-  .pase button { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .pase select { background: var(--campo); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+  .pase button { background: var(--campo); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
   tr.inactiva td { color: var(--muted); }
   .proveedor { font-weight: 600; flex: 1; }
   .muted { color: var(--muted); font-size: 12px; }
@@ -32,15 +33,16 @@
   .detalle th, .detalle td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; }
   .detalle th { color: var(--muted); font-weight: 600; font-size: 11px; }
   .pedido-acciones { margin-top: 12px; display: flex; gap: 8px; }
-  .pedido-acciones button { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
-  .pedido-acciones button:hover { background: rgba(255,255,255,0.05); }
+  .pedido-acciones button { background: var(--campo); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .pedido-acciones button:hover { background: #FAF9F6; }
   .pedido-acciones button:disabled { opacity: 0.5; cursor: default; }
-  .qty-edit { width: 70px; background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+  .qty-edit { width: 70px; background: var(--campo); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
   .total-cell { font-weight: 600; }
   #status { padding: 20px; color: var(--muted); }
   .filtros-estado { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 0 16px; font-size: 13px; color: var(--muted); }
   .filtros-estado label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 </style>
+<link rel="stylesheet" href="tema.css?v=1">
 </head>
 <body>
 <main>
@@ -58,7 +60,7 @@
 <script src="config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="assets/logo-black-base64.js"></script>
-<script src="app.js?v=20261118b"></script>
+<script src="app.js?v=20261127"></script>
 <script>
 renderNav("pedidos");
 

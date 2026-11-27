@@ -118,7 +118,7 @@ export function navRev(sesion, activa) {
   // Dashboard, Publicaciones vinculadas, Administración y Ventas de todos los revendedores.
   el.innerHTML = `<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">${admin ? 'Admin. revendedores' : 'Revendedores'}</div></div>` +
     '<div class="links">' + (admin
-      ? it('dashboard.html', 'Dashboard', 'dashboard') + it('vinculadas.html', 'Publicaciones vinculadas', 'vinculadas') + it('admin.html', 'Administración', 'admin') + it('ventas.html', 'Ventas', 'ventas') +
+      ? it('../inicio.html', '← Inicio', 'portada') + it('dashboard.html', 'Dashboard', 'dashboard') + it('vinculadas.html', 'Publicaciones vinculadas', 'vinculadas') + it('admin.html', 'Administración', 'admin') + it('ventas.html', 'Ventas', 'ventas') +
         '<div class="grupo">Sistema</div>' + it('estado.html', 'Estado del sistema', 'estado') + it('catalogo.html', 'Catálogo (vista revendedor)', 'catalogo') +
         '<div class="grupo">Otras plataformas</div>' + it('../proveedores/admin.html', 'Panel de control ↗', 'panel')
       : it('catalogo.html', 'Catálogo', 'catalogo') + it('publicaciones.html', 'Mis publicaciones', 'publicaciones') + it('ventas.html', 'Ventas', 'ventas') + it('cuenta.html', 'Mi cuenta', 'cuenta')) +

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Proveedores · Pret a Home</title>
+  <title>Ingresar · Pret a Home</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
@@ -12,7 +12,7 @@
 </head>
 <body>
 <div class="narrow" style="padding-top:64px">
-  <h1>Proveedores</h1>
+  <h1>Pret a Home</h1>
   <p class="muted">Pret a Home · Casa Lavan</p>
   <form class="card" id="f">
     <label for="email">Email</label><input type="email" id="email" autocomplete="username" required>
@@ -33,14 +33,15 @@
   </form>
 </div>
 <script type="module">
-import { sb, $, rutaPara, SUPABASE_ANON_KEY, LINK_RECUPERO } from './app.js';
+import { sb, $, qs, rutaPara, rutaVolver, SUPABASE_ANON_KEY, LINK_RECUPERO } from './app.js';
 
 if (SUPABASE_ANON_KEY.startsWith('PEGAR')) $('#err').textContent = 'Falta configurar la anon key en config.js';
 
 async function entrar(uid) {
   const { data: p } = await sb.from('cc_perfiles').select('rol').eq('id', uid).maybeSingle();
   if (!p) { await sb.auth.signOut(); $('#err').textContent = 'Tu usuario todavía no tiene un rol asignado. Avisale a Matías.'; $('#ok').disabled = false; return; }
-  location.replace(rutaPara(p.rol));
+  // Si vino de una pantalla, vuelve ahí; cada pantalla revisa por su cuenta si el usuario puede verla.
+  location.replace(rutaVolver(qs('volver')) || rutaPara(p.rol));
 }
 
 // Vino del link del mail para cambiar la contraseña: en vez de entrar directo, pedir la nueva.

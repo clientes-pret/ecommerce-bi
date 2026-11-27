@@ -209,6 +209,13 @@ def main():
     # ventas desde el pedido (ver reposicion/recepciones.py).
     recepciones.reconciliar_pedidos(config, stock_by_sku)
 
+    # Ingresos de mercadería (subas de stock de los últimos 14 días). Va después del sync porque descuenta lo que se
+    # explica por ventas. Si falla no frena el resto: la próxima corrida lo recalcula.
+    try:
+        core.tnlog(f"✓ Ingresos de mercadería: {db.rpc(config, 'repo_detectar_ingresos')}")
+    except Exception as e:
+        core.tnlog(f"  ⚠ Detección de ingresos falló: {e}")
+
     core.tnlog("✓ Job diario terminado")
 
 

@@ -116,6 +116,14 @@ def upsert(config, table, rows, on_conflict, chunk=500):
             raise RuntimeError(f"Upsert falló en {table}: {r.status_code} {r.text[:300]}")
 
 
+def rpc(config, funcion, args=None, timeout=60):
+    """POST a una función de la base (con la clave de servicio). Devuelve su resultado."""
+    r = requests.post(_url(config, f"rpc/{funcion}"), headers=_headers(config), json=args or {}, timeout=timeout)
+    if r.status_code not in (200, 204):
+        raise RuntimeError(f"Función {funcion} falló: {r.status_code} {r.text[:300]}")
+    return None if r.status_code == 204 else r.json()
+
+
 def patch(config, table, params, body):
     """PATCH con filtros PostgREST (ej: {'id': 'eq.42'})."""
     r = requests.patch(_url(config, table), headers=_headers(config, prefer="return=minimal"),
