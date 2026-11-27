@@ -29,6 +29,8 @@
   .grupo-opciones select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; margin-left: 6px; }
   .grupo-opciones input.titulo-extra { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; margin-left: 6px; width: 320px; max-width: 100%; }
   .solo-deposito .col-full, .solo-deposito .col-total { display: none; }
+  .aviso-pend { font-size: 11px; color: #f0b45a; margin-top: 3px; }
+  .aviso-pend.otro { color: var(--muted); }
   #vacio { padding: 40px; text-align: center; color: var(--muted); }
 </style>
 </head>
@@ -48,6 +50,61 @@
 <script src="app.js?v=20261118b"></script>
 <script>
 renderNav("pedido");
+
+// Lo que ya está pedido y sin recibir, por SKU. Un pedido nuevo REEMPLAZA lo pendiente del mismo producto con ese
+// proveedor (no suma); lo pedido a otros proveedores se mantiene.
+let PENDIENTES = null;   // Map sku → [{proveedor, oc, unidad, falta}]
+let PROVEEDORES = [];
+const escapar = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function cargarPendientes() {
+  try {
+    const [pedidos, provs] = await Promise.all([apiFetch("/pedidos"), apiFetch("/proveedores")]);
+    const mapa = new Map();
+    for (const p of pedidos) {
+      if (p.estado !== "enviado" && p.estado !== "recibido_parcial") continue;
+      for (const i of p.items || []) {
+        const falta = i.cantidad_pedida - (i.cantidad_recibida || 0);
+        if (i.recibido_completo || falta <= 0) continue;
+        if (!mapa.has(i.sku)) mapa.set(i.sku, []);
+        const lista = mapa.get(i.sku), ya = lista.find((x) => x.oc === p.id);
+        if (ya) ya.falta += falta; else lista.push({ proveedor: p.proveedor, oc: p.id, unidad: p.unidad_medida, falta });
+      }
+    }
+    PENDIENTES = mapa;
+    PROVEEDORES = [...new Set([...provs, ...pedidos.map((p) => p.proveedor)])].filter(Boolean).sort((a, b) => a.localeCompare(b, "es"));
+  } catch (e) {
+    PENDIENTES = null;
+    console.warn("No se pudieron leer los pedidos pendientes", e);
+  }
+  document.querySelectorAll("#grupos .grupo").forEach((el) => { llenarProveedores(el); pintarAvisos(el); });
+}
+
+const textoPend = (x) => `${fmtNum(x.falta)} ${x.unidad === "bultos" ? "bultos" : "u."} (OC ${x.oc})`;
+const proveedorElegido = (grupoEl) => grupoEl.querySelector(".sel-proveedor").value;
+
+function llenarProveedores(grupoEl) {
+  const sel = grupoEl.querySelector(".sel-proveedor"), actual = sel.value;
+  const lista = [...new Set([grupoEl.dataset.proveedor, ...PROVEEDORES])];
+  sel.innerHTML = lista.map((p) => `<option ${p === actual ? "selected" : ""}>${escapar(p)}</option>`).join("");
+}
+
+// Devuelve los productos de este pedido que reemplazan algo pendiente.
+function pintarAvisos(grupoEl) {
+  const estado = grupoEl.querySelector(".estado-pend"), reemplazan = [];
+  if (grupoEl.dataset.oc) return reemplazan;   // ya confirmado
+  estado.textContent = PENDIENTES ? "" : "No pude revisar lo que ya está pedido: si hay pendientes del mismo proveedor, este pedido los reemplaza.";
+  const prov = proveedorElegido(grupoEl);
+  grupoEl.querySelectorAll("tbody tr[data-sku]").forEach((tr) => {
+    const caja = tr.querySelector(".avisos"), lista = PENDIENTES?.get(tr.dataset.sku) || [];
+    const conCantidad = (Number(tr.querySelector(".qty-deposito").value) || 0) + (Number(tr.querySelector(".qty-full").value) || 0) > 0;
+    const mismos = lista.filter((x) => x.proveedor === prov), otros = lista.filter((x) => x.proveedor !== prov);
+    caja.innerHTML = (mismos.length ? `<div class="aviso-pend">Pendiente: ${mismos.map(textoPend).join(" + ")} → ${conCantidad ? "este pedido lo reemplaza" : "sigue igual si queda en 0"}</div>` : "")
+      + otros.map((x) => `<div class="aviso-pend otro">También pedido a ${escapar(x.proveedor)}: ${textoPend(x)} (se mantiene)</div>`).join("");
+    if (mismos.length && conCantidad) reemplazan.push(`${tr.dataset.sku}: ${mismos.map(textoPend).join(" + ")}`);
+  });
+  return reemplazan;
+}
 
 function agruparPorProveedor(lineas) {
   const grupos = new Map();
@@ -100,6 +157,8 @@ function lineasDelGrupo(grupoEl) {
 }
 
 async function confirmarPedido(proveedor, lineas, grupoEl) {
+  const reemplazan = pintarAvisos(grupoEl);
+  if (reemplazan.length && !confirm(`Este pedido a ${proveedor} REEMPLAZA lo pendiente de ${reemplazan.length} producto${reemplazan.length === 1 ? "" : "s"} (no se suma):\n\n${reemplazan.slice(0, 10).join("\n")}${reemplazan.length > 10 ? `\n… y ${reemplazan.length - 10} más` : ""}\n\nLas cantidades que cargaste son el total que querés recibir. ¿Confirmar?`)) return;
   const btn = grupoEl.querySelector(".btn-confirmar");
   btn.disabled = true;
   btn.textContent = "Guardando…";
@@ -114,7 +173,7 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
     });
     // El pedido ya quedó registrado en el servidor — sacamos del carrito
     // local las líneas de este proveedor que se acaban de confirmar.
-    const restantes = getCarrito().filter((l) => l.proveedor !== proveedor);
+    const restantes = getCarrito().filter((l) => l.proveedor !== grupoEl.dataset.proveedor);
     setCarrito(restantes);
     grupoEl.querySelector(".grupo-acciones").insertAdjacentHTML(
       "beforeend", `<span class="ok-msg">✓ ${tituloOC(res.pedido_id, proveedor, grupoEl.querySelector(".titulo-extra").value)} guardada</span>`
@@ -122,6 +181,8 @@ async function confirmarPedido(proveedor, lineas, grupoEl) {
     btn.textContent = "Guardado";
     grupoEl.dataset.oc = res.pedido_id; // el PDF ya sale con el número de OC
     grupoEl.querySelectorAll("input, select, button.link").forEach((el) => el.disabled = true);
+    grupoEl.querySelectorAll(".avisos, .estado-pend").forEach((el) => el.textContent = "");
+    cargarPendientes();
   } catch (e) {
     btn.disabled = false;
     btn.textContent = "Confirmar pedido";
@@ -165,7 +226,7 @@ function renderGrupo(proveedor, lineas) {
     return `
     <tr data-sku="${g.sku}" data-nombre="${(nombre || "").replace(/"/g, "&quot;")}">
       <td>${g.sku}</td>
-      <td>${nombre || "—"}</td>
+      <td>${nombre || "—"}<div class="avisos"></div></td>
       <td>
         <input type="number" class="qty-deposito" value="${g.deposito ? g.deposito.cantidad : 0}" min="0"
                data-sugerida="${g.deposito?.cantidad_sugerida || 0}">
@@ -184,6 +245,8 @@ function renderGrupo(proveedor, lineas) {
   el.innerHTML = `
     <h2>📦 ${proveedor} — ${grupos.length} producto${grupos.length === 1 ? "" : "s"}</h2>
     <div class="grupo-opciones">
+      <label>Proveedor:
+        <select class="sel-proveedor"><option>${escapar(proveedor)}</option></select></label>
       <label>Destino:
         <select class="sel-destino">
           <option value="separar">Separar depósito y Full</option>
@@ -193,6 +256,7 @@ function renderGrupo(proveedor, lineas) {
       <label>Título a mano (opcional):
         <input type="text" class="titulo-extra" maxlength="120" placeholder="ej. Sábanas 1200 hilos" title="Se agrega al título: OC 124 - Proveedor - tu texto"></label>
     </div>
+    <div class="aviso-pend estado-pend"></div>
     <table>
       <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th class="col-full">Full</th><th class="col-total">Total</th><th></th></tr></thead>
       <tbody>${filas}</tbody>
@@ -214,8 +278,10 @@ function renderGrupo(proveedor, lineas) {
       const qDep = Number(tr.querySelector(".qty-deposito").value) || 0;
       const qFull = Number(tr.querySelector(".qty-full").value) || 0;
       tr.querySelector(".total-cell").textContent = qDep + qFull;
+      pintarAvisos(el);
     });
   });
+  el.querySelector(".sel-proveedor").addEventListener("change", () => pintarAvisos(el));
   // "Todo a depósito": la cantidad de Full se suma a la de depósito (la
   // sugerencia de ambos destinos va junta, como si el depósito después
   // repartiera a Full) y la columna Full se oculta. Al volver a "Separar" se
@@ -245,12 +311,12 @@ function renderGrupo(proveedor, lineas) {
   el.querySelector(".btn-pdf").addEventListener("click", () => {
     const lineas = lineasDelGrupo(el);
     if (!lineas.length) return alert("No hay líneas con cantidad > 0.");
-    generarPDF(proveedor, lineas, el.querySelector(".sel-unidad").value, el.dataset.oc || null, el.querySelector(".titulo-extra").value);
+    generarPDF(proveedorElegido(el), lineas, el.querySelector(".sel-unidad").value, el.dataset.oc || null, el.querySelector(".titulo-extra").value);
   });
   el.querySelector(".btn-confirmar").addEventListener("click", () => {
     const lineas = lineasDelGrupo(el);
     if (!lineas.length) return alert("No hay líneas con cantidad > 0.");
-    confirmarPedido(proveedor, lineas, el);
+    confirmarPedido(proveedorElegido(el), lineas, el);
   });
 
   return el;
@@ -272,6 +338,7 @@ function render() {
 }
 
 render();
+if (getCarrito().length) cargarPendientes();
 </script>
 </body>
 </html>

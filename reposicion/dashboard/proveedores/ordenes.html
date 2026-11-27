@@ -31,6 +31,14 @@ const chipOC = (e, cerrada = false) => {
   if (cerrada && e === 'recibido_completo') return '<span class="chip warn" title="Se dio por terminada sin que llegara todo lo pedido">Cerrada con faltante</span>';
   const [t, c] = EST[e] || [e, '']; return `<span class="chip ${c}">${esc(t)}</span>`;
 };
+// Líneas que ya no se le piden a este proveedor: reemplazadas por un pedido más nuevo o pasadas a otro.
+const inactiva = (i) => !!(i.reemplazado_por || i.movido_a);
+const comoQuedo = (i) => (i.reemplazado_por ? ['Reemplazada por', i.reemplazado_por] : i.movido_a ? ['Pasada a', i.movido_a] : null);
+const chipLineas = (lineas, estado, cerrada) => {
+  if (estado !== 'cancelado' && lineas.length && lineas.every((i) => i.reemplazado_por)) return '<span class="chip">Reemplazada</span>';
+  if (estado !== 'cancelado' && lineas.length && lineas.every((i) => i.movido_a)) return '<span class="chip">Pasada a otro proveedor</span>';
+  return chipOC(estado, cerrada);
+};
 const tituloOC = (o) => [`OC ${o.id} - ${o.proveedor}`, (o.titulo_extra || '').trim()].filter(Boolean).join(' - ');
 const ABIERTAS = ['enviado', 'recibido_parcial'];
 const ocId = Number(qs('id')) || null;
@@ -41,14 +49,14 @@ if (ocId) await detalle(ocId); else await lista();
 async function lista() {
   $('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando órdenes de compra…</p>';
   const [{ data: ocs, error }, { data: movs }] = await Promise.all([
-    sb.from('repo_pedidos').select('id,proveedor,titulo_extra,creado_at,creado_por,estado,unidad_medida,cerrada_con_faltante_at,repo_pedido_items(cantidad_pedida,cantidad_recibida)').order('id', { ascending: false }).limit(1000),
+    sb.from('repo_pedidos').select('id,proveedor,titulo_extra,creado_at,creado_por,estado,unidad_medida,cerrada_con_faltante_at,repo_pedido_items(cantidad_pedida,cantidad_recibida,reemplazado_por,movido_a)').order('id', { ascending: false }).limit(1000),
     sb.from('cc_movimientos').select('oc_id,ingreso,pago').not('oc_id', 'is', null).limit(1000),
   ]);
   if (error) { $('#app').innerHTML = `<p class="err">No pude cargar las órdenes de compra: ${esc(error.message)}</p>`; return; }
   const fin = {};
   for (const m of movs || []) { const f = (fin[m.oc_id] ||= { fac: 0, pag: 0 }); f.fac += Number(m.ingreso); f.pag += Number(m.pago); }
   const filas = (ocs || []).map((o) => {
-    const items = o.repo_pedido_items || [];
+    const items = (o.repo_pedido_items || []).filter((i) => !inactiva(i));
     return { ...o, ped: items.reduce((s, i) => s + i.cantidad_pedida, 0), rec: items.reduce((s, i) => s + Math.min(i.cantidad_recibida, i.cantidad_pedida), 0), fac: fin[o.id]?.fac || 0, pag: fin[o.id]?.pag || 0 };
   });
   let ver = 'abiertas';
@@ -64,7 +72,7 @@ async function lista() {
     $('#tb').innerHTML = v.map((o) => {
       const u = o.unidad_medida === 'bultos' ? 'bultos' : 'u.', pct = o.ped ? Math.round((o.rec / o.ped) * 100) : 0;
       return `<tr class="click" onclick="location.href='ordenes.html?id=${o.id}'"><th scope="row"><a class="prov" href="ordenes.html?id=${o.id}">${esc(tituloOC(o))}</a></th>
-      <td>${fecha(o.creado_at)}<div class="muted small">${esc(o.creado_por)}</div></td><td>${chipOC(o.estado, !!o.cerrada_con_faltante_at)}</td>
+      <td>${fecha(o.creado_at)}<div class="muted small">${esc(o.creado_por)}</div></td><td>${chipLineas(o.repo_pedido_items || [], o.estado, !!o.cerrada_con_faltante_at)}</td>
       <td><div class="num small">${o.rec} de ${o.ped} ${u} (${pct}%)</div><div class="oc-barra"><i style="width:${Math.min(100, pct)}%"></i></div></td>
       <td class="r num">${o.fac ? peso0(o.fac) : ''}</td><td class="r num">${o.pag ? peso0(o.pag) : ''}</td></tr>`;
     }).join('') || '<tr><td colspan="6" class="muted">No hay órdenes de compra con ese filtro.</td></tr>';
@@ -77,8 +85,8 @@ async function lista() {
 // ───────────────────────── Detalle + checklist ─────────────────────────
 async function detalle(id) {
   const [{ data: oc, error }, { data: items }, { data: movs }, { data: recs }, { data: provs }] = await Promise.all([
-    sb.from('repo_pedidos').select('id,proveedor,titulo_extra,creado_at,creado_por,estado,notas,unidad_medida,cerrada_con_faltante_at').eq('id', id).maybeSingle(),
-    sb.from('repo_pedido_items').select('id,sku,destino,cantidad_pedida,cantidad_recibida,recibido_completo,recibido_manual,cerrado_con_faltante').eq('pedido_id', id).order('sku').order('destino').limit(1000),
+    sb.from('repo_pedidos').select('id,proveedor,proveedor_anterior,titulo_extra,creado_at,creado_por,estado,notas,unidad_medida,cerrada_con_faltante_at').eq('id', id).maybeSingle(),
+    sb.from('repo_pedido_items').select('id,sku,destino,cantidad_pedida,cantidad_recibida,recibido_completo,recibido_manual,cerrado_con_faltante,reemplazado_por,movido_a').eq('pedido_id', id).order('sku').order('destino').limit(1000),
     sb.from('cc_movimientos').select('id,fecha,tipo,detalle,ingreso,pago').eq('oc_id', id).order('fecha').order('id'),
     sb.from('cc_recepciones').select('id,fecha,nro_remito,bultos,estado').eq('oc_id', id).neq('estado', 'anulada').order('fecha'),
     sb.from('cc_proveedores').select('id,nombre,repo_nombres'),
@@ -100,27 +108,30 @@ async function detalle(id) {
   function estadoLocal() {
     if (cancelada) return 'cancelado';
     if (lineas.length && lineas.every((i) => i.recibido_completo)) return 'recibido_completo';
-    if (lineas.some((i) => i.recibido_completo || i.cantidad_recibida > 0)) return 'recibido_parcial';
+    if (lineas.some((i) => (i.recibido_completo && !inactiva(i)) || i.cantidad_recibida > 0)) return 'recibido_parcial';
     return 'enviado';
   }
   function resumen() {
-    const ped = lineas.reduce((s, i) => s + i.cantidad_pedida, 0), rec = lineas.reduce((s, i) => s + Math.min(i.cantidad_recibida, i.cantidad_pedida), 0);
-    const ok = lineas.filter((i) => i.recibido_completo && !i.cerrado_con_faltante).length, pct = ped ? Math.round((rec / ped) * 100) : 0;
+    const act = lineas.filter((i) => !inactiva(i));
+    const ped = act.reduce((s, i) => s + i.cantidad_pedida, 0), rec = act.reduce((s, i) => s + Math.min(i.cantidad_recibida, i.cantidad_pedida), 0);
+    const ok = act.filter((i) => i.recibido_completo && !i.cerrado_con_faltante).length, pct = ped ? Math.round((rec / ped) * 100) : 0;
     const cerr = lineas.filter((i) => i.cerrado_con_faltante), falto = cerr.reduce((s, i) => s + Math.max(0, i.cantidad_pedida - i.cantidad_recibida), 0);
     return `<div class="row wrapRow" style="gap:24px"><div><div class="cc-label">Ingresó</div><b class="num">${rec} de ${ped} ${u}</b> <span class="muted">(${pct}%)</span></div>
-      <div><div class="cc-label">Líneas completas</div><b class="num">${ok} de ${lineas.length}</b></div>${cerr.length ? `<div><div class="cc-label">Cerradas con faltante</div><b class="num warn-t">${cerr.length} líneas · faltaron ${falto} ${u}</b></div>` : ''}<div style="flex:1;min-width:140px"><div class="oc-barra"><i style="width:${Math.min(100, pct)}%"></i></div></div></div>`;
+      <div><div class="cc-label">Líneas completas</div><b class="num">${ok} de ${act.length}</b></div>${lineas.length > act.length ? `<div><div class="cc-label">Ya no se piden acá</div><b class="num">${lineas.length - act.length} líneas</b></div>` : ''}${cerr.length ? `<div><div class="cc-label">Cerradas con faltante</div><b class="num warn-t">${cerr.length} líneas · faltaron ${falto} ${u}</b></div>` : ''}<div style="flex:1;min-width:140px"><div class="oc-barra"><i style="width:${Math.min(100, pct)}%"></i></div></div></div>`;
   }
   // Columna "Falta": lo que falta si la línea sigue abierta; "faltó N" (gris) si se cerró con faltante.
   const celdaFalta = (i) => {
     const f = Math.max(0, i.cantidad_pedida - i.cantidad_recibida);
+    const q = comoQuedo(i);
+    if (q) return { txt: `${q[0]} OC ${q[1]}`, cls: 'r small muted' };
     return i.cerrado_con_faltante && f ? { txt: `faltó ${f}`, cls: 'r num muted' } : { txt: f || '', cls: `r num ${i.recibido_completo ? '' : 'warn-t'}` };
   };
-  const claseFila = (i) => (i.cerrado_con_faltante ? 'oc-cerrada' : i.recibido_completo ? 'oc-ok' : '');
+  const claseFila = (i) => (i.cerrado_con_faltante || inactiva(i) ? 'oc-cerrada' : i.recibido_completo ? 'oc-ok' : '');
   function filaHTML(i) {
     const fl = celdaFalta(i);
-    return `<tr data-i="${i.id}" class="${claseFila(i)}"><td><input type="checkbox" class="oc-chk" data-chk="${i.id}" ${i.recibido_completo ? 'checked' : ''} ${cancelada ? 'disabled' : ''} aria-label="Ingresó completo ${esc(i.sku)}"></td>
+    return `<tr data-i="${i.id}" class="${claseFila(i)}"><td><input type="checkbox" class="oc-chk" data-chk="${i.id}" ${i.recibido_completo && !inactiva(i) ? 'checked' : ''} ${cancelada || inactiva(i) ? 'disabled' : ''} aria-label="Ingresó completo ${esc(i.sku)}"></td>
       <td><b>${esc(i.sku)}</b><div class="small muted">${esc(nombre(i.sku))}</div></td><td>${esc(i.destino.replace('_', ' '))}</td>
-      <td class="r num">${i.cantidad_pedida}</td><td class="r"><input type="number" min="0" class="oc-qty" data-qty="${i.id}" value="${i.cantidad_recibida}" ${cancelada ? 'disabled' : ''} aria-label="Cantidad que ingresó de ${esc(i.sku)}"></td>
+      <td class="r num">${i.cantidad_pedida}</td><td class="r"><input type="number" min="0" class="oc-qty" data-qty="${i.id}" value="${i.cantidad_recibida}" ${cancelada || inactiva(i) ? 'disabled' : ''} aria-label="Cantidad que ingresó de ${esc(i.sku)}"></td>
       <td class="${fl.cls}" data-pend="${i.id}">${fl.txt}</td></tr>`;
   }
   function visibles() {
@@ -147,7 +158,7 @@ async function detalle(id) {
     if (cerrar) cerrar.hidden = cancelada || (cerrada && estadoLocal() === 'recibido_completo') || !abiertas || !algo;
     if (reabrir) reabrir.hidden = cancelada || !(cerrada && estadoLocal() === 'recibido_completo');
   }
-  function refrescarCabecera() { $('#resumen').innerHTML = resumen(); $('#estado').innerHTML = chipOC(estadoLocal(), cerrada); botonesCierre(); }
+  function refrescarCabecera() { $('#resumen').innerHTML = resumen(); $('#estado').innerHTML = chipLineas(lineas, estadoLocal(), cerrada); botonesCierre(); }
 
   async function marcar(i, cant) {
     cant = Math.max(0, Math.floor(Number(cant)) || 0);
@@ -164,19 +175,20 @@ async function detalle(id) {
   const fac = (movs || []).reduce((s, m) => s + Number(m.ingreso), 0), pag = (movs || []).reduce((s, m) => s + Number(m.pago), 0);
   const prm = prov ? `proveedor=${prov.id}&oc=${id}` : null;
   $('#app').innerHTML = `<p class="small"><a href="ordenes.html">← Órdenes de compra</a></p>
-  <div class="cabecera"><div><div class="row" style="gap:10px"><h1>${esc(tituloOC(oc))}</h1><span id="estado">${chipOC(estadoLocal(), cerrada)}</span></div>
-    <p>${fecha(oc.creado_at)} · pedida por ${esc(oc.creado_por)} · en ${oc.unidad_medida === 'bultos' ? 'bultos' : 'unidades'}${prov ? ` · <a href="proveedor.html?id=${prov.id}">ver cuenta corriente</a>` : ''}</p></div>
+  <div class="cabecera"><div><div class="row" style="gap:10px"><h1>${esc(tituloOC(oc))}</h1><span id="estado">${chipLineas(lineas, estadoLocal(), cerrada)}</span></div>
+    <p>${fecha(oc.creado_at)} · pedida por ${esc(oc.creado_por)} · en ${oc.unidad_medida === 'bultos' ? 'bultos' : 'unidades'}${oc.proveedor_anterior ? ` · antes era de ${esc(oc.proveedor_anterior)}` : ''} · <a href="pendientes.html?p=${encodeURIComponent(oc.proveedor)}">pendiente con este proveedor</a>${prov ? ` · <a href="proveedor.html?id=${prov.id}">ver cuenta corriente</a>` : ''}</p></div>
     <div class="row wrapRow">${prm ? `<a class="btn" href="nuevo.html?${prm}&tipo=comprobante">Cargar factura de esta OC</a><a class="btn" href="nuevo.html?${prm}&tipo=pago">Registrar pago de esta OC</a>`
       : `<span class="muted small">Para relacionar facturas y pagos, vinculá "${esc(oc.proveedor)}" con un proveedor de la cuenta corriente (pestaña Pedidos del proveedor).</span>`}</div></div>
   ${oc.notas ? `<p class="muted">${esc(oc.notas)}</p>` : ''}
+  ${!cancelada && lineas.some((i) => !i.recibido_completo) ? `<div class="row wrapRow small" style="margin-top:8px"><label for="pase">Cambiar lo pendiente a otro proveedor:</label><select id="pase" style="width:auto"><option value="">Elegir…</option></select><button class="btn sm" id="pasar">Pasar</button></div>` : ''}
   <div class="card" style="margin-top:16px" id="resumen">${resumen()}</div>
-  ${oc.unidad_medida === 'bultos' ? '<div class="cc-nota" style="margin:-8px 0 12px">Esta OC está en bultos: la estimación automática no cuenta bultos, acá lo que marques es lo que vale.</div>' : ''}
+  ${oc.unidad_medida === 'bultos' ? '<div class="cc-nota" style="margin:-8px 0 12px">Esta OC está en bultos: no hay sugerencia automática, acá lo que marques es lo que vale.</div>' : ''}
   <section class="card tabla"><div class="cab"><div><h2>Checklist de ingreso</h2><span class="muted" id="cuentaL"></span></div>
     <div class="row wrapRow"><input id="qL" style="max-width:240px" placeholder="Buscar SKU o producto…" aria-label="Buscar en la OC">
       <div class="seg gris" role="group" aria-label="Qué líneas ver">${[['todo', 'Todas'], ['pend', 'Solo pendientes']].map(([k, t]) => `<button type="button" data-solo="${k}" aria-pressed="${solo === k}">${t}</button>`).join('')}</div>
       ${cancelada ? '' : '<button class="btn sm" id="todo">Marcar todo recibido</button><button class="btn sm" id="cerrarF" hidden title="Dar la OC por terminada: lo que falta no va a llegar">Cerrar con faltante</button><button class="btn sm" id="reabrir" hidden>Reabrir OC</button>'}</div></div>
   <div class="scroll"><table style="min-width:640px"><thead><tr><th scope="col" style="width:44px">✓</th><th scope="col">SKU / producto</th><th scope="col">Destino</th><th scope="col" class="r">Pedido</th><th scope="col" class="r">Ingresó</th><th scope="col" class="r">Falta</th></tr></thead><tbody id="tb"></tbody></table></div>
-  <p class="cc-nota" style="padding:0 24px">Tildar una línea la da por completa; también podés escribir cuánto ingresó. Lo que marcás acá reemplaza la estimación automática de esa línea.${cancelada ? ' Esta OC está cancelada: no se puede editar.' : ''}
+  <p class="cc-nota" style="padding:0 24px">Tildar una línea la da por completa; también podés escribir cuánto ingresó. El sistema no marca nada solo: lo que llegó se carga acá o en Pendientes.${cancelada ? ' Esta OC está cancelada: no se puede editar.' : ''}
     <br><b>Cerrar con faltante</b> da la OC por terminada cuando lo que falta ya no va a llegar: no cambia lo pedido ni lo recibido, y esos productos dejan de figurar como "pedido en camino". Se puede reabrir.</p></section>
   <div class="grid dos">
     <section class="card tabla"><div class="cab"><div><h2>Facturas y pagos de esta OC</h2><span class="muted">Facturado ${peso0(fac)} · Pagado ${peso0(pag)}</span></div></div>
@@ -194,7 +206,7 @@ async function detalle(id) {
     t.disabled = true;
     const { error: e } = await sb.rpc('oc_marcar_todo_recibido', { p_pedido_id: id });
     if (e) { alert('No se pudo guardar: ' + e.message); t.disabled = false; return; }
-    lineas.forEach((i) => { i.cantidad_recibida = i.cantidad_pedida; i.recibido_completo = true; i.recibido_manual = true; });
+    lineas.filter((i) => !i.recibido_completo).forEach((i) => { i.cantidad_recibida = i.cantidad_pedida; i.recibido_completo = true; i.recibido_manual = true; });
     pintarTabla(); refrescarCabecera(); t.disabled = false;
   };
   const cf = $('#cerrarF');
@@ -214,6 +226,22 @@ async function detalle(id) {
     if (e) { alert('No se pudo reabrir: ' + e.message); ra.disabled = false; return; }
     location.reload();
   };
+  const pase = $('#pase');
+  if (pase) {
+    sb.rpc('rec_proveedores').then(({ data }) => {
+      const nombres = (data || []).map((x) => x.proveedor).filter((n) => n !== oc.proveedor).sort((a, b) => a.localeCompare(b, 'es'));
+      pase.innerHTML = '<option value="">Elegir…</option>' + nombres.map((n) => `<option>${esc(n)}</option>`).join('') + '<option value="__otro">Otro (escribir)…</option>';
+    });
+    $('#pasar').onclick = async () => {
+      const destino = (pase.value === '__otro' ? prompt('Nombre del proveedor nuevo:') || '' : pase.value).trim();
+      if (!destino) { alert('Elegí el proveedor nuevo.'); return; }
+      if (!confirm(`¿Pasar todo lo pendiente de la ${tituloOC(oc)} a ${destino}?\n\nDeja de estar pedido a ${oc.proveedor}. Si ${destino} ya tiene pendiente alguno de estos productos, se reemplaza (no se suma).`)) return;
+      $('#pasar').disabled = true;
+      const { data, error: e } = await sb.rpc('prov_cambiar_proveedor', { p_pedido_id: id, p_proveedor: destino });
+      if (e) { alert('No se pudo cambiar: ' + e.message); $('#pasar').disabled = false; return; }
+      location.assign(`ordenes.html?id=${data}`);
+    };
+  }
   botonesCierre();
   pintarTabla();
 }

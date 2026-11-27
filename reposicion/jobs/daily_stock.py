@@ -8,9 +8,9 @@ reposicion/jobs/daily_stock.py — corre 1 vez por día (GitHub Actions cron).
 2) Upsertea repo_stock_snapshot para la fecha de hoy.
 3) Compara contra el snapshot anterior: abre/cierra filas en
    repo_quiebre_historial cuando un SKU/destino pasa a 0 o vuelve a tener stock.
-4) Sincroniza ventas de los 4 canales y, al final, reconcilia los pedidos
-   abiertos (repo_pedido_items con recibido_completo=false) — marca recepción
-   completa/parcial. La lógica vive en reposicion/recepciones.py.
+4) Sincroniza ventas de los 4 canales y, al final, estima lo que ya habría
+   llegado de los pedidos abiertos — solo lo guarda como sugerencia, no marca
+   nada recibido. La lógica vive en reposicion/recepciones.py.
 
 Uso local: python3 -m reposicion.jobs.daily_stock
 """

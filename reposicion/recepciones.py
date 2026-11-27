@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-reposicion/recepciones.py — detección automática de mercadería recibida.
+reposicion/recepciones.py — estimación de mercadería recibida (SOLO SUGIERE).
 
 Lo llama daily_stock.py al final de la corrida diaria (después del sync de
-ventas). Decide cuántas unidades de cada línea de pedido (repo_pedido_items)
-ya llegaron, y cierra las líneas completas.
+ventas). Estima cuántas unidades de cada línea abierta ya habrían llegado y lo
+guarda en repo_pedido_items.estimado_recibido. NO marca nada como recibido ni
+cierra líneas: desde el 27/11/2026 las entregas las carga el usuario (el saldo
+se comparte con el proveedor) y en "Pendientes por proveedor" ve la sugerencia
+"parece que llegaron N", que acepta con un clic.
 
 Cómo se estima (por SKU, no por destino):
 
@@ -21,15 +24,17 @@ Cómo se estima (por SKU, no por destino):
 
 Sesgo a propósito CONSERVADOR (pedido del usuario, 2026-10-16: "prefiero que
 me sobrealerte a volver a pedir y que el proveedor me avise que ya hay un
-pedido en camino"): ante la duda la línea queda abierta, no cerrada. Por eso:
+pedido en camino"): ante la duda se estima de menos:
   - no se cuentan ventas de ml_lavan (no se sabe si salieron de Full Lavan,
     que es otro pool, o del depósito) ni las del día de la foto base;
   - lo que está en tránsito entre depósito y Full resta ingresos hasta que
     llega;
-  - lo recibido nunca baja una vez registrado;
+  - la estimación nunca es menor que lo ya cargado como recibido;
   - si hay varios pedidos abiertos del mismo SKU, los ingresos se reparten en
-    orden (el más viejo primero) y un mismo ingreso no cierra dos pedidos;
-  - los pedidos en bultos no se tocan (no se sabe cuántas unidades tiene un
+    orden (el más viejo primero) y un mismo ingreso no cuenta para dos pedidos;
+  - las líneas reemplazadas por un pedido nuevo o pasadas a otro proveedor no
+    participan;
+  - los pedidos en bultos no se estiman (no se sabe cuántas unidades tiene un
     bulto); un SKU con un pedido en bultos abierto se saltea entero.
 """
 
@@ -87,6 +92,14 @@ def estimar_ingreso(stock_hoy_total, snaps, ventas, creado_at):
     return (stock_hoy_total - base["total"]) + vendido
 
 
+def esperado(linea):
+    """Cuánto del ingreso le corresponde a una línea: lo pedido, o solo lo que
+    llegó si se cerró con faltante (el resto no va a venir)."""
+    if linea.get("cerrado_con_faltante"):
+        return linea["cantidad_recibida"] or 0
+    return linea["cantidad_pedida"]
+
+
 def calcular_recepciones(items_por_sku, pedidos, snaps_por_sku, ventas_por_sku, stock_hoy):
     """Función pura (sin base de datos) — devuelve la lista de cambios:
     [{'item_id', 'pedido_id', 'sku', 'destino', 'antes', 'ahora', 'pedida', 'completo'}].
@@ -98,6 +111,8 @@ def calcular_recepciones(items_por_sku, pedidos, snaps_por_sku, ventas_por_sku, 
     """
     cambios = []
     for sku, items in items_por_sku.items():
+        # Reemplazadas o pasadas a otro proveedor: nunca van a llegar por esa línea.
+        items = [i for i in items if not (i.get("reemplazado_por") or i.get("movido_a"))]
         if not any(not i["recibido_completo"] for i in items):
             continue
         hoy = stock_hoy.get(sku)
@@ -129,9 +144,9 @@ def calcular_recepciones(items_por_sku, pedidos, snaps_por_sku, ventas_por_sku, 
 
         for pid in incluidos:
             lineas = por_pedido[pid]
-            pedida = sum(l["cantidad_pedida"] for l in lineas)
+            pedida = sum(esperado(l) for l in lineas)
             if all(l["recibido_completo"] for l in lineas):
-                consumido += pedida  # ya cerrado: se supone recibido entero
+                consumido += pedida  # ya cerrado: se supone recibido todo lo esperado
                 continue
             ya = sum(l["cantidad_recibida"] or 0 for l in lineas)
             propio = max(0, ingresos[pid] or 0)  # ingresos posteriores a ESTE pedido
@@ -141,12 +156,10 @@ def calcular_recepciones(items_por_sku, pedidos, snaps_por_sku, ventas_por_sku, 
 
             restante = alloc
             for l in sorted(lineas, key=lambda l: (ORDEN_DESTINO.get(l["destino"], 9), l["id"])):
-                parte = min(l["cantidad_pedida"], restante)
+                parte = min(esperado(l), restante)
                 restante -= parte
                 actual = l["cantidad_recibida"] or 0
-                if l["recibido_completo"] or l.get("recibido_manual"):
-                    # Cerrada, o tildada a mano en el checklist de la OC (Gestión):
-                    # lo que se confirma a mano gana sobre la estimación.
+                if l["recibido_completo"]:
                     continue
                 nuevo = max(actual, parte)
                 completo = nuevo >= l["cantidad_pedida"]
@@ -183,7 +196,8 @@ def _cargar(config, stock_hoy_by_sku):
     for k in range(0, len(skus), CHUNK_SKUS):
         chunk = skus[k:k + CHUNK_SKUS]
         for it in db.select(config, "repo_pedido_items", params={
-            "select": "id,pedido_id,sku,destino,cantidad_pedida,cantidad_recibida,recibido_completo,recibido_manual",
+            "select": "id,pedido_id,sku,destino,cantidad_pedida,cantidad_recibida,recibido_completo,"
+                      "cerrado_con_faltante,reemplazado_por,movido_a,estimado_recibido",
             "sku": _in_list(chunk), "order": "id",
         }):
             if it["pedido_id"] in pedidos:
@@ -211,37 +225,34 @@ def _cargar(config, stock_hoy_by_sku):
     return items_por_sku, pedidos, snaps_por_sku, ventas_por_sku, stock_hoy
 
 
-def _actualizar_estado_pedidos(config, pedido_ids):
-    for pedido_id in pedido_ids:
-        items = db.select(config, "repo_pedido_items", params={
-            "select": "recibido_completo,cantidad_recibida", "pedido_id": f"eq.{pedido_id}",
-        })
-        if all(i["recibido_completo"] for i in items):
-            nuevo_estado = "recibido_completo"
-        elif any(i["recibido_completo"] or (i["cantidad_recibida"] or 0) > 0 for i in items):
-            nuevo_estado = "recibido_parcial"
-        else:
-            continue
-        db.patch(config, "repo_pedidos", params={"id": f"eq.{pedido_id}"}, body={"estado": nuevo_estado})
+def estimaciones_a_guardar(items_por_sku, cambios):
+    """{item_id: nuevo valor de estimado_recibido} solo para las líneas abiertas
+    cuyo valor guardado cambia. None = ya no hay nada para sugerir."""
+    sugerido = {c["item_id"]: c["ahora"] for c in cambios if c["ahora"] > c["antes"]}
+    out = {}
+    for items in items_por_sku.values():
+        for i in items:
+            if i["recibido_completo"]:
+                continue
+            nuevo = sugerido.get(i["id"])
+            if nuevo != i.get("estimado_recibido"):
+                out[i["id"]] = nuevo
+    return out
 
 
 def reconciliar_pedidos(config, stock_hoy_by_sku, dry_run=False):
     """stock_hoy_by_sku: {sku: {'deposito': int, 'full_pret': int, ...}}.
-    Con dry_run=True no escribe nada y devuelve los cambios que haría."""
+    Guarda la sugerencia en estimado_recibido; no marca nada como recibido.
+    Con dry_run=True no escribe nada. Devuelve las sugerencias calculadas."""
     items_por_sku, pedidos, snaps, ventas, stock_hoy = _cargar(config, stock_hoy_by_sku)
     cambios = calcular_recepciones(items_por_sku, pedidos, snaps, ventas, stock_hoy)
     if dry_run:
         return cambios
 
-    ahora = datetime.now(timezone.utc).isoformat()
-    for c in cambios:
-        body = {"cantidad_recibida": c["ahora"]}
-        if c["completo"]:
-            body.update(recibido_completo=True, recibido_at=ahora)
-        db.patch(config, "repo_pedido_items", params={"id": f"eq.{c['item_id']}"}, body=body)
-    _actualizar_estado_pedidos(config, {c["pedido_id"] for c in cambios})
+    nuevos = estimaciones_a_guardar(items_por_sku, cambios)
+    for item_id, valor in nuevos.items():
+        db.patch(config, "repo_pedido_items", params={"id": f"eq.{item_id}"}, body={"estimado_recibido": valor})
 
-    cerradas = sum(1 for c in cambios if c["completo"])
-    core.tnlog(f"  Recepciones: {len(cambios)} líneas actualizadas ({cerradas} cerradas) "
-               f"en {len({c['pedido_id'] for c in cambios})} pedidos")
+    core.tnlog(f"  Recepciones (solo sugerencia): {len(cambios)} líneas parecen haber recibido algo; "
+               f"{len(nuevos)} sugerencias actualizadas")
     return cambios

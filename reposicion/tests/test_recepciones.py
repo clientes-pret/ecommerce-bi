@@ -5,7 +5,7 @@ Correr:  python3 -m reposicion.tests.test_recepciones
 
 from datetime import datetime, timezone
 
-from reposicion.recepciones import calcular_recepciones, estimar_ingreso
+from reposicion.recepciones import calcular_recepciones, estimaciones_a_guardar, estimar_ingreso
 
 UTC = timezone.utc
 
@@ -54,17 +54,41 @@ def test_lo_recibido_nunca_baja():
     assert 1 not in r
 
 
-def test_linea_tildada_a_mano_no_se_pisa():
-    # Checklist de la OC (Gestión): el usuario confirmó 5 de 100. Aunque el stock sugiera
-    # que entraron 60, la estimación automática no toca esa línea.
+def test_linea_cargada_a_mano_tambien_recibe_sugerencia():
+    # El usuario cargó 5 de 100 y el stock sugiere que entraron 60: se sugiere 60 (no 65).
     manual = linea(1, 1, "deposito", 100, recibida=5)
     manual["recibido_manual"] = True
     r = correr([manual], {1: {"creado_at": dt(1), "unidad_medida": "unidades"}}, [snap(1, 50)], [], 110)
-    assert 1 not in r
-    # Sin la marca, la misma línea sí se actualiza.
-    r = correr([linea(1, 1, "deposito", 100, recibida=5)], {1: {"creado_at": dt(1), "unidad_medida": "unidades"}},
-               [snap(1, 50)], [], 110)
-    assert r[1]["ahora"] == 60
+    assert r[1]["antes"] == 5 and r[1]["ahora"] == 60
+
+
+def test_reemplazadas_y_pasadas_no_participan():
+    # La vieja fue reemplazada: el ingreso se sugiere en la vigente.
+    vieja = linea(1, 1, "deposito", 100, completo=True)
+    vieja["reemplazado_por"] = 2
+    pasada = linea(3, 1, "deposito", 40, completo=True)
+    pasada["movido_a"] = 9
+    pedidos = {1: {"creado_at": dt(1), "unidad_medida": "unidades"}, 2: {"creado_at": dt(3), "unidad_medida": "unidades"}}
+    r = correr([vieja, pasada, linea(2, 2, "deposito", 150)], pedidos, [snap(1, 0), snap(3, 0)], [], 60)
+    assert list(r) == [2] and r[2]["ahora"] == 60
+
+
+def test_cerrada_con_faltante_solo_consume_lo_que_llego():
+    cerrada = linea(1, 1, "deposito", 100, recibida=10, completo=True)
+    cerrada["cerrado_con_faltante"] = True
+    pedidos = {1: {"creado_at": dt(1), "unidad_medida": "unidades"}, 2: {"creado_at": dt(1, 13), "unidad_medida": "unidades"}}
+    abierta = linea(2, 2, "deposito", 50)
+    r = correr([cerrada, abierta, linea(3, 1, "full_pret", 1)], pedidos, [snap(1, 0)], [], 70)
+    assert r[2]["ahora"] == 50
+
+
+def test_solo_se_guardan_sugerencias_que_cambian():
+    a = linea(1, 1, "deposito", 100); a["estimado_recibido"] = 60      # igual que antes: no se reescribe
+    b = linea(2, 1, "deposito", 100); b["estimado_recibido"] = 30      # ya no hay sugerencia: se borra
+    c = linea(3, 1, "deposito", 100)                                    # nueva
+    d = linea(4, 1, "deposito", 100, completo=True)                     # cerrada: no se toca
+    cambios = [{"item_id": 1, "antes": 0, "ahora": 60}, {"item_id": 3, "antes": 0, "ahora": 8}]
+    assert estimaciones_a_guardar({"X": [a, b, c, d]}, cambios) == {2: None, 3: 8}
 
 
 def test_un_mismo_ingreso_no_cierra_dos_pedidos():

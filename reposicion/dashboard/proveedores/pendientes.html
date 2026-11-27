@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pendientes por proveedor</title>
+  <link rel="icon" href="icon-192.png">
+  <meta name="theme-color" content="#F5F4F0">
+  <link rel="stylesheet" href="estilo.css?v=12">
+  <style>
+    .btn[hidden] { display: none; }
+    .filtros { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .filtros select, .filtros input { width: auto; max-width: 230px; }
+    tr.cat th { background: var(--ink); color: #fff; text-align: left; font-size: 13px; letter-spacing: .02em; }
+    tr.cat th.r { text-align: right; }
+    tr.grupo th { background: var(--line-soft); cursor: pointer; text-align: left; font-weight: 600; }
+    tr.grupo th.r { text-align: right; }
+    tr.grupo th button { all: unset; cursor: pointer; display: block; width: 100%; }
+    tr.grupo th button:focus-visible { outline: 2px solid var(--brand); }
+    tr.medida th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; padding-top: 12px; }
+    td.n, th.r { text-align: right; font-variant-numeric: tabular-nums; }
+    .cant { width: 86px; text-align: right; }
+    input[type=checkbox].sel { width: 20px; height: 20px; min-height: 0; }
+    .barra-acciones { position: sticky; bottom: 0; z-index: 5; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; box-shadow: 0 -4px 16px rgba(0,0,0,.08); }
+    .barra-acciones[hidden] { display: none; }
+    .aviso { background: var(--warn-bg); border: 1px solid #F3C9A6; border-radius: var(--radius); padding: 12px 16px; margin: 0 0 16px; }
+    .aviso.ok { background: var(--ok-bg); border-color: #BFE3CD; }
+    dialog { border: 1px solid var(--line); border-radius: var(--radius); padding: 0; width: min(720px, 94vw); max-height: 88vh; color: var(--ink); }
+    dialog::backdrop { background: rgba(0,0,0,.4); }
+    dialog .cuerpo { padding: 18px 20px; overflow: auto; max-height: 60vh; }
+    dialog h2 { margin: 0; padding: 18px 20px 0; }
+    dialog .pie-d { display: flex; gap: 10px; justify-content: flex-end; padding: 12px 20px 18px; border-top: 1px solid var(--line); }
+    dialog label { display: block; margin: 10px 0 4px; font-weight: 600; }
+    .nota-fila { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<dialog id="dlg"></dialog>
+<script type="module">
+import { sb, $, $$, esc, guard, nav, qs, fecha } from './app.js';
+import { segmentar } from './grupos.js';
+const perfil = await guard(['admin', 'dueno']);
+nav(perfil, 'pendientes');
+
+const prov = qs('p');
+const DIAS_ATRASO = 30, DIAS_REVISADO = 15;
+const num = (n) => Number(n || 0).toLocaleString('es-AR');
+const dia = 86400000;
+let datos = [], proveedores = [];
+
+// ───────────────────────── Datos ─────────────────────────
+const atrasada = (l) => Date.now() - Date.parse(l.fecha) > DIAS_ATRASO * dia && (!l.revisado || Date.now() - Date.parse(l.revisado) > DIAS_REVISADO * dia);
+
+// nec = lo que hoy hace falta comprar; otrosU = ya pedido de ese producto a otros proveedores.
+function completar(f) {
+  const otrosU = (f.otros || []).reduce((s, o) => s + o.pend_u, 0), nec = f.nec_dep + f.nec_full;
+  const falta = f.pend_b > 0 ? null : Math.max(0, nec - f.pend_u - otrosU);
+  return { ...f, nec, otrosU, falta, sugerido: falta > 0 ? Math.max(0, nec - otrosU) : 0, atrasadas: f.lineas.filter(atrasada) };
+}
+
+async function cargar() {
+  const [{ data, error }, { data: lista }] = await Promise.all([sb.rpc('prov_saldo'), sb.rpc('rec_proveedores')]);
+  if (error) throw error;
+  datos = (data || []).map(completar);
+  proveedores = [...new Set([...(lista || []).map((x) => x.proveedor), ...datos.map((d) => d.proveedor)])].filter(Boolean).sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+const suma = (filas, k) => filas.reduce((s, f) => s + (f[k] || 0), 0);
+
+// ───────────────────────── Lista de proveedores ─────────────────────────
+function lista() {
+  const porProv = new Map();
+  for (const f of datos) { if (!porProv.has(f.proveedor)) porProv.set(f.proveedor, []); porProv.get(f.proveedor).push(f); }
+  const filas = [...porProv.entries()].map(([p, fs]) => ({
+    p, u: suma(fs, 'pend_u'), b: suma(fs, 'pend_b'), prods: fs.filter((f) => f.pend_u + f.pend_b > 0).length,
+    desde: fs.map((f) => f.desde).filter(Boolean).sort()[0], atr: fs.reduce((s, f) => s + f.atrasadas.length, 0), falta: suma(fs, 'falta'),
+  })).sort((a, b) => (b.u + b.b) - (a.u + a.b) || b.falta - a.falta);
+  $('#app').innerHTML = `<div class="cabecera"><div><h1>Pendientes por proveedor</h1><p>Lo que cada uno te debe hoy. Un pedido nuevo reemplaza al anterior del mismo producto y proveedor.</p></div></div>
+  <section class="card tabla" style="margin-top:16px"><div class="cab"><div><h2>Proveedores</h2></div><input id="q" style="max-width:260px" placeholder="Buscar proveedor…" aria-label="Buscar proveedor"></div>
+  <div class="scroll"><table style="min-width:760px"><thead><tr><th scope="col">Proveedor</th><th scope="col" class="r">Te debe (u.)</th><th scope="col" class="r">Bultos</th><th scope="col" class="r">Productos</th><th scope="col">Pedido más viejo</th><th scope="col" class="r">Atrasados</th><th scope="col" class="r">Falta pedir (u.)</th></tr></thead><tbody id="tb"></tbody></table></div></section>`;
+  const pintar = () => {
+    const q = $('#q').value.trim().toLowerCase();
+    $('#tb').innerHTML = filas.filter((f) => !q || f.p.toLowerCase().includes(q)).map((f) => `<tr class="click" data-p="${esc(f.p)}"><th scope="row"><a class="prov" href="pendientes.html?p=${encodeURIComponent(f.p)}">${esc(f.p)}</a></th>
+      <td class="n">${num(f.u)}</td><td class="n">${f.b ? num(f.b) : ''}</td><td class="n">${f.prods || ''}</td><td>${f.desde ? fecha(f.desde) : ''}</td>
+      <td class="n">${f.atr ? `<span class="chip warn">${num(f.atr)}</span>` : ''}</td><td class="n">${f.falta ? num(f.falta) : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No hay proveedores con ese nombre.</td></tr>';
+    $$('#tb tr[data-p]').forEach((tr) => (tr.onclick = () => (location.href = 'pendientes.html?p=' + encodeURIComponent(tr.dataset.p))));
+  };
+  $('#q').oninput = pintar; pintar();
+}
+
+// ───────────────────────── Detalle de un proveedor ─────────────────────────
+const vista = { tab: 'saldo', ver: 'pendiente', cat: '', grupo: '', medida: '', q: '', abiertos: new Set() };
+const entradas = { llego: new Map(), nuevo: new Map() };   // sku → texto escrito (sobrevive a los filtros)
+const marcadas = new Set();                                // saldo: sku · atrasados: id de línea
+let ultimaAccion = null;                                   // para "Deshacer"
+
+const mias = () => datos.filter((d) => d.proveedor === prov);
+
+function filtradas() {
+  const todas = segmentar(mias()).flatMap((c) => c.filas);
+  const q = vista.q.trim().toLowerCase();
+  return todas.filter((f) => (vista.tab === 'atrasados' ? f.atrasadas.length
+      : vista.ver === 'todo' || (vista.ver === 'pendiente' ? f.pend_u + f.pend_b > 0 : f.falta > 0))
+    && (!vista.cat || f.categoria === vista.cat) && (!vista.grupo || f.grupo === vista.grupo) && (!vista.medida || f.medida === vista.medida)
+    && (!q || `${f.sku} ${f.nombre} ${f.colorLimpio} ${f.medida}`.toLowerCase().includes(q)));
+}
+
+function detalle() {
+  const todas = segmentar(mias()).flatMap((c) => c.filas);
+  const unicos = (k, filas = todas) => [...new Set(filas.map((f) => f[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+  const enCat = todas.filter((f) => !vista.cat || f.categoria === vista.cat);
+  const opciones = (v, actual, todo) => `<option value="">${todo}</option>` + v.map((x) => `<option ${x === actual ? 'selected' : ''}>${esc(x)}</option>`).join('');
+  const atr = todas.reduce((s, f) => s + f.atrasadas.length, 0);
+  const desde = todas.map((f) => f.desde).filter(Boolean).sort()[0];
+  $('#app').innerHTML = `<p class="small"><a href="pendientes.html">← Pendientes por proveedor</a></p>
+  <div class="cabecera"><div><h1>${esc(prov)}</h1><p>${desde ? `El pedido pendiente más viejo es del ${fecha(desde)}` : 'No tiene nada pendiente'}</p></div>
+    <button class="btn" id="csv">Descargar Excel (CSV)</button></div>
+  <div class="centro-comando"><div class="cc-card destacada"><div class="cc-label">Te debe</div><div class="cc-valor">${num(suma(todas, 'pend_u'))} u.</div></div>
+    <div class="cc-card"><div class="cc-label">En bultos</div><div class="cc-valor">${num(suma(todas, 'pend_b'))}</div></div>
+    <div class="cc-card"><div class="cc-label">Falta pedir (30 días)</div><div class="cc-valor">${num(suma(todas, 'falta'))} u.</div></div>
+    <div class="cc-card ${atr ? 'alerta' : ''}"><div class="cc-label">Líneas de más de ${DIAS_ATRASO} días</div><div class="cc-valor">${num(atr)}</div></div></div>
+  <div id="aviso"></div>
+  <section class="card tabla"><div class="cab" style="flex-wrap:wrap;gap:10px">
+    <div class="seg" role="group" aria-label="Pantalla">${[['saldo', 'Saldo'], ['atrasados', `Atrasados (${atr})`]].map(([k, t]) => `<button type="button" data-tab="${k}" aria-pressed="${vista.tab === k}">${t}</button>`).join('')}</div>
+    <div class="filtros">
+      ${vista.tab === 'saldo' ? `<div class="seg gris" role="group" aria-label="Qué productos ver">${[['pendiente', 'Con pendiente'], ['falta', 'Falta pedir'], ['todo', 'Todo']].map(([k, t]) => `<button type="button" data-ver="${k}" aria-pressed="${vista.ver === k}">${t}</button>`).join('')}</div>` : ''}
+      <select id="fCat" aria-label="Categoría">${opciones(unicos('categoria'), vista.cat, 'Todas las categorías')}</select>
+      <select id="fGrupo" aria-label="Grupo de producto">${opciones(unicos('grupo', enCat), vista.grupo, 'Todos los grupos')}</select>
+      <select id="fMedida" aria-label="Medida">${opciones(unicos('medida', enCat.filter((f) => !vista.grupo || f.grupo === vista.grupo)), vista.medida, 'Todas las medidas')}</select>
+      <input id="fQ" placeholder="Color, SKU o producto…" aria-label="Buscar" value="${esc(vista.q)}">
+      <button class="btn sm" id="abrir">Abrir todo</button><button class="btn sm" id="cerrar">Cerrar todo</button>
+    </div></div>
+    <div class="scroll"><table style="min-width:${vista.tab === 'saldo' ? 900 : 760}px"><thead id="th"></thead><tbody id="tb"></tbody></table></div></section>
+  <div class="barra-acciones" id="barra" hidden></div>`;
+
+  $$('[data-tab]').forEach((b) => (b.onclick = () => { vista.tab = b.dataset.tab; marcadas.clear(); detalle(); }));
+  $$('[data-ver]').forEach((b) => (b.onclick = () => { vista.ver = b.dataset.ver; $$('[data-ver]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); tabla(); }));
+  $('#fCat').onchange = (e) => { vista.cat = e.target.value; vista.grupo = ''; vista.medida = ''; detalle(); };
+  $('#fGrupo').onchange = (e) => { vista.grupo = e.target.value; vista.medida = ''; if (vista.grupo) vista.abiertos.add(vista.grupo.toLowerCase()); detalle(); };
+  $('#fMedida').onchange = (e) => { vista.medida = e.target.value; tabla(); };
+  $('#fQ').oninput = (e) => { vista.q = e.target.value; tabla(); };
+  $('#abrir').onclick = () => { filtradas().forEach((f) => vista.abiertos.add(f.grupo.toLowerCase())); tabla(); };
+  $('#cerrar').onclick = () => { vista.abiertos.clear(); tabla(); };
+  $('#csv').onclick = descargar;
+  pintarAviso();
+  tabla();
+}
+
+const ocsDe = (lineas) => [...new Map(lineas.map((l) => [l.oc, l])).values()]
+  .map((l) => `${fecha(l.fecha)} · <a href="ordenes.html?id=${l.oc}">OC ${l.oc}</a>`).join('<br>');
+
+function filaSaldo(f) {
+  const marca = marcadas.has(f.sku) ? 'checked' : '';
+  const pend = [f.pend_u ? `<b>${num(f.pend_u)} u.</b>` : '', f.pend_b ? `<b>${num(f.pend_b)} bultos</b>` : ''].filter(Boolean).join('<br>') || '<span class="muted">—</span>';
+  const otros = (f.otros || []).map((o) => `${esc(o.proveedor)} (${num(o.pend_u)} u.)`).join(', ');
+  return `<tr><td><input type="checkbox" class="sel" data-sel="${esc(f.sku)}" ${marca} aria-label="Elegir ${esc(f.sku)}"></td>
+    <td><b>${esc(f.colorLimpio || f.sku)}</b><div class="nota-fila">${esc(f.sku)}</div>${otros ? `<div class="nota-fila warn-t">También pedido a ${otros}</div>` : ''}</td>
+    <td class="n">${pend}</td><td class="small">${ocsDe(f.lineas)}</td>
+    <td class="n">${f.nec ? num(f.nec) : ''}</td><td class="n ${f.falta ? 'warn-t' : ''}">${f.falta == null ? '<span class="muted" title="Hay bultos pendientes: no se puede comparar con unidades">?</span>' : f.falta ? num(f.falta) : ''}</td>
+    <td class="n">${f.pend_u + f.pend_b ? `<input class="cant" type="number" min="0" inputmode="numeric" data-llego="${esc(f.sku)}" value="${esc(entradas.llego.get(f.sku) || '')}" aria-label="Cuánto llegó de ${esc(f.sku)}">` : ''}</td>
+    <td class="n"><input class="cant" type="number" min="0" inputmode="numeric" data-nuevo="${esc(f.sku)}" value="${esc(entradas.nuevo.get(f.sku) || '')}" placeholder="${f.sugerido || ''}" aria-label="Nuevo pedido total de ${esc(f.sku)}"></td></tr>`;
+}
+
+function filasAtrasadas(f) {
+  return f.atrasadas.map((l) => {
+    const falta = Math.max(0, l.pedida - l.recibida), u = l.unidad === 'bultos' ? 'bultos' : 'u.';
+    const est = l.estimado > l.recibida ? `<div class="nota-fila ok-t">Parece que llegaron ${num(Math.min(l.estimado, l.pedida) - l.recibida)} más</div>` : '';
+    return `<tr><td><input type="checkbox" class="sel" data-sel="${l.item}" ${marcadas.has(String(l.item)) ? 'checked' : ''} aria-label="Elegir ${esc(f.sku)}"></td>
+      <td><b>${esc(f.colorLimpio || f.sku)}</b><div class="nota-fila">${esc(f.sku)} · ${esc(l.destino.replace('_', ' '))}</div>${est}</td>
+      <td class="n"><b>${num(falta)} ${u}</b>${l.recibida ? `<div class="nota-fila">llegaron ${num(l.recibida)}</div>` : ''}</td>
+      <td class="small">${fecha(l.fecha)} · <a href="ordenes.html?id=${l.oc}">OC ${l.oc}</a><div class="nota-fila">hace ${Math.floor((Date.now() - Date.parse(l.fecha)) / dia)} días</div></td>
+      <td class="n">${f.stock_dep == null ? '' : `${num(f.stock_dep)} / ${num(f.stock_full)}`}</td><td class="n">${f.vendido == null ? '' : num(f.vendido)}</td></tr>`;
+  }).join('');
+}
+
+function tabla() {
+  const saldo = vista.tab === 'saldo';
+  $('#th').innerHTML = saldo
+    ? '<tr><th scope="col" style="width:40px"></th><th scope="col">Color / SKU</th><th scope="col" class="r">Te debe</th><th scope="col">Pedido</th><th scope="col" class="r">Necesitás</th><th scope="col" class="r">Falta</th><th scope="col" class="r">Llegó</th><th scope="col" class="r">Nuevo pedido (total)</th></tr>'
+    : '<tr><th scope="col" style="width:40px"></th><th scope="col">Color / SKU</th><th scope="col" class="r">Falta recibir</th><th scope="col">Pedido</th><th scope="col" class="r">Stock dep. / Full</th><th scope="col" class="r">Vendido 60 d</th></tr>';
+  const filas = filtradas(), cols = saldo ? 8 : 6;
+  const arbol = segmentar(filas);
+  const resumen = (fs) => {
+    if (saldo) return `<th class="r" colspan="1">${[suma(fs, 'pend_u') ? num(suma(fs, 'pend_u')) + ' u.' : '', suma(fs, 'pend_b') ? num(suma(fs, 'pend_b')) + ' b.' : ''].filter(Boolean).join(' · ')}</th><th></th><th class="r">${suma(fs, 'nec') ? num(suma(fs, 'nec')) : ''}</th><th class="r">${suma(fs, 'falta') ? num(suma(fs, 'falta')) : ''}</th>`;
+    const ls = fs.flatMap((f) => f.atrasadas), u = (b) => ls.filter((l) => (l.unidad === 'bultos') === b).reduce((s, l) => s + Math.max(0, l.pedida - l.recibida), 0);
+    return `<th class="r">${[u(false) ? num(u(false)) + ' u.' : '', u(true) ? num(u(true)) + ' b.' : ''].filter(Boolean).join(' · ')}</th><th>${ls.length} líneas</th><th></th><th></th>`;
+  };
+  $('#tb').innerHTML = arbol.map((c) => `<tr class="cat"><th colspan="2" scope="colgroup">${esc(c.categoria)}</th>${resumen(c.filas)}${saldo ? '<th></th><th></th>' : ''}</tr>` + c.grupos.map((g) => {
+    const k = g.grupo.toLowerCase(), abierto = vista.abiertos.has(k) || !!vista.q.trim() || arbol.length === 1 && c.grupos.length === 1;
+    const cab = `<tr class="grupo"><th><input type="checkbox" class="sel" data-grupo="${esc(k)}" aria-label="Elegir todo ${esc(g.grupo)}"></th><th scope="rowgroup"><button type="button" data-abrir="${esc(k)}" aria-expanded="${abierto}">${abierto ? '▾' : '▸'} ${esc(g.grupo)} <span class="muted">(${g.filas.length})</span></button></th>${resumen(g.filas)}${saldo ? `<th></th><th class="r">${g.filas.some((f) => f.sugerido) ? `<button type="button" class="btn sm" data-sugerir="${esc(k)}">Usar sugerido</button>` : ''}</th>` : ''}</tr>`;
+    if (!abierto) return cab;
+    return cab + g.medidas.map((m) => (m.medida ? `<tr class="medida"><th></th><th colspan="${cols - 1}">${esc(m.medida)}</th></tr>` : '') + m.filas.map(saldo ? filaSaldo : filasAtrasadas).join('')).join('');
+  }).join('')).join('') || `<tr><td colspan="${cols}" class="muted">${saldo ? 'No hay productos con ese filtro.' : 'No hay nada atrasado con ese filtro.'}</td></tr>`;
+
+  const idsDe = (f) => (saldo ? [f.sku] : f.atrasadas.map((l) => String(l.item)));
+  $$('[data-abrir]').forEach((b) => (b.onclick = () => { const k = b.dataset.abrir; vista.abiertos.has(k) ? vista.abiertos.delete(k) : vista.abiertos.add(k); tabla(); }));
+  $$('[data-grupo]').forEach((c) => {
+    const ids = filas.filter((f) => f.grupo.toLowerCase() === c.dataset.grupo).flatMap(idsDe), n = ids.filter((i) => marcadas.has(i)).length;
+    c.checked = n > 0 && n === ids.length; c.indeterminate = n > 0 && n < ids.length;
+    c.onchange = () => { ids.forEach((i) => (c.checked ? marcadas.add(i) : marcadas.delete(i))); tabla(); };
+  });
+  $$('[data-sel]').forEach((c) => (c.onchange = () => { c.checked ? marcadas.add(c.dataset.sel) : marcadas.delete(c.dataset.sel); tabla(); }));
+  $$('[data-llego]').forEach((i) => (i.oninput = () => { entradas.llego.set(i.dataset.llego, i.value); barra(); }));
+  $$('[data-nuevo]').forEach((i) => (i.oninput = () => { entradas.nuevo.set(i.dataset.nuevo, i.value); barra(); }));
+  $$('[data-sugerir]').forEach((b) => (b.onclick = () => {
+    filas.filter((f) => f.grupo.toLowerCase() === b.dataset.sugerir && f.sugerido).forEach((f) => entradas.nuevo.set(f.sku, String(f.sugerido)));
+    vista.abiertos.add(b.dataset.sugerir); tabla();
+  }));
+  barra();
+}
+
+const cargadas = (mapa) => [...mapa.entries()].map(([sku, v]) => ({ sku, cantidad: Math.floor(Number(v)) })).filter((x) => x.cantidad > 0);
+
+function barra() {
+  const b = $('#barra'); if (!b) return;
+  let html = '';
+  if (vista.tab === 'saldo') {
+    const l = cargadas(entradas.llego), n = cargadas(entradas.nuevo), conPend = [...marcadas].filter((s) => mias().some((f) => f.sku === s && f.pend_u + f.pend_b > 0));
+    if (l.length) html += `<button class="btn primary" id="bLlego">Registrar entrega (${l.length})</button>`;
+    if (n.length) html += `<button class="btn primary" id="bNuevo">Armar pedido (${n.length})</button>`;
+    if (conPend.length) html += `<button class="btn" id="bMover">Cambiar de proveedor (${conPend.length})</button><button class="btn" id="bCancelar">Cancelar lo pendiente (${conPend.length})</button>`;
+    if (html) html += '<button class="btn sm" id="bLimpiar">Limpiar</button>';
+  } else if (marcadas.size) {
+    const sel = lineasMarcadas(), conEst = sel.filter((l) => l.estimado > l.recibida);
+    html = `<b>${sel.length} ${sel.length === 1 ? 'línea' : 'líneas'}</b><button class="btn" data-acc="esperar">Sigo esperando</button><button class="btn" data-acc="llego">Ya llegó todo</button>
+      ${conEst.length ? `<button class="btn" id="bEst">Aceptar lo que parece que llegó (${conEst.length})</button>` : ''}<button class="btn danger" data-acc="cancelar">Cancelar lo que falta</button>`;
+  }
+  b.innerHTML = html; b.hidden = !html;
+  const on = (id, fn) => { const x = $(id, b); if (x) x.onclick = fn; };
+  on('#bLlego', registrarEntrega); on('#bNuevo', armarPedido); on('#bMover', cambiarProveedor);
+  on('#bCancelar', () => resolver(mias().filter((f) => marcadas.has(f.sku)).flatMap((f) => f.lineas.map((l) => l.item)), 'cancelar'));
+  on('#bEst', aceptarEstimado);
+  on('#bLimpiar', () => { entradas.llego.clear(); entradas.nuevo.clear(); marcadas.clear(); tabla(); });
+  $$('[data-acc]', b).forEach((x) => (x.onclick = () => resolver(lineasMarcadas().map((l) => l.item), x.dataset.acc)));
+}
+const lineasMarcadas = () => mias().flatMap((f) => f.lineas).filter((l) => marcadas.has(String(l.item)));
+
+function pintarAviso() {
+  const a = $('#aviso'); if (!a) return;
+  if (!ultimaAccion) { a.innerHTML = ''; return; }
+  a.innerHTML = `<div class="aviso ok row wrapRow between"><div>${ultimaAccion.texto}</div>${ultimaAccion.deshacer ? '<button class="btn sm" id="deshacer">Deshacer</button>' : ''}</div>`;
+  const d = $('#deshacer');
+  if (d) d.onclick = async () => {
+    d.disabled = true;
+    const { error } = await ultimaAccion.deshacer();
+    if (error) { alert('No se pudo deshacer: ' + error.message); d.disabled = false; return; }
+    ultimaAccion = { texto: 'Listo, se deshizo.' }; await refrescar();
+  };
+}
+
+async function refrescar() {
+  try { await cargar(); } catch (e) { alert('Se guardó, pero no pude actualizar la pantalla: ' + e.message); }
+  detalle();
+}
+
+// ───────────────────────── Diálogo ─────────────────────────
+function dialogo(titulo, cuerpo, boton, alAceptar) {
+  const d = $('#dlg');
+  d.innerHTML = `<h2>${esc(titulo)}</h2><div class="cuerpo">${cuerpo}<p class="err" id="dErr"></p></div><div class="pie-d"><button class="btn" id="dNo">Volver</button><button class="btn primary" id="dSi">${esc(boton)}</button></div>`;
+  $('#dNo').onclick = () => d.close();
+  $('#dSi').onclick = async () => {
+    $('#dSi').disabled = true; $('#dErr').textContent = '';
+    try { await alAceptar(); d.close(); } catch (e) { $('#dErr').textContent = e.message; $('#dSi').disabled = false; }
+  };
+  d.showModal();
+  return d;
+}
+const correr = async (fn, args) => { const { data, error } = await sb.rpc(fn, args); if (error) throw new Error(error.message); return data; };
+const nombreDe = (f) => [f.nombre, f.color].filter(Boolean).join(' · ');
+const tablaSimple = (cab, filas) => `<div class="scroll"><table><thead><tr>${cab.map((c, i) => `<th scope="col" class="${i ? 'r' : ''}">${c}</th>`).join('')}</tr></thead><tbody>${filas.map((f) => `<tr>${f.map((c, i) => `<td class="${i ? 'n' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+
+// ───────────────────────── Acciones ─────────────────────────
+function registrarEntrega() {
+  const pedidos = cargadas(entradas.llego).map((x) => ({ ...x, f: mias().find((f) => f.sku === x.sku) })).filter((x) => x.f);
+  const enUnidades = pedidos.filter((x) => x.f.pend_u > 0), enBultos = pedidos.filter((x) => !x.f.pend_u && x.f.pend_b > 0);
+  const filas = pedidos.map((x) => {
+    const p = x.f.pend_u || x.f.pend_b, u = x.f.pend_u ? 'u.' : 'bultos';
+    return [esc(nombreDe(x.f)), `${num(p)} ${u}`, `${num(x.cantidad)} ${u}`, x.cantidad > p ? `<span class="warn-t">${num(x.cantidad - p)} de más</span>` : num(p - x.cantidad)];
+  });
+  const clave = crypto.randomUUID();
+  dialogo(`Registrar entrega de ${prov}`, tablaSimple(['Producto', 'Debía', 'Llegó', 'Queda'], filas), 'Registrar', async () => {
+    let recepcion = null;
+    if (enUnidades.length) recepcion = await correr('rec_confirmar', { p_id: clave, p_proveedor: prov, p_items: enUnidades.map(({ sku, cantidad }) => ({ sku, cantidad })) });
+    for (const x of enBultos) {   // bultos: se cargan línea por línea, de la más vieja a la más nueva
+      let resto = x.cantidad;
+      for (const l of x.f.lineas.filter((l) => l.unidad === 'bultos')) {
+        const toma = Math.min(resto, Math.max(0, l.pedida - l.recibida)); if (!toma) continue;
+        await correr('oc_marcar_recibido', { p_item_id: l.item, p_cantidad: l.recibida + toma }); resto -= toma;
+        entradas.llego.delete(x.sku);
+      }
+    }
+    entradas.llego.clear();
+    ultimaAccion = { texto: `Entrega registrada: ${pedidos.length} ${pedidos.length === 1 ? 'producto' : 'productos'}.${enBultos.length ? ' Los bultos se corrigen desde la OC.' : ''}`,
+      deshacer: recepcion ? () => sb.rpc('rec_anular', { p_id: recepcion.id }) : null };
+    await refrescar();
+  });
+}
+
+const selectorProveedor = (actual) => `<label for="dProv">Proveedor</label><select id="dProv">${proveedores.map((p) => `<option ${p === actual ? 'selected' : ''}>${esc(p)}</option>`).join('')}<option value="__otro">Otro (escribir)…</option></select><input id="dOtro" placeholder="Nombre del proveedor" hidden style="margin-top:8px">`;
+function alElegirProveedor(pintar) {
+  const sel = $('#dProv'), otro = $('#dOtro');
+  const elegido = () => (sel.value === '__otro' ? otro.value.trim() : sel.value);
+  sel.onchange = () => { otro.hidden = sel.value !== '__otro'; pintar(elegido()); };
+  otro.oninput = () => pintar(elegido());
+  pintar(elegido());
+  return elegido;
+}
+const pendienteEn = (p, sku) => datos.find((d) => d.proveedor === p && d.sku === sku);
+const textoPend = (r) => (r && r.pend_u + r.pend_b ? [r.pend_u ? `${num(r.pend_u)} u.` : '', r.pend_b ? `${num(r.pend_b)} bultos` : ''].filter(Boolean).join(' y ') : '—');
+
+function armarPedido() {
+  const items = cargadas(entradas.nuevo).map((x) => ({ ...x, f: mias().find((f) => f.sku === x.sku) })).filter((x) => x.f);
+  const clave = crypto.randomUUID();
+  let elegido;
+  dialogo('Armar pedido', `${selectorProveedor(prov)}
+    <label for="dUnidad">Las cantidades están en</label><select id="dUnidad"><option value="unidades">Unidades</option><option value="bultos">Bultos</option></select>
+    <label for="dTitulo">Título a mano (opcional)</label><input id="dTitulo" maxlength="80" placeholder="Ej.: Sábanas 1200 hilos">
+    <p class="muted small">La cantidad es el total que querés recibir: reemplaza lo que ese proveedor tenga pendiente del mismo producto.</p><div id="dPrev"></div>`, 'Crear pedido', async () => {
+    const p = elegido(); if (!p) throw new Error('Elegí el proveedor');
+    const oc = await correr('prov_crear_pedido', { p_clave: clave, p_proveedor: p, p_items: items.map(({ sku, cantidad }) => ({ sku, cantidad })), p_unidad: $('#dUnidad').value, p_titulo: $('#dTitulo').value });
+    entradas.nuevo.clear();
+    ultimaAccion = { texto: `Se creó la <a href="ordenes.html?id=${oc}">OC ${oc}</a> para ${esc(p)}. Si fue un error, cancelala desde Pedidos en el tablero: vuelve lo anterior.` };
+    await refrescar();
+  });
+  elegido = alElegirProveedor((p) => {
+    const unidad = $('#dUnidad').value === 'bultos' ? 'bultos' : 'u.';
+    $('#dPrev').innerHTML = tablaSimple(['Producto', `Pendiente con ${esc(p || '…')} (se reemplaza)`, 'Queda pendiente', 'Con otros (se mantiene)'], items.map((x) => {
+      const otros = datos.filter((d) => d.sku === x.sku && d.proveedor !== p && d.pend_u + d.pend_b > 0).map((d) => `${esc(d.proveedor)} ${textoPend(d)}`).join('<br>');
+      return [esc(nombreDe(x.f)), textoPend(pendienteEn(p, x.sku)), `<b>${num(x.cantidad)} ${unidad}</b>`, otros || '—'];
+    }));
+  });
+  const u = $('#dUnidad'); u.onchange = () => $('#dProv').onchange();
+}
+
+function cambiarProveedor() {
+  const filas = mias().filter((f) => marcadas.has(f.sku) && f.pend_u + f.pend_b > 0);
+  const porOC = new Map();
+  for (const f of filas) for (const l of f.lineas) { if (!porOC.has(l.oc)) porOC.set(l.oc, { fecha: l.fecha, skus: new Set() }); porOC.get(l.oc).skus.add(f.sku); }
+  let elegido;
+  dialogo('Cambiar de proveedor', `<p>Lo pendiente de estos productos deja de estar a nombre de <b>${esc(prov)}</b> y pasa al que elijas.</p>${selectorProveedor(proveedores.find((p) => p !== prov))}<div id="dPrev"></div>`, 'Pasar', async () => {
+    const p = elegido(); if (!p || p === prov) throw new Error('Elegí un proveedor distinto');
+    const nuevas = [];
+    for (const [oc, x] of [...porOC.entries()].sort((a, b) => a[1].fecha.localeCompare(b[1].fecha))) {
+      nuevas.push(await correr('prov_cambiar_proveedor', { p_pedido_id: oc, p_proveedor: p, p_skus: [...x.skus] }));
+    }
+    marcadas.clear();
+    ultimaAccion = { texto: `${filas.length} ${filas.length === 1 ? 'producto pasó' : 'productos pasaron'} a <a href="pendientes.html?p=${encodeURIComponent(p)}">${esc(p)}</a> (${[...new Set(nuevas)].map((o) => `<a href="ordenes.html?id=${o}">OC ${o}</a>`).join(', ')}).` };
+    await refrescar();
+  });
+  elegido = alElegirProveedor((p) => {
+    $('#dPrev').innerHTML = tablaSimple(['Producto', 'Se pasa', `Ya pendiente con ${esc(p || '…')} (se reemplaza)`], filas.map((f) => [esc(nombreDe(f)), textoPend(f), textoPend(pendienteEn(p, f.sku))]));
+  });
+}
+
+function resolver(ids, accion) {
+  if (!ids.length) return;
+  const textos = {
+    esperar: ['Sigo esperando', `Estas ${ids.length} líneas siguen pendientes y no vuelven a aparecer en Atrasados por ${DIAS_REVISADO} días.`],
+    llego: ['Ya llegó todo', `Se marcan ${ids.length} líneas como recibidas completas. Dejan de figurar como pendientes.`],
+    cancelar: ['Cancelar lo que falta', `Lo que falta de ${ids.length} líneas deja de estar pedido. Lo ya recibido no cambia.`],
+  };
+  dialogo(textos[accion][0], `<p>${textos[accion][1]}</p>`, textos[accion][0], async () => {
+    const id = await correr('prov_resolver_lineas', { p_item_ids: ids, p_accion: accion });
+    marcadas.clear();
+    ultimaAccion = { texto: `${textos[accion][0]}: ${ids.length} líneas.`, deshacer: () => sb.rpc('prov_deshacer', { p_accion_id: id }) };
+    await refrescar();
+  });
+}
+
+function aceptarEstimado() {
+  const ls = lineasMarcadas().filter((l) => l.estimado > l.recibida);
+  const total = ls.reduce((s, l) => s + Math.min(l.estimado, l.pedida) - l.recibida, 0);
+  dialogo('Aceptar lo que parece que llegó', `<p>Se cargan ${num(total)} unidades recibidas en ${ls.length} líneas, según los cambios de stock. Revisalo: es una estimación. Se corrige desde cada OC.</p>`, 'Cargar', async () => {
+    for (const l of ls) await correr('oc_marcar_recibido', { p_item_id: l.item, p_cantidad: Math.min(l.estimado, l.pedida) });
+    marcadas.clear(); ultimaAccion = { texto: `Se cargaron ${num(total)} unidades recibidas.` };
+    await refrescar();
+  });
+}
+
+function descargar() {
+  const celda = (v) => { let t = String(v ?? ''); if (/^[=+\-@]/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; };
+  const filas = [['Categoría', 'Grupo', 'Medida', 'Color', 'SKU', 'Pendiente (u.)', 'Pendiente (bultos)', 'Pedido desde']];
+  for (const f of filtradas().filter((f) => f.pend_u + f.pend_b > 0)) filas.push([f.categoria, f.grupo, f.medida, f.colorLimpio, f.sku, f.pend_u, f.pend_b, fecha(f.desde)]);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + filas.map((f) => f.map(celda).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  a.download = `Pendiente ${prov} ${new Date().toLocaleDateString('en-CA')}.csv`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ───────────────────────── Inicio ─────────────────────────
+$('#app').innerHTML = '<p class="muted"><span class="spin"></span> Cargando pendientes…</p>';
+try {
+  await cargar();
+  prov ? detalle() : lista();
+} catch (e) {
+  $('#app').innerHTML = `<p class="err">No pude cargar los pendientes: ${esc(e.message)}</p>`;
+}
+</script>
+</body>
+</html>

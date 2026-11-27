@@ -189,7 +189,8 @@ async function getProveedores() {
 
 async function getPedidos() {
   const pedidos = await selectAll("repo_pedidos", (q) => q.order("creado_at", { ascending: false }));
-  const items = await selectAll("repo_pedido_items", (q) => q);
+  // Orden fijo: con más de 1000 líneas, paginar sin orden repite unas y pierde otras.
+  const items = await selectAll("repo_pedido_items", (q) => q.order("id", { ascending: true }));
   // repo_pedido_items no guarda el nombre del producto (no hace falta para
   // la reconciliación) — se suma acá solo para poder re-generar el PDF del
   // pedido desde el historial sin tener que cargar todo el catálogo aparte.
@@ -368,6 +369,20 @@ async function postCancelarPedido(id: string, req: Request) {
   return json({ ok: true });
 }
 
+// Pasa a otro proveedor lo pendiente de una OC (toda, o solo algunos SKU). La lógica vive en la base
+// (prov_cambiar_proveedor): misma OC si nada llegó y se pasa entera; si no, OC nueva con lo pendiente.
+async function postCambiarProveedor(id: string, req: Request) {
+  const { proveedor, skus } = await req.json() as { proveedor?: string; skus?: string[] | null };
+  const destino = String(proveedor ?? "").trim();
+  if (!destino || destino.length > 80) return json({ error: "Falta el proveedor nuevo" }, 400);
+  if (skus != null && (!Array.isArray(skus) || !skus.length)) return json({ error: "skus tiene que ser una lista" }, 400);
+  const { data, error } = await supabase.rpc("prov_cambiar_proveedor", {
+    p_pedido_id: Number(id), p_proveedor: destino, p_skus: skus ?? null,
+  });
+  if (error) return json({ error: error.message }, 400);
+  return json({ ok: true, pedido_id: data });
+}
+
 async function patchPedidoItems(id: string, req: Request) {
   const { items, unidad_medida } = await req.json() as {
     items: { id: number; cantidad_pedida: number; destino?: string }[];
@@ -408,9 +423,8 @@ async function patchPedidoItems(id: string, req: Request) {
   return json({ ok: true });
 }
 
-// Cierre manual de líneas ("✓ Recibido" en Pedidos). Es opcional: la detección
-// automática (reposicion/recepciones.py) es la vía principal, esto sirve para
-// cerrar a mano una línea que el sistema todavía no detectó.
+// Cierre manual de líneas ("✓ Recibido" en Pedidos). Las entregas las carga el
+// usuario: la detección automática (reposicion/recepciones.py) solo sugiere.
 async function postRecibirItems(id: string, req: Request) {
   const { item_ids } = await req.json() as { item_ids: number[] };
   if (!Array.isArray(item_ids) || !item_ids.length) return json({ error: "Falta item_ids" }, 400);
@@ -599,6 +613,9 @@ Deno.serve(async (req) => {
     }
     if (req.method === "POST" && parts[0] === "pedidos" && parts[2] === "recibir") {
       return await postRecibirItems(decodeURIComponent(parts[1]), req);
+    }
+    if (req.method === "POST" && parts[0] === "pedidos" && parts[2] === "proveedor") {
+      return await postCambiarProveedor(decodeURIComponent(parts[1]), req);
     }
     if (req.method === "PATCH" && parts[0] === "pedidos" && parts[2] === "items") {
       return await patchPedidoItems(decodeURIComponent(parts[1]), req);

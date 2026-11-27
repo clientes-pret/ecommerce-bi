@@ -165,7 +165,7 @@ export function nav(perfil, activa) {
   el.innerHTML = '<div class="marca"><img src="../assets/logo-white.png" alt="Pret a Home" onerror="this.remove()"><div class="titulo">Panel de control</div></div>' +
     '<div class="links">' + it('admin.html', 'Inicio', 'inicio') +
     '<div class="grupo">Ventas</div>' + it('ventas.html', 'Scorecard', 'scorecard', 'sub') + it('ventas-dashboard.html', 'Dashboard', 'dashboard', 'sub') +
-    '<div class="grupo">Proveedores</div>' + it('proveedores.html', 'Cuenta corriente', 'prov', 'sub') + it('ordenes.html', 'Órdenes de compra', 'ordenes', 'sub') + it('agenda.html', 'Agenda de pagos', 'agenda', 'sub') +
+    '<div class="grupo">Proveedores</div>' + it('pendientes.html', 'Pendientes', 'pendientes', 'sub') + it('proveedores.html', 'Cuenta corriente', 'prov', 'sub') + it('ordenes.html', 'Órdenes de compra', 'ordenes', 'sub') + it('agenda.html', 'Agenda de pagos', 'agenda', 'sub') +
     '<div class="grupo">Gestión</div>' + it('costos.html', 'Costos', 'costos') + it('equipo.html', 'Equipo', 'equipo') + it('cashflow.html', 'Cashflow', 'cashflow') + it('pyl.html', 'P&amp;L', 'pyl') +
     '<div class="grupo">Otras plataformas</div>' + it('../operaciones/empaquetado.html', 'Operaciones Pret a Home ↗', 'operaciones') + it('../marketing/dashboard.html', 'Marketing ↗', 'marketing') +
     `<span class="sp"></span><a href="nuevo.html" class="reg ${activa === 'nuevo' ? 'on' : ''}">＋ Registrar</a></div>` +

@@ -20,7 +20,11 @@
   .badge.enviado { background: var(--enviado); }
   .badge.recibido_parcial { background: var(--parcial); }
   .badge.recibido_completo { background: var(--ok); }
-  .badge.cancelado { background: #444; }
+  .badge.cancelado, .badge.reemplazado, .badge.pasado, .badge.cerrado { background: #444; }
+  .pase { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
+  .pase select { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+  .pase button { background: #0f1115; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  tr.inactiva td { color: var(--muted); }
   .proveedor { font-weight: 600; flex: 1; }
   .muted { color: var(--muted); font-size: 12px; }
   .detalle { display: none; padding: 0 16px 14px; }
@@ -78,12 +82,34 @@ function agruparItemsPorSku(items) {
   );
 }
 
+// Una línea deja de estar pedida sin haber llegado si la reemplazó un pedido más nuevo, se pasó a otro proveedor o
+// se cerró con faltante.
+const inactiva = (i) => !!(i.reemplazado_por || i.movido_a);
+function comoQuedo(i) {
+  if (i.movido_a) return i.movido_a === i.pedido_id ? "" : `Pasada a OC ${i.movido_a} (otro proveedor)`;
+  if (i.reemplazado_por) return `Reemplazada por OC ${i.reemplazado_por}`;
+  if (i.cerrado_con_faltante) return "Cerrada con faltante";
+  return "";
+}
+// Estado que se muestra arriba cuando la OC ya no tiene nada activo.
+function estadoVisible(p) {
+  const items = p.items || [];
+  if (p.estado === "cancelado" || !items.length || items.some((i) => !i.recibido_completo)) return [p.estado, ESTADO_LABEL[p.estado] || p.estado];
+  if (items.every((i) => i.reemplazado_por)) return ["reemplazado", "Reemplazado"];
+  if (items.every((i) => i.movido_a)) return ["pasado", "Pasado a otro proveedor"];
+  if (items.every((i) => (inactiva(i) || i.cerrado_con_faltante) && !i.cantidad_recibida)) return ["cerrado", "Cerrado sin entrega"];
+  return [p.estado, ESTADO_LABEL[p.estado] || p.estado];
+}
+let PROVEEDORES = [];
+
 // El estado de recepción es por ítem (depósito y Full llegan por separado) —
 // se resume a nivel de fila igual que el badge de Estado del tablero: peor
 // caso entre los ítems que realmente tiene esa fila.
 function estadoAgregado(g) {
   const items = [g.deposito, g.full].filter(Boolean);
   if (!items.length) return "—";
+  const notas = [...new Set(items.map(comoQuedo).filter(Boolean))];
+  if (notas.length && items.every((i) => i.recibido_completo)) return notas.join(" · ");
   if (items.every((i) => i.recibido_completo)) return "✓ Completo";
   if (items.some((i) => i.recibido_completo || i.cantidad_recibida > 0)) return "Parcial";
   return "Pendiente";
@@ -92,45 +118,56 @@ function estadoAgregado(g) {
 function renderPedido(p) {
   const el = document.createElement("div");
   el.className = "pedido";
-  const pct = p.total_items ? Math.round((p.items_recibidos / p.total_items) * 100) : 0;
+  const activas = (p.items || []).filter((i) => !inactiva(i));
+  const recibidas = activas.filter((i) => i.recibido_completo && !i.cerrado_con_faltante).length;
+  const pendientes = (p.items || []).filter((i) => !i.recibido_completo);
+  const pct = activas.length ? Math.round((recibidas / activas.length) * 100) : 0;
   const editable = p.estado === "enviado";
   const cancelable = p.estado === "enviado" || p.estado === "recibido_parcial";
+  const [claseEstado, textoEstado] = estadoVisible(p);
+  const movible = p.estado !== "cancelado" && pendientes.length > 0;
+  const editableLinea = (i) => editable && i && !i.recibido_completo;
   const grupos = agruparItemsPorSku(p.items || []);
   el.innerHTML = `
     <div class="pedido-header">
       <span class="proveedor">📦 <span class="titulo-oc"></span></span>
       <span class="muted">${new Date(p.creado_at).toLocaleDateString("es-AR")} · ${p.creado_por}${p.unidad_medida === "bultos" ? " · en bultos" : ""}</span>
-      <span class="muted">${p.items_recibidos}/${p.total_items} líneas recibidas (${pct}%)</span>
-      <span class="badge ${p.estado}">${ESTADO_LABEL[p.estado] || p.estado}</span>
+      <span class="muted">${recibidas}/${activas.length} líneas recibidas (${pct}%)</span>
+      <span class="badge ${claseEstado}">${textoEstado}</span>
     </div>
     <div class="detalle">
       <table>
-        <thead><tr><th>SKU</th><th>Producto</th><th>Depósito</th><th>Full</th><th>Total</th><th>Recibido</th><th>Estado</th><th></th></tr></thead>
+        <thead><tr><th></th><th>SKU</th><th>Producto</th><th>Depósito</th><th>Full</th><th>Total</th><th>Recibido</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${grupos.map((g) => {
             const totalPedido = (g.deposito?.cantidad_pedida || 0) + (g.full?.cantidad_pedida || 0);
             const totalRecibido = (g.deposito?.cantidad_recibida || 0) + (g.full?.cantidad_recibida || 0);
             return `
-            <tr data-sku="${g.sku}">
+            <tr data-sku="${g.sku}" class="${[g.deposito, g.full].filter(Boolean).every(inactiva) ? "inactiva" : ""}">
+              <td>${movible && [g.deposito, g.full].some((i) => i && !i.recibido_completo) ? `<input type="checkbox" class="chk-pase" value="${g.sku.replace(/"/g, "&quot;")}" aria-label="Elegir ${g.sku.replace(/"/g, "&quot;")} para cambiar de proveedor">` : ""}</td>
               <td>${g.sku}</td>
               <td>${g.nombre || "—"}</td>
-              <td>${editable && g.deposito
+              <td>${editableLinea(g.deposito)
                 ? `<input type="number" min="1" class="qty-edit" data-item-id="${g.deposito.id}" data-destino="deposito" value="${g.deposito.cantidad_pedida}">`
                 : (g.deposito ? g.deposito.cantidad_pedida : "—")}</td>
-              <td>${editable && g.full
+              <td>${editableLinea(g.full)
                 ? `<input type="number" min="1" class="qty-edit" data-item-id="${g.full.id}" data-destino="${g.full.destino}" value="${g.full.cantidad_pedida}">`
                 : (g.full ? g.full.cantidad_pedida : "—")}</td>
               <td class="total-cell">${totalPedido}</td>
               <td>${totalRecibido}</td>
               <td>${estadoAgregado(g)}</td>
-              <td>${p.estado !== "cancelado" && estadoAgregado(g) !== "✓ Completo"
-                ? `<button class="secondary btn-recibido" data-item-ids="${[g.deposito, g.full].filter((i) => i && !i.recibido_completo).map((i) => i.id).join(",")}" title="Cerrar esta línea a mano como recibida (opcional — el sistema también las detecta solo)">✓ Recibido</button>`
+              <td>${p.estado !== "cancelado" && [g.deposito, g.full].some((i) => i && !i.recibido_completo)
+                ? `<button class="secondary btn-recibido" data-item-ids="${[g.deposito, g.full].filter((i) => i && !i.recibido_completo).map((i) => i.id).join(",")}" title="Marcar esta línea como recibida completa">✓ Recibido</button>`
                 : ""}</td>
             </tr>`;
           }).join("")}
         </tbody>
       </table>
       ${p.notas ? `<p class="muted">Notas: ${p.notas}</p>` : ""}
+      ${p.proveedor_anterior ? `<p class="muted">Antes era de ${p.proveedor_anterior.replace(/&/g, "&amp;").replace(/</g, "&lt;")}.</p>` : ""}
+      ${movible ? `<div class="pase"><span>Cambiar de proveedor (los productos tildados; sin tildar, todo lo pendiente):</span>
+        <select class="sel-pase" aria-label="Proveedor nuevo"><option value="">Elegir proveedor…</option>${PROVEEDORES.filter((x) => x !== p.proveedor).map((x) => `<option>${x.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</option>`).join("")}<option value="__otro">Otro (escribir)…</option></select>
+        <button class="btn-pase">Pasar</button></div>` : ""}
       <div class="pedido-acciones">
         <label class="unidad-medida">Título a mano:
           <input type="text" class="titulo-extra" maxlength="120" value="${(p.titulo_extra || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;")}" placeholder="ej. Sábanas 1200 hilos" style="width:230px;background:#0f1115;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px"></label>
@@ -167,7 +204,30 @@ function renderPedido(p) {
 
   el.querySelector(".btn-descargar-pdf").addEventListener("click", (e) => {
     e.stopPropagation();
-    generarPDF(p.proveedor, p.items || [], el.querySelector(".sel-unidad").value, p.id, el.querySelector(".titulo-extra").value);
+    // El PDF no incluye lo reemplazado ni lo pasado a otro proveedor: eso ya no se le pide a este.
+    if (!activas.length) return alert("Esta OC ya no tiene productos vigentes (se reemplazaron o pasaron a otro proveedor).");
+    generarPDF(p.proveedor, activas, el.querySelector(".sel-unidad").value, p.id, el.querySelector(".titulo-extra").value);
+  });
+  el.querySelector(".btn-pase")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget, sel = el.querySelector(".sel-pase");
+    const destino = (sel.value === "__otro" ? prompt("Nombre del proveedor nuevo:") || "" : sel.value).trim();
+    if (!destino) return alert("Elegí el proveedor nuevo.");
+    const tildados = Array.from(el.querySelectorAll(".chk-pase:checked")).map((c) => c.value);
+    const skus = new Set(tildados.length ? tildados : pendientes.map((i) => i.sku));
+    // Lo que el proveedor nuevo ya tenga pendiente de esos productos se reemplaza.
+    const pisa = new Set(TODOS_PEDIDOS.filter((o) => o.proveedor === destino && ["enviado", "recibido_parcial"].includes(o.estado))
+      .flatMap((o) => (o.items || []).filter((i) => !i.recibido_completo && skus.has(i.sku)).map((i) => i.sku)));
+    if (!confirm(`¿Pasar ${skus.size} producto${skus.size === 1 ? "" : "s"} de ${p.proveedor} a ${destino}?\n\nDejan de estar pedidos a ${p.proveedor}.${pisa.size ? `\n\nOjo: ${destino} ya tiene pendiente ${pisa.size} de esos productos y se REEMPLAZA (no se suma).` : ""}`)) return;
+    btn.disabled = true;
+    try {
+      const r = await apiFetch(`/pedidos/${p.id}/proveedor`, { method: "POST", body: JSON.stringify({ proveedor: destino, skus: tildados.length ? tildados : null }) });
+      alert(r.pedido_id === p.id ? `La OC ${p.id} ahora es de ${destino}.` : `Se creó la OC ${r.pedido_id} para ${destino} con lo pendiente.`);
+      cargar();
+    } catch (err) {
+      alert(`No se pudo cambiar el proveedor: ${err.message}`);
+      btn.disabled = false;
+    }
   });
 
   el.querySelectorAll(".btn-recibido").forEach((btn) => {
@@ -250,7 +310,9 @@ function renderLista() {
 
 async function cargar() {
   try {
-    TODOS_PEDIDOS = await apiFetch("/pedidos");
+    const [pedidos, provs] = await Promise.all([apiFetch("/pedidos"), apiFetch("/proveedores").catch(() => [])]);
+    TODOS_PEDIDOS = pedidos;
+    PROVEEDORES = [...new Set([...provs, ...pedidos.map((p) => p.proveedor)])].filter(Boolean).sort((a, b) => a.localeCompare(b, "es"));
     document.getElementById("status").style.display = "none";
     if (!TODOS_PEDIDOS.length) {
       document.getElementById("lista").innerHTML = '<p class="muted">Todavía no hay pedidos registrados.</p>';
