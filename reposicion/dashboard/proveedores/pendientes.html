@@ -32,13 +32,14 @@
     dialog .pie-d { display: flex; gap: 10px; justify-content: flex-end; padding: 12px 20px 18px; border-top: 1px solid var(--line); }
     dialog label { display: block; margin: 10px 0 4px; font-weight: 600; }
     .nota-fila { font-size: 12px; color: var(--muted); }
+    #dlg input[readonly] { width: 100%; font-size: 13px; }
   </style>
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <dialog id="dlg"></dialog>
 <script type="module">
-import { sb, $, $$, esc, guard, nav, qs, fecha } from './app.js';
+import { sb, $, $$, esc, guard, nav, qs, fecha, fechaHora, hoy } from './app.js';
 import { segmentar } from './grupos.js';
 const perfil = await guard(['admin', 'dueno']);
 nav(perfil, 'pendientes');
@@ -67,6 +68,17 @@ async function cargar() {
 }
 
 const suma = (filas, k) => filas.reduce((s, f) => s + (f[k] || 0), 0);
+// Contestó sobre el pedido vigente y todavía hay algo pendiente.
+const contesto = (f) => !!f.respuesta && !f.respuesta.vieja && f.pend_u + f.pend_b > 0;
+const incumplido = (f) => contesto(f) && !f.respuesta.no_entrega && !!f.respuesta.fecha && f.respuesta.fecha < hoy();
+function dice(f) {
+  const r = f.respuesta;
+  if (!r || f.pend_u + f.pend_b === 0) return '';
+  const que = r.no_entrega ? '<span class="chip warn">No lo va a hacer</span>'
+    : `<b>${[r.cantidad ? `${num(r.cantidad)} ${r.unidad === 'bultos' ? 'bultos' : 'u.'}` : '', r.fecha ? `el ${fecha(r.fecha)}` : ''].filter(Boolean).join(' ')}</b>`;
+  return `<div class="${r.vieja ? 'muted' : ''}">${que}</div>${incumplido(f) ? '<div class="nota-fila warn-t">Prometido y atrasado</div>' : ''}
+    <div class="nota-fila">${r.vieja ? 'Antes de actualizar el pedido · ' : ''}contestó el ${fecha(r.creado_at)}</div>`;
+}
 
 // ───────────────────────── Lista de proveedores ─────────────────────────
 function lista() {
@@ -75,15 +87,17 @@ function lista() {
   const filas = [...porProv.entries()].map(([p, fs]) => ({
     p, u: suma(fs, 'pend_u'), b: suma(fs, 'pend_b'), prods: fs.filter((f) => f.pend_u + f.pend_b > 0).length,
     desde: fs.map((f) => f.desde).filter(Boolean).sort()[0], atr: fs.reduce((s, f) => s + f.atrasadas.length, 0), falta: suma(fs, 'falta'),
+    contesto: fs.filter(contesto).length, incumplido: fs.filter(incumplido).length,
   })).sort((a, b) => (b.u + b.b) - (a.u + a.b) || b.falta - a.falta);
   $('#app').innerHTML = `<div class="cabecera"><div><h1>Pendientes por proveedor</h1><p>Lo que cada uno te debe hoy. Un pedido nuevo reemplaza al anterior del mismo producto y proveedor.</p></div></div>
   <section class="card tabla" style="margin-top:16px"><div class="cab"><div><h2>Proveedores</h2></div><input id="q" style="max-width:260px" placeholder="Buscar proveedor…" aria-label="Buscar proveedor"></div>
-  <div class="scroll"><table style="min-width:760px"><thead><tr><th scope="col">Proveedor</th><th scope="col" class="r">Te debe (u.)</th><th scope="col" class="r">Bultos</th><th scope="col" class="r">Productos</th><th scope="col">Pedido más viejo</th><th scope="col" class="r">Atrasados</th><th scope="col" class="r">Falta pedir (u.)</th></tr></thead><tbody id="tb"></tbody></table></div></section>`;
+  <div class="scroll"><table style="min-width:860px"><thead><tr><th scope="col">Proveedor</th><th scope="col" class="r">Te debe (u.)</th><th scope="col" class="r">Bultos</th><th scope="col" class="r">Productos</th><th scope="col">Pedido más viejo</th><th scope="col" class="r">Atrasados</th><th scope="col" class="r">Falta pedir (u.)</th><th scope="col" class="r">Contestó</th></tr></thead><tbody id="tb"></tbody></table></div></section>`;
   const pintar = () => {
     const q = $('#q').value.trim().toLowerCase();
     $('#tb').innerHTML = filas.filter((f) => !q || f.p.toLowerCase().includes(q)).map((f) => `<tr class="click" data-p="${esc(f.p)}"><th scope="row"><a class="prov" href="pendientes.html?p=${encodeURIComponent(f.p)}">${esc(f.p)}</a></th>
       <td class="n">${num(f.u)}</td><td class="n">${f.b ? num(f.b) : ''}</td><td class="n">${f.prods || ''}</td><td>${f.desde ? fecha(f.desde) : ''}</td>
-      <td class="n">${f.atr ? `<span class="chip warn">${num(f.atr)}</span>` : ''}</td><td class="n">${f.falta ? num(f.falta) : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No hay proveedores con ese nombre.</td></tr>';
+      <td class="n">${f.atr ? `<span class="chip warn">${num(f.atr)}</span>` : ''}</td><td class="n">${f.falta ? num(f.falta) : ''}</td>
+      <td class="n">${f.contesto ? `${num(f.contesto)} prod.` : ''}${f.incumplido ? `<div class="nota-fila warn-t">${num(f.incumplido)} atrasados</div>` : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No hay proveedores con ese nombre.</td></tr>';
     $$('#tb tr[data-p]').forEach((tr) => (tr.onclick = () => (location.href = 'pendientes.html?p=' + encodeURIComponent(tr.dataset.p))));
   };
   $('#q').oninput = pintar; pintar();
@@ -101,7 +115,7 @@ function filtradas() {
   const todas = segmentar(mias()).flatMap((c) => c.filas);
   const q = vista.q.trim().toLowerCase();
   return todas.filter((f) => (vista.tab === 'atrasados' ? f.atrasadas.length
-      : vista.ver === 'todo' || (vista.ver === 'pendiente' ? f.pend_u + f.pend_b > 0 : f.falta > 0))
+      : vista.ver === 'todo' || (vista.ver === 'pendiente' ? f.pend_u + f.pend_b > 0 : vista.ver === 'contesto' ? contesto(f) : f.falta > 0))
     && (!vista.cat || f.categoria === vista.cat) && (!vista.grupo || f.grupo === vista.grupo) && (!vista.medida || f.medida === vista.medida)
     && (!q || `${f.sku} ${f.nombre} ${f.colorLimpio} ${f.medida}`.toLowerCase().includes(q)));
 }
@@ -115,7 +129,7 @@ function detalle() {
   const desde = todas.map((f) => f.desde).filter(Boolean).sort()[0];
   $('#app').innerHTML = `<p class="small"><a href="pendientes.html">← Pendientes por proveedor</a></p>
   <div class="cabecera"><div><h1>${esc(prov)}</h1><p>${desde ? `El pedido pendiente más viejo es del ${fecha(desde)}` : 'No tiene nada pendiente'}</p></div>
-    <button class="btn" id="csv">Descargar Excel (CSV)</button></div>
+    <div class="row wrapRow"><button class="btn primary" id="link">Link para el proveedor</button><button class="btn" id="csv">Descargar Excel (CSV)</button></div></div>
   <div class="centro-comando"><div class="cc-card destacada"><div class="cc-label">Te debe</div><div class="cc-valor">${num(suma(todas, 'pend_u'))} u.</div></div>
     <div class="cc-card"><div class="cc-label">En bultos</div><div class="cc-valor">${num(suma(todas, 'pend_b'))}</div></div>
     <div class="cc-card"><div class="cc-label">Falta pedir (30 días)</div><div class="cc-valor">${num(suma(todas, 'falta'))} u.</div></div>
@@ -124,14 +138,14 @@ function detalle() {
   <section class="card tabla"><div class="cab" style="flex-wrap:wrap;gap:10px">
     <div class="seg" role="group" aria-label="Pantalla">${[['saldo', 'Saldo'], ['atrasados', `Atrasados (${atr})`]].map(([k, t]) => `<button type="button" data-tab="${k}" aria-pressed="${vista.tab === k}">${t}</button>`).join('')}</div>
     <div class="filtros">
-      ${vista.tab === 'saldo' ? `<div class="seg gris" role="group" aria-label="Qué productos ver">${[['pendiente', 'Con pendiente'], ['falta', 'Falta pedir'], ['todo', 'Todo']].map(([k, t]) => `<button type="button" data-ver="${k}" aria-pressed="${vista.ver === k}">${t}</button>`).join('')}</div>` : ''}
+      ${vista.tab === 'saldo' ? `<div class="seg gris" role="group" aria-label="Qué productos ver">${[['pendiente', 'Con pendiente'], ['falta', 'Falta pedir'], ['contesto', `Contestó (${todas.filter(contesto).length})`], ['todo', 'Todo']].map(([k, t]) => `<button type="button" data-ver="${k}" aria-pressed="${vista.ver === k}">${t}</button>`).join('')}</div>` : ''}
       <select id="fCat" aria-label="Categoría">${opciones(unicos('categoria'), vista.cat, 'Todas las categorías')}</select>
       <select id="fGrupo" aria-label="Grupo de producto">${opciones(unicos('grupo', enCat), vista.grupo, 'Todos los grupos')}</select>
       <select id="fMedida" aria-label="Medida">${opciones(unicos('medida', enCat.filter((f) => !vista.grupo || f.grupo === vista.grupo)), vista.medida, 'Todas las medidas')}</select>
       <input id="fQ" placeholder="Color, SKU o producto…" aria-label="Buscar" value="${esc(vista.q)}">
       <button class="btn sm" id="abrir">Abrir todo</button><button class="btn sm" id="cerrar">Cerrar todo</button>
     </div></div>
-    <div class="scroll"><table style="min-width:${vista.tab === 'saldo' ? 900 : 760}px"><thead id="th"></thead><tbody id="tb"></tbody></table></div></section>
+    <div class="scroll"><table style="min-width:${vista.tab === 'saldo' ? 1060 : 760}px"><thead id="th"></thead><tbody id="tb"></tbody></table></div></section>
   <div class="barra-acciones" id="barra" hidden></div>`;
 
   $$('[data-tab]').forEach((b) => (b.onclick = () => { vista.tab = b.dataset.tab; marcadas.clear(); detalle(); }));
@@ -143,6 +157,7 @@ function detalle() {
   $('#abrir').onclick = () => { filtradas().forEach((f) => vista.abiertos.add(f.grupo.toLowerCase())); tabla(); };
   $('#cerrar').onclick = () => { vista.abiertos.clear(); tabla(); };
   $('#csv').onclick = descargar;
+  $('#link').onclick = () => linkProveedor(atr);
   pintarAviso();
   tabla();
 }
@@ -158,6 +173,7 @@ function filaSaldo(f) {
     <td><b>${esc(f.colorLimpio || f.sku)}</b><div class="nota-fila">${esc(f.sku)}</div>${otros ? `<div class="nota-fila warn-t">También pedido a ${otros}</div>` : ''}</td>
     <td class="n">${pend}</td><td class="small">${ocsDe(f.lineas)}</td>
     <td class="n">${f.nec ? num(f.nec) : ''}</td><td class="n ${f.falta ? 'warn-t' : ''}">${f.falta == null ? '<span class="muted" title="Hay bultos pendientes: no se puede comparar con unidades">?</span>' : f.falta ? num(f.falta) : ''}</td>
+    <td class="small">${dice(f)}</td>
     <td class="n">${f.pend_u + f.pend_b ? `<input class="cant" type="number" min="0" inputmode="numeric" data-llego="${esc(f.sku)}" value="${esc(entradas.llego.get(f.sku) || '')}" aria-label="Cuánto llegó de ${esc(f.sku)}">` : ''}</td>
     <td class="n"><input class="cant" type="number" min="0" inputmode="numeric" data-nuevo="${esc(f.sku)}" value="${esc(entradas.nuevo.get(f.sku) || '')}" placeholder="${f.sugerido || ''}" aria-label="Nuevo pedido total de ${esc(f.sku)}"></td></tr>`;
 }
@@ -177,18 +193,18 @@ function filasAtrasadas(f) {
 function tabla() {
   const saldo = vista.tab === 'saldo';
   $('#th').innerHTML = saldo
-    ? '<tr><th scope="col" style="width:40px"></th><th scope="col">Color / SKU</th><th scope="col" class="r">Te debe</th><th scope="col">Pedido</th><th scope="col" class="r">Necesitás</th><th scope="col" class="r">Falta</th><th scope="col" class="r">Llegó</th><th scope="col" class="r">Nuevo pedido (total)</th></tr>'
+    ? '<tr><th scope="col" style="width:40px"></th><th scope="col">Color / SKU</th><th scope="col" class="r">Te debe</th><th scope="col">Pedido</th><th scope="col" class="r">Necesitás</th><th scope="col" class="r">Falta</th><th scope="col">El proveedor dice</th><th scope="col" class="r">Llegó</th><th scope="col" class="r">Nuevo pedido (total)</th></tr>'
     : '<tr><th scope="col" style="width:40px"></th><th scope="col">Color / SKU</th><th scope="col" class="r">Falta recibir</th><th scope="col">Pedido</th><th scope="col" class="r">Stock dep. / Full</th><th scope="col" class="r">Vendido 60 d</th></tr>';
-  const filas = filtradas(), cols = saldo ? 8 : 6;
+  const filas = filtradas(), cols = saldo ? 9 : 6;
   const arbol = segmentar(filas);
   const resumen = (fs) => {
     if (saldo) return `<th class="r" colspan="1">${[suma(fs, 'pend_u') ? num(suma(fs, 'pend_u')) + ' u.' : '', suma(fs, 'pend_b') ? num(suma(fs, 'pend_b')) + ' b.' : ''].filter(Boolean).join(' · ')}</th><th></th><th class="r">${suma(fs, 'nec') ? num(suma(fs, 'nec')) : ''}</th><th class="r">${suma(fs, 'falta') ? num(suma(fs, 'falta')) : ''}</th>`;
     const ls = fs.flatMap((f) => f.atrasadas), u = (b) => ls.filter((l) => (l.unidad === 'bultos') === b).reduce((s, l) => s + Math.max(0, l.pedida - l.recibida), 0);
     return `<th class="r">${[u(false) ? num(u(false)) + ' u.' : '', u(true) ? num(u(true)) + ' b.' : ''].filter(Boolean).join(' · ')}</th><th>${ls.length} líneas</th><th></th><th></th>`;
   };
-  $('#tb').innerHTML = arbol.map((c) => `<tr class="cat"><th colspan="2" scope="colgroup">${esc(c.categoria)}</th>${resumen(c.filas)}${saldo ? '<th></th><th></th>' : ''}</tr>` + c.grupos.map((g) => {
+  $('#tb').innerHTML = arbol.map((c) => `<tr class="cat"><th colspan="2" scope="colgroup">${esc(c.categoria)}</th>${resumen(c.filas)}${saldo ? '<th></th><th></th><th></th>' : ''}</tr>` + c.grupos.map((g) => {
     const k = g.grupo.toLowerCase(), abierto = vista.abiertos.has(k) || !!vista.q.trim() || arbol.length === 1 && c.grupos.length === 1;
-    const cab = `<tr class="grupo"><th><input type="checkbox" class="sel" data-grupo="${esc(k)}" aria-label="Elegir todo ${esc(g.grupo)}"></th><th scope="rowgroup"><button type="button" data-abrir="${esc(k)}" aria-expanded="${abierto}">${abierto ? '▾' : '▸'} ${esc(g.grupo)} <span class="muted">(${g.filas.length})</span></button></th>${resumen(g.filas)}${saldo ? `<th></th><th class="r">${g.filas.some((f) => f.sugerido) ? `<button type="button" class="btn sm" data-sugerir="${esc(k)}">Usar sugerido</button>` : ''}</th>` : ''}</tr>`;
+    const cab = `<tr class="grupo"><th><input type="checkbox" class="sel" data-grupo="${esc(k)}" aria-label="Elegir todo ${esc(g.grupo)}"></th><th scope="rowgroup"><button type="button" data-abrir="${esc(k)}" aria-expanded="${abierto}">${abierto ? '▾' : '▸'} ${esc(g.grupo)} <span class="muted">(${g.filas.length})</span></button></th>${resumen(g.filas)}${saldo ? `<th></th><th></th><th class="r">${g.filas.some((f) => f.sugerido) ? `<button type="button" class="btn sm" data-sugerir="${esc(k)}">Usar sugerido</button>` : ''}</th>` : ''}</tr>`;
     if (!abierto) return cab;
     return cab + g.medidas.map((m) => (m.medida ? `<tr class="medida"><th></th><th colspan="${cols - 1}">${esc(m.medida)}</th></tr>` : '') + m.filas.map(saldo ? filaSaldo : filasAtrasadas).join('')).join('');
   }).join('')).join('') || `<tr><td colspan="${cols}" class="muted">${saldo ? 'No hay productos con ese filtro.' : 'No hay nada atrasado con ese filtro.'}</td></tr>`;
@@ -376,6 +392,31 @@ function aceptarEstimado() {
     marcadas.clear(); ultimaAccion = { texto: `Se cargaron ${num(total)} unidades recibidas.` };
     await refrescar();
   });
+}
+
+async function linkProveedor(atrasadas) {
+  const { data: l, error } = await sb.from('prov_links').select('id,token,creado_at,ultimo_acceso_at').eq('proveedor', prov).is('baja_at', null).maybeSingle();
+  if (error) { alert('No pude leer el link: ' + error.message); return; }
+  const url = l ? `${new URL('../portal/index.html', location.href)}#t=${l.token}` : '';
+  const filas = mias(), u = suma(filas, 'pend_u'), b = suma(filas, 'pend_b');
+  const mensaje = `Hola! Te paso lo que tenemos pendiente con ustedes: ${[u ? `${num(u)} unidades` : '', b ? `${num(b)} bultos` : ''].filter(Boolean).join(' y ') || 'nada por ahora'}. Acá lo ves siempre actualizado y podés confirmar cantidades y fechas de entrega:\n${url}`;
+  const aviso = atrasadas ? `<div class="aviso">Tenés ${num(atrasadas)} líneas de más de ${DIAS_ATRASO} días sin revisar. El proveedor las va a ver como pendientes: conviene revisarlas en Atrasados antes de compartir.</div>` : '';
+  const d = $('#dlg');
+  d.innerHTML = `<h2>Link para ${esc(prov)}</h2><div class="cuerpo">${aviso}
+    <p>Quien tenga el link ve lo pendiente de ${esc(prov)} (producto, cantidad y fecha del pedido) y puede contestar. No ve stock, ventas ni costos, y su respuesta no cambia ningún pedido.</p>
+    ${l ? `<label for="dUrl">Link activo</label><input id="dUrl" readonly value="${esc(url)}">
+      <p class="muted small">${l.ultimo_acceso_at ? `Lo abrieron por última vez el ${fechaHora(l.ultimo_acceso_at)}.` : 'Todavía nadie lo abrió.'} Creado el ${fecha(l.creado_at)}.</p>
+      <div class="row wrapRow"><button class="btn primary" id="dWa">Copiar mensaje de WhatsApp</button><button class="btn" id="dCopiar">Copiar link</button><a class="btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Ver como el proveedor</a><button class="btn danger" id="dBaja">Dar de baja</button></div>
+      <p class="nota-fila">"Ver como el proveedor" cuenta como una apertura. No mandes respuestas de prueba: quedan guardadas.</p>`
+      : '<button class="btn primary" id="dCrear">Crear link</button>'}
+    <p class="err" id="dErr"></p></div><div class="pie-d"><button class="btn" id="dNo">Cerrar</button></div>`;
+  if (!d.open) d.showModal();
+  $('#dNo').onclick = () => d.close();
+  const copiar = (boton, texto) => { const x = $(boton); if (x) x.onclick = async () => { try { await navigator.clipboard.writeText(texto); x.textContent = '✓ Copiado'; } catch { $('#dUrl').select(); $('#dErr').textContent = 'No pude copiarlo: seleccioná el link y copialo a mano.'; } }; };
+  copiar('#dWa', mensaje); copiar('#dCopiar', url);
+  const accion = async (fn, args) => { const { error: e } = await sb.rpc(fn, args); if (e) { $('#dErr').textContent = e.message; return; } await linkProveedor(atrasadas); };
+  if ($('#dCrear')) $('#dCrear').onclick = () => accion('prov_link_crear', { p_proveedor: prov });
+  if ($('#dBaja')) $('#dBaja').onclick = () => { if (confirm(`¿Dar de baja el link de ${prov}? Deja de funcionar para quien lo tenga.`)) accion('prov_link_baja', { p_id: l.id }); };
 }
 
 function descargar() {

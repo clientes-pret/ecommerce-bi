@@ -48,3 +48,8 @@ verify_jwt = true
 # valida esa sesión ella misma (supabase.auth.getUser) y busca a qué revendedor pertenece.
 [functions.rev-publicar]
 verify_jwt = false
+
+# Link público para proveedores: lo abre el proveedor sin sesión; autoriza el código secreto del link, que la función
+# valida contra la base (prov_links).
+[functions.proveedor-portal]
+verify_jwt = false

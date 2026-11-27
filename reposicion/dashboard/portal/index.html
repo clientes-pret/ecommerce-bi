@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- El código del link viaja después del # (no llega a ningún servidor) y la página no lo comparte con nadie. -->
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self' https://fvkbclkofsggbvwcxipa.supabase.co; base-uri 'none'; form-action 'none'">
+  <title>Pedido pendiente · Pret a Home</title>
+  <link rel="icon" href="data:,">
+  <meta name="theme-color" content="#F5F4F0">
+  <style>
+    :root { --bg:#F5F4F0; --card:#fff; --ink:#1B1D21; --muted:#5B5F66; --line:#E3E1DA; --soft:#F0EEE8; --brand:#2449B8; --ok:#1F6F43; --ok-bg:#E3F3E9; --warn:#8A3A06; --warn-bg:#FDF0E6; --bad:#B42318; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; -webkit-text-size-adjust:100%; }
+    main { max-width: 760px; margin: 0 auto; padding: 16px 16px 110px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+    .cab { padding: 16px; }
+    .cab small, .muted { color: var(--muted); font-size: 13px; }
+    h1 { margin: 2px 0 4px; font-size: 24px; }
+    .filtros { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+    input, select, button { font: inherit; color: inherit; min-height: 42px; border:1px solid #C9C6BD; border-radius:10px; background:#fff; padding: 6px 10px; }
+    button { cursor:pointer; font-weight:600; }
+    button.principal { background:var(--brand); border-color:var(--brand); color:#fff; }
+    button:disabled { opacity:.55; cursor:default; }
+    :focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+    .filtros input[type=search] { flex:1 1 180px; }
+    .categoria { display:flex; justify-content:space-between; gap:10px; background:var(--ink); color:#fff; padding:8px 16px; font-weight:600; font-size:13px; }
+    .grupo > button { all: unset; box-sizing: border-box; display:flex; justify-content:space-between; gap:10px; width:100%; cursor:pointer; padding: 12px 16px; background:var(--soft); border-bottom:1px solid var(--line); font-weight:600; }
+    .grupo > button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+    .grupo > button span:last-child { white-space: nowrap; }
+    .todo-grupo { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:10px 16px; border-bottom:1px solid var(--line); font-size:13px; color:var(--muted); }
+    .medida { padding: 10px 16px 0; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+    .fila { padding: 10px 16px 12px; border-bottom:1px solid var(--line); }
+    .arriba { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+    .arriba b { font-size:17px; white-space:nowrap; }
+    .respondido { margin-top:6px; padding:6px 10px; border-radius:8px; background:var(--ok-bg); color:var(--ok); font-size:13px; }
+    .respondido.vieja { background:var(--warn-bg); color:var(--warn); }
+    .campos { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+    .campos label { display:flex; flex-direction:column; gap:2px; font-size:12px; color:var(--muted); }
+    .campos input[type=number] { width: 104px; }
+    .no { display:flex; gap:8px; align-items:center; margin-top:8px; font-size:13px; color:var(--muted); }
+    .no input { width:20px; height:20px; min-height:0; }
+    .barra { position:fixed; left:0; right:0; bottom:0; background:var(--card); border-top:1px solid var(--line); padding:12px 16px calc(12px + env(safe-area-inset-bottom)); box-shadow:0 -4px 16px rgba(0,0,0,.08); }
+    .barra[hidden] { display:none; }
+    .barra div { max-width:760px; margin:0 auto; }
+    .barra button { width:100%; }
+    .barra p { margin:6px 0 0; font-size:12px; color:var(--muted); text-align:center; }
+    .aviso { margin: 0 0 12px; padding: 12px 16px; border-radius:12px; background:var(--ok-bg); color:var(--ok); }
+    .aviso.error { background:#FDECEA; color:var(--bad); }
+    .vacio { padding: 24px 16px; text-align:center; color:var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <div id="aviso" role="status" aria-live="polite"></div>
+  <div id="app" class="card"><p class="vacio">Cargando…</p></div>
+</main>
+<div class="barra" id="barra" hidden><div><button type="button" class="principal" id="enviar"></button><p>Tu respuesta le llega a Pret a Home. El pedido no cambia hasta que lo confirmen.</p></div></div>
+
+<script type="module">
+import { SUPABASE_URL } from '../proveedores/config.js';
+import { segmentar } from '../proveedores/grupos.js';
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (n) => Number(n || 0).toLocaleString('es-AR');
+const ZONA = 'America/Argentina/Buenos_Aires';
+const hoy = () => new Date().toLocaleDateString('en-CA', { timeZone: ZONA });
+const dm = (d) => new Date(d.length > 10 ? d : d + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', timeZone: d.length > 10 ? ZONA : undefined });
+const token = new URLSearchParams(location.hash.slice(1)).get('t') || '';
+
+let datos = null;
+const vista = { q: '', cat: '', abiertos: new Set(), cerrados: new Set() };
+const borrador = new Map();   // sku → {cantidad, fecha, no_entrega}: sobrevive a los filtros hasta enviarlo
+
+async function llamar(accion, extra = {}) {
+  let r;
+  try {
+    r = await fetch(`${SUPABASE_URL}/functions/v1/proveedor-portal`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, accion, ...extra }) });
+  } catch { throw Object.assign(new Error('No hay conexión. Revisá internet y probá de nuevo.'), { estado: 0 }); }
+  const cuerpo = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(cuerpo.error || 'No se pudo completar. Probá de nuevo.'), { estado: r.status });
+  return cuerpo;
+}
+
+const cuanto = (u, b) => [u ? `${num(u)} u.` : '', b ? `${num(b)} ${b === 1 ? 'bulto' : 'bultos'}` : ''].filter(Boolean).join(' · ');
+const total = (fs) => cuanto(fs.reduce((s, f) => s + f.pend_u, 0), fs.reduce((s, f) => s + f.pend_b, 0));
+
+function textoRespuesta(r) {
+  if (!r) return '';
+  const que = r.no_entrega ? 'no lo vas a hacer' : [r.cantidad ? `${num(r.cantidad)} ${r.unidad === 'bultos' ? 'bultos' : 'u.'}` : '', r.fecha ? `para el ${dm(r.fecha)}` : ''].filter(Boolean).join(' ');
+  return r.vieja
+    ? `<div class="respondido vieja">El pedido se actualizó después de tu respuesta del ${dm(r.creado_at)} (${esc(que)}). Contestá de nuevo.</div>`
+    : `<div class="respondido">Ya contestaste el ${dm(r.creado_at)}: ${esc(que)}</div>`;
+}
+
+function filaHTML(f) {
+  const b = borrador.get(f.sku) || {}, id = esc(f.sku), u = f.pend_u ? 'u.' : 'bultos';
+  return `<div class="fila"><div class="arriba"><span>${esc(f.colorLimpio || f.nombre)}</span><b>${total([f])}</b></div>
+    <div class="muted">${f.codigo ? `Tu código ${esc(f.codigo)} · ` : ''}${id} · pedido el ${dm(f.desde)}</div>
+    ${textoRespuesta(f.respuesta)}
+    <div class="campos"><label>Entrego (${u})<input type="number" min="1" max="100000" inputmode="numeric" data-c="${id}" value="${esc(b.cantidad ?? '')}" placeholder="${f.pend_u || f.pend_b}" ${b.no_entrega ? 'disabled' : ''}></label>
+      <label>Fecha de entrega<input type="date" min="${hoy()}" data-f="${id}" value="${esc(b.fecha ?? '')}" ${b.no_entrega ? 'disabled' : ''}></label></div>
+    <label class="no"><input type="checkbox" data-n="${id}" ${b.no_entrega ? 'checked' : ''}> No lo voy a hacer</label></div>`;
+}
+
+function visibles() {
+  const q = vista.q.trim().toLowerCase();
+  return datos.productos.filter((f) => (!vista.cat || f.categoria === vista.cat)
+    && (!q || `${f.sku} ${f.codigo || ''} ${f.nombre} ${f.color || ''}`.toLowerCase().includes(q)));
+}
+
+function pintarLista() {
+  const arbol = segmentar(visibles()), pocos = datos.productos.length <= 30 || !!vista.q.trim();
+  $('#lista').innerHTML = arbol.map((c) => `<div class="categoria"><span>${esc(c.categoria)}</span><span>${total(c.filas)}</span></div>` + c.grupos.map((g) => {
+    const k = g.grupo.toLowerCase(), abierto = vista.abiertos.has(k) || (pocos && !vista.cerrados.has(k));
+    return `<div class="grupo"><button type="button" data-g="${esc(k)}" aria-expanded="${abierto}"><span>${abierto ? '▾' : '▸'} ${esc(g.grupo)}</span><span>${total(g.filas)}</span></button>${abierto
+      ? `${g.filas.length > 1 ? `<div class="todo-grupo"><label for="g-${esc(k)}">Entrego todo este grupo el</label><input type="date" id="g-${esc(k)}" min="${hoy()}" data-gf="${esc(k)}"></div>` : ''}${g.medidas.map((m) => (m.medida ? `<div class="medida">${esc(m.medida)}</div>` : '') + m.filas.map(filaHTML).join('')).join('')}` : ''}</div>`;
+  }).join('')).join('') || `<p class="vacio">${datos.productos.length ? 'No hay productos con esa búsqueda.' : 'No tenés nada pendiente. ¡Gracias!'}</p>`;
+
+  $$('[data-g]').forEach((b) => (b.onclick = () => {
+    const k = b.dataset.g, abierto = b.getAttribute('aria-expanded') === 'true';
+    (abierto ? vista.cerrados : vista.abiertos).add(k); (abierto ? vista.abiertos : vista.cerrados).delete(k); pintarLista();
+  }));
+  const anotar = (sku, cambio) => {
+    const b = { ...borrador.get(sku), ...cambio };
+    if (!b.cantidad && !b.fecha && !b.no_entrega) borrador.delete(sku); else borrador.set(sku, b);
+    barra();
+  };
+  $$('[data-c]').forEach((i) => (i.oninput = () => anotar(i.dataset.c, { cantidad: i.value })));
+  $$('[data-f]').forEach((i) => (i.onchange = () => anotar(i.dataset.f, { fecha: i.value })));
+  $$('[data-n]').forEach((i) => (i.onchange = () => { anotar(i.dataset.n, { no_entrega: i.checked }); pintarLista(); }));
+  $$('[data-gf]').forEach((i) => (i.onchange = () => {
+    if (!i.value) return;
+    const g = segmentar(visibles()).flatMap((c) => c.grupos).find((g) => g.grupo.toLowerCase() === i.dataset.gf);
+    // Completa lo que falta contestar de todo el grupo: la cantidad pendiente y esa fecha.
+    g?.filas.forEach((f) => { const b = borrador.get(f.sku) || {}; if (!b.no_entrega) borrador.set(f.sku, { ...b, cantidad: b.cantidad || String(f.pend_u || f.pend_b), fecha: i.value }); });
+    pintarLista();
+  }));
+  barra();
+}
+
+function barra() {
+  $('#barra').hidden = !borrador.size;
+  $('#enviar').textContent = `Enviar respuesta (${borrador.size} ${borrador.size === 1 ? 'producto' : 'productos'})`;
+}
+
+function aviso(texto, error = false) {
+  $('#aviso').innerHTML = texto ? `<div class="aviso ${error ? 'error' : ''}">${esc(texto)}</div>` : '';
+  if (texto) window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function pintar() {
+  document.title = `${datos.proveedor} · Pedido pendiente · Pret a Home`;
+  const cats = [...new Set(datos.productos.map((f) => f.categoria))].sort((a, b) => a.localeCompare(b, 'es'));
+  $('#app').innerHTML = `<div class="cab"><small>Pret a Home · pedido pendiente</small><h1>${esc(datos.proveedor)}</h1>
+    <div class="muted">${datos.productos.length ? `${total(datos.productos)} por entregar · ` : ''}actualizado el ${new Date(datos.ahora).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: ZONA })}</div>
+    <div class="filtros"><input type="search" id="q" placeholder="Buscar producto, color o código" aria-label="Buscar" value="${esc(vista.q)}">
+      <select id="cat" aria-label="Categoría"><option value="">Todas las categorías</option>${cats.map((c) => `<option ${c === vista.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+      <button type="button" id="excel">Descargar Excel</button></div></div><div id="lista"></div>`;
+  $('#q').oninput = (e) => { vista.q = e.target.value; pintarLista(); };
+  $('#cat').onchange = (e) => { vista.cat = e.target.value; pintarLista(); };
+  $('#excel').onclick = descargar;
+  pintarLista();
+}
+
+function descargar() {
+  const celda = (v) => { let t = String(v ?? ''); if (/^[=+\-@]/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; };
+  const filas = [['Categoría', 'Producto', 'Medida', 'Color', 'SKU', 'Tu código', 'Pendiente (u.)', 'Pendiente (bultos)', 'Pedido desde']];
+  for (const c of segmentar(visibles())) for (const f of c.filas) filas.push([f.categoria, f.grupo, f.medida, f.colorLimpio, f.sku, f.codigo, f.pend_u, f.pend_b, dm(f.desde)]);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + filas.map((f) => f.map(celda).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  a.download = `Pendiente Pret a Home ${datos.proveedor} ${hoy()}.csv`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+$('#enviar').onclick = async () => {
+  const respuestas = [], vigentes = new Set(datos.productos.map((f) => f.sku));
+  for (const [sku, b] of borrador) {
+    if (!vigentes.has(sku)) continue;
+    const cantidad = b.cantidad ? Number(b.cantidad) : null;
+    if (!b.no_entrega) {
+      const nombre = datos.productos.find((f) => f.sku === sku)?.nombre || sku;
+      if (cantidad != null && !(Number.isInteger(cantidad) && cantidad >= 1 && cantidad <= 100000)) return aviso(`Revisá la cantidad de ${nombre} (${sku}).`, true);
+      if (b.fecha && b.fecha < hoy()) return aviso(`La fecha de ${nombre} (${sku}) tiene que ser de hoy en adelante.`, true);
+    }
+    respuestas.push({ sku, cantidad: b.no_entrega ? null : cantidad, fecha: b.no_entrega ? null : b.fecha || null, no_entrega: !!b.no_entrega });
+  }
+  const btn = $('#enviar'); btn.disabled = true; btn.textContent = 'Enviando…';
+  try {
+    // Hasta 600 productos por envío.
+    for (let i = 0; i < respuestas.length; i += 600) {
+      const tanda = respuestas.slice(i, i + 600);
+      await llamar('responder', { respuestas: tanda });
+      tanda.forEach((r) => borrador.delete(r.sku));
+    }
+    datos = await llamar('ver');
+    pintar();
+    aviso(`Listo: enviamos tu respuesta sobre ${respuestas.length} ${respuestas.length === 1 ? 'producto' : 'productos'}. ¡Gracias!`);
+  } catch (e) {
+    aviso(e.message, true);
+    // Si algo dejó de estar pendiente, se vuelve a leer la lista sin perder lo escrito.
+    if (e.estado === 400) { try { datos = await llamar('ver'); const quedan = new Set(datos.productos.map((f) => f.sku)); [...borrador.keys()].filter((k) => !quedan.has(k)).forEach((k) => borrador.delete(k)); pintar(); } catch { /* se queda lo que había */ } }
+  } finally { btn.disabled = false; barra(); }
+};
+
+window.addEventListener('beforeunload', (e) => { if (borrador.size) e.preventDefault(); });
+window.addEventListener('hashchange', () => location.reload());
+
+try {
+  datos = await llamar('ver');
+  pintar();
+} catch (e) {
+  $('#app').innerHTML = `<p class="vacio">${esc(e.message)}</p>`;
+}
+</script>
+</body>
+</html>
